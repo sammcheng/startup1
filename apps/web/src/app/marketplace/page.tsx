@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { api, buildQuery } from "@/lib/api";
 import type { ToolListResponse } from "@/types/tool";
+import { fetchConverterTools } from "@/lib/converterTools";
 import MarketplaceClient from "./MarketplaceClient";
 
 export const dynamic = "force-dynamic";
@@ -13,16 +14,20 @@ export const metadata: Metadata = {
 
 export default async function MarketplacePage() {
   let initialData: ToolListResponse | null = null;
-  let initialFetchFailed = false;
 
+  // Try main API first, fall back to converter SQLite
   try {
     initialData = await api.get<ToolListResponse>(
       `/tools${buildQuery({ limit: 20, sort_by: "newest" })}`,
       { cache: "no-store" }
     );
   } catch {
-    initialFetchFailed = true;
+    try {
+      initialData = await fetchConverterTools(20, 0);
+    } catch {
+      // both unavailable — show empty state
+    }
   }
 
-  return <MarketplaceClient initialData={initialData} initialFetchFailed={initialFetchFailed} />;
+  return <MarketplaceClient initialData={initialData} initialFetchFailed={false} />;
 }

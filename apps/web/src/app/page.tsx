@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { api, buildQuery } from "@/lib/api";
 import type { Tool, ToolListResponse } from "@/types/tool";
+import { fetchConverterTools } from "@/lib/converterTools";
 import LandingPage from "./LandingPage";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +14,8 @@ export const metadata: Metadata = {
 
 export default async function Home() {
   let featuredTools: Tool[] = [];
-  let featuredToolsUnavailable = false;
 
+  // Try main API, fall back to converter (newest 4 tools)
   try {
     const data = await api.get<ToolListResponse>(
       `/tools${buildQuery({ is_featured: true, limit: 4, sort_by: "popular" })}`,
@@ -22,8 +23,13 @@ export default async function Home() {
     );
     featuredTools = data.items;
   } catch {
-    featuredToolsUnavailable = true;
+    try {
+      const data = await fetchConverterTools(4, 0);
+      featuredTools = data.items;
+    } catch {
+      // both unavailable — show empty state
+    }
   }
 
-  return <LandingPage featuredTools={featuredTools} featuredToolsUnavailable={featuredToolsUnavailable} />;
+  return <LandingPage featuredTools={featuredTools} featuredToolsUnavailable={false} />;
 }
