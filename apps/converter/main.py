@@ -151,10 +151,59 @@ Rules: 2–4 endpoints, only expose genuinely callable logic, paths start with /
 def _extract_json(text: str) -> dict:
     text = re.sub(r"^```[a-z]*\n?", "", text.strip())
     text = re.sub(r"\n?```$", "", text)
-    m = re.search(r"\{[\s\S]+\}", text)
-    if m:
-        return json.loads(m.group())
-    raise ValueError("No JSON in response")
+    # Find the outermost { ... } block
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object in response")
+    # Walk to find matching closing brace
+    depth, end = 0, -1
+    for i, ch in enumerate(text[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        # LLM truncated mid-stream — take what we have and try to close it
+        end = len(text)
+    candidate = text[start:end]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # Strip trailing commas, then try closing open braces/brackets
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Count unclosed depth and append closing chars
+            depth2 = 0
+            stack = []
+            in_str = False
+            esc = False
+            for ch in cleaned:
+                if esc:
+                    esc = False
+                    continue
+                if ch == "\\" and in_str:
+                    esc = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch in "{[":
+                    stack.append("}" if ch == "{" else "]")
+                elif ch in "}]":
+                    if stack:
+                        stack.pop()
+            if in_str:
+                cleaned += '"'
+            cleaned += "".join(reversed(stack))
+            cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+            return json.loads(cleaned)
 
 
 def _call_groq(files: list[dict], tree: str) -> dict:
@@ -168,7 +217,7 @@ def _call_groq(files: list[dict], tree: str) -> dict:
             {"role": "user",   "content": f"File tree:\n{tree}\n\nSource:\n{files_text}"},
         ],
         temperature=0,
-        max_tokens=1400,
+        max_tokens=2048,
     )
     return _extract_json(resp.choices[0].message.content or "{}")
 

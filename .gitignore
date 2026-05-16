@@ -54,3 +54,4 @@ build/
 # Turbo
 .turbo/
 apps/converter/tools.db
+.gstack/
