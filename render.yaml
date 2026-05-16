@@ -74,6 +74,28 @@ services:
         sync: false
 
   - type: web
+    name: hackmarket-web
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: apps/web
+    buildFilter:
+      paths:
+        - apps/web/**
+    dockerfilePath: ./Dockerfile.prod
+    dockerContext: .
+    healthCheckPath: /
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NEXT_PUBLIC_CONVERTER_URL
+        fromService:
+          name: hackmarket-converter
+          type: web
+          property: host
+      - key: NEXT_PUBLIC_API_URL
+        value: ""
+
+  - type: web
     name: hackmarket-converter
     runtime: docker
     plan: free
