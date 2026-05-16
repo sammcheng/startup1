@@ -11,6 +11,66 @@ import type {
   SortBy,
 } from "@/types/tool";
 
+const CONVERTER_URL =
+  process.env.NEXT_PUBLIC_CONVERTER_URL ?? "http://localhost:8080";
+
+interface ConverterTool {
+  id: string;
+  slug: string;
+  repo_url: string;
+  name: string;
+  language: string;
+  description: string;
+  endpoints: Array<{ method: string; path: string; summary: string }>;
+  setup_notes: string;
+  created_at: string;
+}
+
+function converterToTool(c: ConverterTool): Tool {
+  return {
+    id: c.id,
+    seller_id: "converter",
+    seller: { id: "converter", display_name: "Hackmarket Converter", avatar_url: null, username: "converter" },
+    name: c.name,
+    slug: c.slug,
+    tagline: c.description.length > 120 ? c.description.slice(0, 117) + "…" : c.description,
+    description: c.description,
+    category: "automation",
+    status: "live",
+    ownership_type: "royalty",
+    input_type: "json",
+    output_type: "json",
+    input_schema: null,
+    output_schema: null,
+    price_per_request: null,
+    demo_url: null,
+    api_endpoint: null,
+    docker_image_uri: null,
+    github_url: c.repo_url,
+    documentation: null,
+    avg_response_time_ms: null,
+    total_requests: 0,
+    uptime_percentage: null,
+    is_featured: false,
+    view_count: 0,
+    created_at: c.created_at,
+    updated_at: c.created_at,
+  };
+}
+
+async function fetchFromConverter(limit: number, offset: number): Promise<ToolListResponse> {
+  const res = await fetch(`${CONVERTER_URL}/api/tools?limit=${limit}&offset=${offset}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Converter unavailable");
+  const data = (await res.json()) as { tools: ConverterTool[]; total: number };
+  return {
+    items: data.tools.map(converterToTool),
+    total: data.total,
+    page: Math.floor(offset / limit) + 1,
+    limit,
+    pages: Math.ceil(data.total / limit),
+  };
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const CATEGORIES: { value: ToolCategory | "all"; label: string }[] = [
@@ -315,8 +375,8 @@ export default function MarketplaceClient({
   initialFetchFailed?: boolean;
 }) {
   const [data, setData] = useState<ToolListResponse | null>(initialData);
-  const [loading, setLoading] = useState(initialData === null);
-  const [error, setError] = useState<string | null>(initialFetchFailed ? "We couldn't load live tools on the first try. Retrying now..." : null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<ToolCategory | "all">("all");
@@ -326,27 +386,21 @@ export default function MarketplaceClient({
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const fetchTools = useCallback(
-    async (
-      q: string,
-      cat: ToolCategory | "all",
-      sort: SortBy,
-      pg: number
-    ) => {
+    async (q: string, cat: ToolCategory | "all", sort: SortBy, pg: number) => {
       setLoading(true);
       setError(null);
       try {
-        const filters: Record<string, unknown> = {
-          sort_by: sort,
-          page: pg,
-          limit: 20,
-        };
+        const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
         if (q) filters.search = q;
         if (cat !== "all") filters.category = cat;
 
-        const result = await api.get<ToolListResponse>(
-          `/tools${buildQuery(filters)}`
-        );
-        setData(result);
+        try {
+          const result = await api.get<ToolListResponse>(`/tools${buildQuery(filters)}`);
+          setData(result);
+        } catch {
+          const result = await fetchFromConverter(20, (pg - 1) * 20);
+          setData(result);
+        }
       } catch {
         setError("Failed to load tools. Please try again.");
       } finally {
@@ -356,24 +410,31 @@ export default function MarketplaceClient({
     []
   );
 
-  const retryCurrentQuery = useCallback(() => {
-    void fetchTools(search, category, sortBy, page);
-  }, [fetchTools, search, category, sortBy, page]);
-
-  // Debounced search
-  useEffect(() => {
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(
-      () => fetchTools(search, category, sortBy, 1),
-      search ? 350 : 0
-    );
+  // No mount effect — server provides initialData, fetches only on user interaction
+  const handleSearch = (q: string) => {
+    setSearch(q);
     setPage(1);
-  }, [search, category, sortBy, fetchTools]);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void fetchTools(q, category, sortBy, 1), 350);
+  };
 
-  // Page changes
-  useEffect(() => {
-    if (page !== 1) fetchTools(search, category, sortBy, page);
-  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleCategory = (cat: ToolCategory | "all") => {
+    setCategory(cat);
+    setPage(1);
+    void fetchTools(search, cat, sortBy, 1);
+  };
+
+  const handleSort = (sort: SortBy) => {
+    setSortBy(sort);
+    setPage(1);
+    void fetchTools(search, category, sort, 1);
+  };
+
+  const handlePage = (p: number) => {
+    setPage(p);
+    void fetchTools(search, category, sortBy, p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const tools = data?.items ?? [];
 
@@ -426,7 +487,7 @@ export default function MarketplaceClient({
               type="text"
               placeholder="Search tools by name or description..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 rounded-xl text-sm border outline-none transition-all"
               style={{
                 background: "var(--card)",
@@ -459,10 +520,7 @@ export default function MarketplaceClient({
               return (
                 <button
                   key={cat.value}
-                  onClick={() => {
-                    setCategory(cat.value as ToolCategory | "all");
-                    setPage(1);
-                  }}
+                  onClick={() => handleCategory(cat.value as ToolCategory | "all")}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap border transition-all"
                   style={{
                     background: active ? `${color}18` : "transparent",
@@ -487,10 +545,7 @@ export default function MarketplaceClient({
             </span>
             <select
               value={sortBy}
-              onChange={(e) => {
-                setSortBy(e.target.value as SortBy);
-                setPage(1);
-              }}
+              onChange={(e) => handleSort(e.target.value as SortBy)}
               className="text-xs border rounded-lg px-3 py-1.5 outline-none appearance-none cursor-pointer"
               style={{
                 background: "var(--card)",
@@ -533,7 +588,7 @@ export default function MarketplaceClient({
               {error}
             </p>
             <button
-              onClick={retryCurrentQuery}
+              onClick={() => void fetchTools(search, category, sortBy, page)}
               className="text-xs underline transition-colors"
               style={{ color: "var(--text)" }}
             >
@@ -564,6 +619,7 @@ export default function MarketplaceClient({
                 setSearch("");
                 setCategory("all");
                 setSortBy("newest");
+                void fetchTools("", "all", "newest", 1);
               }}
               className="mt-4 text-xs underline transition-colors"
               style={{ color: "var(--blue)" }}
@@ -585,10 +641,7 @@ export default function MarketplaceClient({
             pages={data.pages}
             total={data.total}
             limit={data.limit}
-            onChange={(p) => {
-              setPage(p);
-              window.scrollTo({ top: 0, behavior: "smooth" });
-            }}
+            onChange={handlePage}
           />
         )}
       </div>

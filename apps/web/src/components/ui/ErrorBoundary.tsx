@@ -3,35 +3,19 @@
 import type { ReactNode } from "react";
 import { Component } from "react";
 
-interface ErrorBoundaryProps {
-  children: ReactNode;
-}
+interface Props { children: ReactNode }
+interface State { hasError: boolean; message: string }
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  message: string;
-}
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false, message: "" };
 
-export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = {
-    hasError: false,
-    message: "",
-  };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return {
-      hasError: true,
-      message: error.message || "Something went wrong while rendering this page.",
-    };
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, message: error.message || "Something went wrong." };
   }
 
-  componentDidCatch(error: Error, errorInfo: unknown) {
-    console.error("Render error caught by ErrorBoundary", error, errorInfo);
+  componentDidCatch(error: Error, info: unknown) {
+    console.error("ErrorBoundary caught:", error, info);
   }
-
-  handleRetry = () => {
-    this.setState({ hasError: false, message: "" });
-  };
 
   render() {
     if (this.state.hasError) {
@@ -43,7 +27,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
             <p className="mt-3 text-sm leading-6 text-stone-400">{this.state.message}</p>
             <button
               type="button"
-              onClick={this.handleRetry}
+              onClick={() => this.setState({ hasError: false, message: "" })}
               className="mt-6 rounded-full bg-red-300 px-5 py-3 text-sm font-semibold text-stone-950 transition hover:bg-red-200"
             >
               Try Again
@@ -52,7 +36,6 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
         </div>
       );
     }
-
     return this.props.children;
   }
 }

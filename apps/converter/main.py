@@ -63,6 +63,7 @@ def get_conn() -> sqlite3.Connection:
 
 def init_db() -> None:
     with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tools (
                 id         TEXT PRIMARY KEY,
@@ -361,7 +362,17 @@ async def _stream(job_id: str) -> AsyncIterator[str]:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Hackmarket Converter", version="1.0.0")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    init_db()
+    if not GROQ_API_KEY:
+        log.warning("GROQ_API_KEY not set — analysis will fail")
+    yield
+
+
+app = FastAPI(title="Hackmarket Converter", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -369,13 +380,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-    if not GROQ_API_KEY:
-        log.warning("GROQ_API_KEY not set — analysis will fail")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -400,8 +404,7 @@ async def start_analyze(body: AnalyzeRequest) -> dict:
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "running", "logs": []}
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(executor, _run_analysis, job_id, url)
+    asyncio.get_running_loop().run_in_executor(executor, _run_analysis, job_id, url)
     return {"job_id": job_id}
 
 

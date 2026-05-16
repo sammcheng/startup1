@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { fetchConverterTool } from "@/lib/converterTools";
 import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
@@ -13,11 +14,13 @@ export const dynamic = "force-dynamic";
 
 async function fetchTool(slug: string): Promise<Tool | null> {
   try {
-    return await api.get<Tool>(`/tools/${slug}`, {
-      cache: "no-store",
-    });
+    return await api.get<Tool>(`/tools/${slug}`, { cache: "no-store" });
   } catch {
-    return null;
+    try {
+      return await fetchConverterTool(slug);
+    } catch {
+      return null;
+    }
   }
 }
 

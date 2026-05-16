@@ -11,7 +11,14 @@ export function useAuth() {
   };
 }
 
-export function useUser() {
+interface StubUser {
+  firstName: string | null;
+  lastName: string | null;
+  username: string | null;
+  emailAddresses: { emailAddress: string }[];
+}
+
+export function useUser(): { user: StubUser | null; isLoaded: boolean; isSignedIn: boolean } {
   return {
     user: null,
     isLoaded: true,

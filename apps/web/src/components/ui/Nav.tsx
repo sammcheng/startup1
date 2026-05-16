@@ -49,18 +49,7 @@ export default function Nav() {
       {/* Right actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Link
-          href="/sign-in"
-          style={{
-            fontSize: 13.5,
-            color: "var(--muted)",
-            padding: "6px 10px",
-            fontFamily: "var(--font-body)",
-          }}
-        >
-          Sign in
-        </Link>
-        <Link
-          href="/sign-up"
+          href="/publish"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -74,7 +63,7 @@ export default function Nav() {
             fontFamily: "var(--font-body)",
           }}
         >
-          Get started
+          List Your Tool
         </Link>
       </div>
     </nav>

@@ -278,6 +278,7 @@ export default function PublishPage() {
   }
 
   const base = result ? `https://api.hackmarket.io/v1/tools/${result.slug}` : "";
+  const marketplaceUrl = "/marketplace";
 
   return (
     <>
@@ -502,14 +503,14 @@ export default function PublishPage() {
 
                 <div style={{ display: "flex", gap: 10 }}>
                   <Link
-                    href="/marketplace"
+                    href={marketplaceUrl}
                     style={{
                       flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
                       padding: "13px", borderRadius: 12, background: "var(--green)",
                       color: "#000", fontWeight: 700, fontSize: 14, textDecoration: "none",
                     }}
                   >
-                    View in marketplace →
+                    View in Marketplace →
                   </Link>
                   <button onClick={reset} style={{
                     padding: "13px 20px", borderRadius: 12,
