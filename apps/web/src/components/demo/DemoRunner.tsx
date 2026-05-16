@@ -31,6 +31,7 @@ export default function DemoRunner({
   inputType,
   inputSchema,
   outputType,
+  mockResponse,
 }: DemoRunnerProps) {
   const schema = (inputSchema ?? {}) as DemoInputSchema;
   const [textValue, setTextValue] = useState(defaultStringValue(schema));
@@ -142,7 +143,15 @@ export default function DemoRunner({
         });
       }
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "The demo request failed.");
+      if (mockResponse !== undefined) {
+        // Backend unavailable — show the example output as a simulated response
+        const responseTimeMs = Math.max(Math.round(performance.now() - startedAt), 1);
+        incrementSessionCount();
+        setCallsUsed(readSessionCount());
+        setResult({ data: mockResponse, status: 200, responseTimeMs, requestId: null });
+      } else {
+        setError(runError instanceof Error ? runError.message : "The demo request failed.");
+      }
     } finally {
       setIsRunning(false);
     }

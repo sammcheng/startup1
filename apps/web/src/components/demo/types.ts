@@ -51,4 +51,5 @@ export interface DemoRunnerProps {
   inputType: InputType | null;
   inputSchema: Record<string, unknown> | null;
   outputType: OutputType | null;
+  mockResponse?: unknown;
 }

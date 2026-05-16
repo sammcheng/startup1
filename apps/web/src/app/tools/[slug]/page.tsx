@@ -444,6 +444,9 @@ export default async function ToolPage({
             inputType={tool.input_type}
             inputSchema={tool.input_schema}
             outputType={tool.output_type}
+            mockResponse={
+              (tool.output_schema as Record<string, unknown> | null)?.example_output ?? undefined
+            }
           />
         </div>
       </div>
