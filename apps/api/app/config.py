@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     redis_max_connections: int = 20
 
+    # Converter service integration
+    converter_secret: str = ""
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""

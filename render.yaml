@@ -70,6 +70,8 @@ services:
         sync: false
       - key: GHCR_TOKEN
         sync: false
+      - key: CONVERTER_SECRET
+        sync: false
 
   - type: web
     name: hackmarket-converter
@@ -89,6 +91,13 @@ services:
         sync: false
       - key: DB_PATH
         value: /data/tools.db
+      - key: CONVERTER_SECRET
+        sync: false
+      - key: MAIN_API_URL
+        fromService:
+          name: start
+          type: web
+          property: host
 
   - type: web
     name: home-accessibility-checker

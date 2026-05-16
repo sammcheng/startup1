@@ -181,7 +181,7 @@ setup_error_handlers(app)
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-from app.routers import api_keys, auth, billing, dashboard, gateway, seller, tools, upload, usage  # noqa: E402
+from app.routers import api_keys, auth, billing, dashboard, gateway, internal, seller, tools, upload, usage  # noqa: E402
 
 app.include_router(auth.router, prefix="/v1")
 app.include_router(tools.router, prefix="/v1")
@@ -191,6 +191,7 @@ app.include_router(billing.router, prefix="/v1")
 app.include_router(dashboard.router, prefix="/v1")
 app.include_router(seller.router, prefix="/v1")
 app.include_router(usage.router, prefix="/v1")
+app.include_router(internal.router, prefix="/v1")
 app.include_router(gateway.router)
 
 

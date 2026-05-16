@@ -36,11 +36,13 @@ log = logging.getLogger("converter")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL     = "llama-3.1-8b-instant"
-DB_PATH        = os.environ.get("DB_PATH", "tools.db")
-MAX_FILE_BYTES = 3_000
-MAX_FILES      = 6
+GROQ_API_KEY      = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL        = "llama-3.1-8b-instant"
+DB_PATH           = os.environ.get("DB_PATH", "tools.db")
+MAX_FILE_BYTES    = 3_000
+MAX_FILES         = 6
+MAIN_API_URL      = os.environ.get("MAIN_API_URL", "http://localhost:8000")
+CONVERTER_SECRET  = os.environ.get("CONVERTER_SECRET", "")
 
 SUPPORTED_EXT = {
     ".py", ".js", ".ts", ".go", ".rs", ".rb", ".java", ".cpp", ".c",
@@ -241,6 +243,31 @@ def _slugify(name: str) -> str:
     return slug
 
 
+def _register_with_main_api(spec: dict, repo_url: str) -> str:
+    """POST the analyzed spec to the main API's internal import endpoint. Returns marketplace URL."""
+    import urllib.request
+    payload = json.dumps({
+        "repo_url": repo_url,
+        "repo_name": spec.get("repo_name", "tool"),
+        "language": spec.get("language", "unknown"),
+        "description": spec.get("description", ""),
+        "endpoints": spec.get("endpoints", []),
+        "setup_notes": spec.get("setup_notes", ""),
+    }).encode()
+    req = urllib.request.Request(
+        f"{MAIN_API_URL.rstrip('/')}/v1/internal/tools/import",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Converter-Secret": CONVERTER_SECRET,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = json.loads(resp.read())
+    return result["marketplace_url"]
+
+
 def _run_analysis(job_id: str, repo_url: str) -> None:
     """Blocking function — runs in thread executor."""
     job = jobs[job_id]
@@ -279,9 +306,23 @@ def _run_analysis(job_id: str, repo_url: str) -> None:
                 )
                 conn.commit()
 
+            # Sync to main API if configured
+            marketplace_url = None
+            if CONVERTER_SECRET and MAIN_API_URL:
+                try:
+                    marketplace_url = _register_with_main_api(spec, repo_url)
+                    _log(job_id, f"Listed on marketplace: {marketplace_url}")
+                except Exception as e:
+                    log.warning("Main API sync failed (non-fatal): %s", e)
+
             _log(job_id, "Done.")
             job["status"] = "done"
-            job["result"] = {**spec, "slug": slug, "tool_id": tool_id}
+            job["result"] = {
+                **spec,
+                "slug": slug,
+                "tool_id": tool_id,
+                "marketplace_url": marketplace_url,
+            }
 
     except Exception as exc:
         log.exception("Analysis failed for %s", job_id)
