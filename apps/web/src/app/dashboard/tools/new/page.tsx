@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
 
 import { ApiError, api } from "@/lib/api";

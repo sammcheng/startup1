@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useAuth, useUser } from "@/hooks/useAuth";
 
 import { ApiError, api } from "@/lib/api";
 import type { DashboardSummaryResponse } from "@/types/dashboard";

@@ -559,11 +559,9 @@ function FeaturedTools({ tools, unavailable }: { tools: Tool[]; unavailable: boo
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
           >
             <p className="text-sm font-mono uppercase tracking-widest mb-3" style={{ color: "var(--faint)" }}>Featured tools</p>
-            <h3 className="text-2xl font-bold mb-3" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>The marketplace is warming up.</h3>
+            <h3 className="text-2xl font-bold mb-3" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>Be the first on the marketplace.</h3>
             <p className="text-sm leading-7 max-w-2xl" style={{ color: "var(--muted)" }}>
-              {unavailable
-                ? "We could not load featured tools right now. The live marketplace is still available, and we’ll retry automatically on the next refresh."
-                : "We do not have featured tools selected yet. Browse the marketplace to see the current live listings or publish the next one yourself."}
+              {"Be the first to publish a tool. Browse the marketplace to see live listings, or convert your GitHub project into a callable API in under a minute."}
             </p>
             <div className="flex flex-wrap gap-3 mt-6">
               <Link href="/marketplace" className="hero-btn-primary">Browse marketplace</Link>
