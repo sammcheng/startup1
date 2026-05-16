@@ -72,6 +72,25 @@ services:
         sync: false
 
   - type: web
+    name: hackmarket-converter
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: apps/converter
+    buildFilter:
+      paths:
+        - apps/converter/**
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DB_PATH
+        value: /data/tools.db
+
+  - type: web
     name: home-accessibility-checker
     runtime: node
     plan: free

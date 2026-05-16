@@ -2,14 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { SignedIn, SignedOut, useUser } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 
 export default function Nav() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
-  const { user } = useUser();
-
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -51,66 +48,34 @@ export default function Nav() {
 
       {/* Right actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <SignedOut>
-          <Link
-            href="/sign-in"
-            style={{
-              fontSize: 13.5,
-              color: "var(--muted)",
-              padding: "6px 10px",
-              fontFamily: "var(--font-body)",
-            }}
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/sign-up"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "7px 18px",
-              borderRadius: 8,
-              background: "var(--blue)",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: "var(--font-body)",
-            }}
-          >
-            Get started
-          </Link>
-        </SignedOut>
-        <SignedIn>
-          <Link
-            href="/dashboard"
-            style={{
-              fontSize: 13.5,
-              color: pathname.startsWith("/dashboard") ? "var(--text)" : "var(--muted)",
-              padding: "6px 10px",
-              fontFamily: "var(--font-body)",
-            }}
-          >
-            Dashboard
-          </Link>
-          <Link
-            href="/dashboard/tools/new"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "7px 18px",
-              borderRadius: 8,
-              background: "var(--blue)",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: "var(--font-body)",
-            }}
-          >
-            {user?.firstName ? `Hi ${user.firstName}` : "Open dashboard"}
-          </Link>
-        </SignedIn>
+        <Link
+          href="/sign-in"
+          style={{
+            fontSize: 13.5,
+            color: "var(--muted)",
+            padding: "6px 10px",
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          Sign in
+        </Link>
+        <Link
+          href="/sign-up"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 18px",
+            borderRadius: 8,
+            background: "var(--blue)",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          Get started
+        </Link>
       </div>
     </nav>
   );

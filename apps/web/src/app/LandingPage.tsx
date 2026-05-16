@@ -208,7 +208,7 @@ function HeroSection() {
             <span className="text-sm opacity-70">→</span>
           </Link>
           <Link
-            href="/dashboard"
+            href="/publish"
             className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl text-base font-medium border transition-all hover:border-[var(--border-h)] hover:text-white"
             style={{
               background: "transparent",
@@ -567,7 +567,7 @@ function FeaturedTools({ tools, unavailable }: { tools: Tool[]; unavailable: boo
             </p>
             <div className="flex flex-wrap gap-3 mt-6">
               <Link href="/marketplace" className="hero-btn-primary">Browse marketplace</Link>
-              <Link href="/dashboard/tools/new" className="hero-btn-secondary">List a tool</Link>
+              <Link href="/publish" className="hero-btn-secondary">List a tool</Link>
             </div>
           </div>
         )}
@@ -1033,7 +1033,7 @@ function SellerCTA() {
 
               <div className="flex flex-col gap-3 lg:min-w-44">
                 <Link
-                  href="/dashboard"
+                  href="/publish"
                   className="flex items-center justify-center gap-2 px-8 py-3.5 rounded-xl text-base font-semibold transition-all hover:opacity-90 active:scale-[0.97] whitespace-nowrap"
                   style={{ background: "var(--green)", color: "#000" }}
                 >

@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
 import AppProviders from "./AppProviders";
 import Nav from "@/components/ui/Nav";
 import "./globals.css";
@@ -50,17 +49,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body>
-          <AppProviders>
-            <Nav />
-            <div style={{ paddingTop: 56 }}>
-              {children}
-            </div>
-          </AppProviders>
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body>
+        <AppProviders>
+          <Nav />
+          <div style={{ paddingTop: 56 }}>
+            {children}
+          </div>
+        </AppProviders>
+      </body>
+    </html>
   );
 }
