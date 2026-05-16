@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { api, buildQuery } from "@/lib/api";
 import type { ToolListResponse } from "@/types/tool";
 import { fetchConverterTools } from "@/lib/converterTools";
+import { buildLocalToolList } from "@/lib/localFallbackTools";
 import MarketplaceClient from "./MarketplaceClient";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export default async function MarketplacePage() {
     try {
       initialData = await fetchConverterTools(20, 0);
     } catch {
-      // both unavailable — show empty state
+      initialData = buildLocalToolList(20);
     }
   }
 

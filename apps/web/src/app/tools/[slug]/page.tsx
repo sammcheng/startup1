@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { fetchConverterTool } from "@/lib/converterTools";
+import { LOCAL_FALLBACK_TOOLS } from "@/lib/localFallbackTools";
 import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
@@ -19,7 +20,7 @@ async function fetchTool(slug: string): Promise<Tool | null> {
     try {
       return await fetchConverterTool(slug);
     } catch {
-      return null;
+      return LOCAL_FALLBACK_TOOLS.find((t) => t.slug === slug) ?? null;
     }
   }
 }
