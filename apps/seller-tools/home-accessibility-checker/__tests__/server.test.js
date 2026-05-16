@@ -1,0 +1,300 @@
+const request = require("supertest");
+const { createApp } = require("../server");
+
+describe("seller tool server", () => {
+  let app;
+  const originalFetch = global.fetch;
+  const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  const originalRateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS;
+  const originalRateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS;
+
+  beforeEach(() => {
+    delete process.env.ALLOWED_ORIGINS;
+    delete process.env.RATE_LIMIT_MAX_REQUESTS;
+    delete process.env.RATE_LIMIT_WINDOW_MS;
+    app = createApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalAllowedOrigins === undefined) {
+      delete process.env.ALLOWED_ORIGINS;
+    } else {
+      process.env.ALLOWED_ORIGINS = originalAllowedOrigins;
+    }
+    if (originalRateLimitMaxRequests === undefined) {
+      delete process.env.RATE_LIMIT_MAX_REQUESTS;
+    } else {
+      process.env.RATE_LIMIT_MAX_REQUESTS = originalRateLimitMaxRequests;
+    }
+    if (originalRateLimitWindowMs === undefined) {
+      delete process.env.RATE_LIMIT_WINDOW_MS;
+    } else {
+      process.env.RATE_LIMIT_WINDOW_MS = originalRateLimitWindowMs;
+    }
+  });
+
+  test("GET /health returns healthy payload", async () => {
+    const response = await request(app).get("/health");
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("healthy");
+    expect(typeof response.body.timestamp).toBe("string");
+    expect(typeof response.body.uptime).toBe("number");
+    expect(response.headers["x-hackmarket-request-id"]).toBeTruthy();
+    expect(
+      Number(response.headers["x-hackmarket-response-time-ms"]),
+    ).toBeGreaterThanOrEqual(1);
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
+
+  test("GET /health preserves a caller-provided request id", async () => {
+    const response = await request(app)
+      .get("/health")
+      .set("X-HackMarket-Request-Id", "req-test-123");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["x-hackmarket-request-id"]).toBe("req-test-123");
+  });
+
+  test("GET /health allows arbitrary origins without credentials when wildcard CORS is used", async () => {
+    const response = await request(app)
+      .get("/health")
+      .set("Origin", "https://random.example");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "https://random.example",
+    );
+    expect(
+      response.headers["access-control-allow-credentials"],
+    ).toBeUndefined();
+    expect(response.headers.vary).toContain("Origin");
+  });
+
+  test("GET /health reflects allowed origins and credentials when CORS is restricted", async () => {
+    process.env.ALLOWED_ORIGINS = "https://app.example,https://admin.example";
+    app = createApp();
+
+    const response = await request(app)
+      .get("/health")
+      .set("Origin", "https://app.example");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "https://app.example",
+    );
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
+    expect(response.headers.vary).toContain("Origin");
+  });
+
+  test("GET /health rejects disallowed origins with a structured 403", async () => {
+    process.env.ALLOWED_ORIGINS = "https://app.example,https://admin.example";
+    app = createApp();
+
+    const response = await request(app)
+      .get("/health")
+      .set("Origin", "https://nope.example");
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: "Origin not allowed",
+      message:
+        "This origin is not allowed to access the accessibility checker.",
+      requestId: expect.any(String),
+    });
+    expect(response.headers["x-hackmarket-request-id"]).toBeTruthy();
+  });
+
+  test("OPTIONS preflight succeeds for allowed restricted origins", async () => {
+    process.env.ALLOWED_ORIGINS = "https://app.example,https://admin.example";
+    app = createApp();
+
+    const response = await request(app)
+      .options("/api/analyze")
+      .set("Origin", "https://admin.example")
+      .set("Access-Control-Request-Method", "POST");
+
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "https://admin.example",
+    );
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
+  });
+
+  test("OPTIONS preflight rejects disallowed restricted origins", async () => {
+    process.env.ALLOWED_ORIGINS = "https://app.example,https://admin.example";
+    app = createApp();
+
+    const response = await request(app)
+      .options("/api/analyze")
+      .set("Origin", "https://blocked.example")
+      .set("Access-Control-Request-Method", "POST");
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: "Origin not allowed",
+      message:
+        "This origin is not allowed to access the accessibility checker.",
+      requestId: expect.any(String),
+    });
+    expect(response.headers["x-hackmarket-request-id"]).toBeTruthy();
+  });
+
+  test("POST /api/analyze rejects empty payload", async () => {
+    const response = await request(app).post("/api/analyze").send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid request");
+    expect(response.body.requestId).toBeTruthy();
+    expect(Array.isArray(response.body.details)).toBe(true);
+  });
+
+  test("POST / rejects empty payload for gateway compatibility", async () => {
+    const response = await request(app).post("/").send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid request");
+    expect(response.body.requestId).toBeTruthy();
+    expect(Array.isArray(response.body.details)).toBe(true);
+  });
+
+  test("POST /api/scrape rejects unsupported urls", async () => {
+    const response = await request(app)
+      .post("/api/scrape")
+      .send({ url: "https://example.com/listing/123" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid request");
+    expect(response.body.requestId).toBeTruthy();
+    expect(Array.isArray(response.body.details)).toBe(true);
+  });
+
+  test("POST /api/scrape preserves retryable upstream errors from listing fetches", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+    });
+
+    const response = await request(app)
+      .post("/api/scrape")
+      .send({ url: "https://www.zillow.com/homedetails/123-main-st" });
+
+    expect(response.status).toBe(502);
+    expect(response.body).toEqual({
+      error: "Listing fetch failed",
+      message:
+        "This listing site blocked automated access. Try uploading photos directly instead.",
+      requestId: expect.any(String),
+    });
+  });
+
+  test("POST /api/upload-and-analyze requires at least one image", async () => {
+    const response = await request(app).post("/api/upload-and-analyze");
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: "No images provided",
+      message: "Please upload at least one image",
+      requestId: expect.any(String),
+    });
+  });
+
+  test("POST /api/upload-and-analyze enforces the configured file-count limit", async () => {
+    const response = await request(app)
+      .post("/api/upload-and-analyze")
+      .attach("images", Buffer.from("a"), {
+        filename: "1.png",
+        contentType: "image/png",
+      })
+      .attach("images", Buffer.from("b"), {
+        filename: "2.png",
+        contentType: "image/png",
+      })
+      .attach("images", Buffer.from("c"), {
+        filename: "3.png",
+        contentType: "image/png",
+      })
+      .attach("images", Buffer.from("d"), {
+        filename: "4.png",
+        contentType: "image/png",
+      })
+      .attach("images", Buffer.from("e"), {
+        filename: "5.png",
+        contentType: "image/png",
+      })
+      .attach("images", Buffer.from("f"), {
+        filename: "6.png",
+        contentType: "image/png",
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: "Too many files",
+      message: "Maximum 5 files allowed",
+      requestId: expect.any(String),
+    });
+  });
+
+  test("unknown routes return structured 404 responses", async () => {
+    const response = await request(app).get("/api/does-not-exist");
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: "Not found",
+      message: "The requested endpoint does not exist",
+      requestId: expect.any(String),
+    });
+    expect(response.headers["x-hackmarket-request-id"]).toBeTruthy();
+  });
+
+  test("API rate limiting returns a structured 429 with requestId", async () => {
+    process.env.RATE_LIMIT_MAX_REQUESTS = "1";
+    process.env.RATE_LIMIT_WINDOW_MS = "60000";
+    app = createApp();
+
+    const first = await request(app).get("/api/does-not-exist");
+    const second = await request(app).get("/api/does-not-exist");
+
+    expect(first.status).toBe(404);
+    expect(second.status).toBe(429);
+    expect(second.body).toEqual({
+      error: "Too many requests from this IP, please try again later.",
+      retryAfter: "1 minute",
+      requestId: expect.any(String),
+    });
+    expect(second.headers["x-hackmarket-request-id"]).toBeTruthy();
+    expect(second.headers["retry-after"]).toBe("60");
+  });
+
+  test("API rate limiting rounds retryAfter up to plural minutes when needed", async () => {
+    process.env.RATE_LIMIT_MAX_REQUESTS = "1";
+    process.env.RATE_LIMIT_WINDOW_MS = "61000";
+    app = createApp();
+
+    await request(app).get("/api/does-not-exist");
+    const response = await request(app).get("/api/does-not-exist");
+
+    expect(response.status).toBe(429);
+    expect(response.body.retryAfter).toBe("2 minutes");
+    expect(response.headers["retry-after"]).toBe("61");
+  });
+
+  test("root gateway endpoint is rate limited too", async () => {
+    process.env.RATE_LIMIT_MAX_REQUESTS = "1";
+    process.env.RATE_LIMIT_WINDOW_MS = "60000";
+    app = createApp();
+
+    const first = await request(app).post("/").send({});
+    const second = await request(app).post("/").send({});
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(429);
+    expect(second.body).toEqual({
+      error: "Too many requests from this IP, please try again later.",
+      retryAfter: "1 minute",
+      requestId: expect.any(String),
+    });
+    expect(second.headers["retry-after"]).toBe("60");
+  });
+});

@@ -1,0 +1,15 @@
+.git
+.github
+.DS_Store
+.env
+.env.*
+node_modules
+apps/web/.next
+apps/web/node_modules
+apps/api/.venv
+apps/api/__pycache__
+apps/api/app/__pycache__
+apps/api/tests/__pycache__
+docker-compose*.yml
+nginx
+packages

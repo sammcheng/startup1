@@ -1,0 +1,9 @@
+{
+  "name": "Hackmarket",
+  "short_name": "Hackmarket",
+  "description": "AI Tool Marketplace — list, discover, and consume AI tools via a unified API gateway.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f3ef",
+  "theme_color": "#f4f3ef"
+}
