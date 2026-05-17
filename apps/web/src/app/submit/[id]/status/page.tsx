@@ -502,16 +502,6 @@ function StageRow({
         )}
       </div>
 
-      <style jsx>{`
-        @keyframes pulseStage {
-          0%, 100% {
-            box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
-          }
-          50% {
-            box-shadow: 0 0 0 10px rgba(37, 99, 235, 0);
-          }
-        }
-      `}</style>
     </div>
   );
 }
@@ -703,12 +693,6 @@ function SandboxViewer({
         )}
       </div>
 
-      <style jsx>{`
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.25; }
-        }
-      `}</style>
     </div>
   );
 }
@@ -735,12 +719,6 @@ function SandboxLineView({ line, prefix }: { line: SandboxLine; prefix: string }
     <div style={{ color, whiteSpace: "pre", ...fadeIn }}>
       {prefix}
       {line.text}
-      <style jsx>{`
-        @keyframes lineFadeIn {
-          from { opacity: 0; transform: translateY(2px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
     </div>
   );
 }
