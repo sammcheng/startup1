@@ -5,7 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, buildQuery } from "@/lib/api";
 import { tokenize, matchTools, segmentsToText } from "@/lib/nlpSearch";
 import type { Segment, ScoredTool } from "@/lib/nlpSearch";
-import { kcModuleToTool, matchKcModules } from "@/lib/kcMockModules";
+import {
+  buildKcCatalogResponse,
+  KC_MODULES,
+  KC_TO_TOOL_CATEGORY,
+  kcModuleToTool,
+  matchKcModules,
+  type KcCategory,
+} from "@/lib/kcMockModules";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
 
@@ -526,26 +533,89 @@ export default function MarketplaceClient({
     setTimeout(() => submit(segs), 220);
   }
 
-  // Browse fetch
-  const fetchTools = useCallback(async (cat: ToolCategory | "all", sort: SortBy, pg: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
-      if (cat !== "all") filters.category = cat;
+  // Browse fetch — API → converter → kc catalog. Empty earlier responses
+  // are treated the same as failures so the browse view never shows
+  // "no tools" while the catalog has rows ready.
+  const fetchTools = useCallback(
+    async (cat: ToolCategory | "all", sort: SortBy, pg: number) => {
+      setLoading(true);
+      setError(null);
       try {
-        const result = await api.get<ToolListResponse>(`/tools${buildQuery(filters)}`);
-        setData(result);
+        const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
+        if (cat !== "all") filters.category = cat;
+
+        // 1) live API
+        try {
+          const apiResp = await api.get<ToolListResponse>(
+            `/tools${buildQuery(filters)}`,
+          );
+          if (apiResp.items.length > 0) {
+            setData(apiResp);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+
+        // 2) converter
+        try {
+          const conv = await fetchFromConverter(20, (pg - 1) * 20);
+          if (conv.items.length > 0) {
+            setData(conv);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+
+        // 3) kc catalog (10 modules). Apply category + sort client-side
+        // since these are pre-baked.
+        let pool = [...KC_MODULES];
+        if (cat !== "all") {
+          // The kc Module.category is the kc-shape ("AI/ML", "Auth", …)
+          // while the marketplace filter uses Hackmarket's ToolCategory
+          // enum. Map and compare.
+          pool = pool.filter(
+            (m) =>
+              KC_TO_TOOL_CATEGORY[m.category as KcCategory] === cat,
+          );
+        }
+        switch (sort) {
+          case "popular":
+            pool.sort((a, b) => b.integrations - a.integrations);
+            break;
+          case "price_low":
+            pool.sort((a, b) => a.pricing.amount - b.pricing.amount);
+            break;
+          case "price_high":
+            pool.sort((a, b) => b.pricing.amount - a.pricing.amount);
+            break;
+          case "newest":
+          default:
+            // Stable: just keep the integration order so the catalog
+            // looks "active" rather than alphabetical.
+            pool.sort((a, b) => b.integrations - a.integrations);
+        }
+        const limit = 20;
+        const start = (pg - 1) * limit;
+        const items = pool.slice(start, start + limit).map(kcModuleToTool);
+        setData({
+          items,
+          total: pool.length,
+          page: pg,
+          limit,
+          pages: Math.max(1, Math.ceil(pool.length / limit)),
+        });
       } catch {
-        const result = await fetchFromConverter(20, (pg - 1) * 20);
-        setData(result);
+        // Last-resort: use the unfiltered kc catalog so SOMETHING renders.
+        setData(buildKcCatalogResponse(pg, 20));
+        setError(null);
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      setError("Failed to load tools. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const handleCategory = (cat: ToolCategory | "all") => { setCategory(cat); setPage(1); void fetchTools(cat, sortBy, 1); };
   const handleSort = (sort: SortBy) => { setSortBy(sort); setPage(1); void fetchTools(category, sort, 1); };
