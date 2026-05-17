@@ -1,13 +1,13 @@
 """Add production performance indexes
 
 Revision ID: 0006
-Revises: 0005_add_user_stripe_fields
+Revises: 0005
 Create Date: 2026-05-07
 """
 from alembic import op
 
-revision = "0006_add_production_indexes"
-down_revision = "0005_add_user_stripe_fields"
+revision = "0006"
+down_revision = "0005"
 branch_labels = None
 depends_on = None
 

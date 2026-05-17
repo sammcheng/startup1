@@ -4,6 +4,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { CATEGORIES } from "@hackmarket/shared";
+import {
+  newSubmissionFromAnalysis,
+  upsertSubmission,
+  type SubmissionRecord,
+} from "@/lib/submissions";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -99,6 +104,9 @@ export default function SubmitPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [apiResponse, setApiResponse] = useState<SubmitResponse | null>(null);
   const [apiReady, setApiReady] = useState(false);
+
+  // Persisted submission record (kept across phase changes for status tracking)
+  const [submissionRecord, setSubmissionRecord] = useState<SubmissionRecord | null>(null);
 
   // ── Kick off analysis ───────────────────────────────────────────────────────
   function analyze() {
@@ -217,6 +225,26 @@ export default function SubmitPage() {
         // Expected: 401 (no auth) — fall through to `done` anyway.
       }
     }
+
+    // Persist the submission to localStorage so the status tracker + approver
+    // dashboard can display it. The status tracker simulates AI testing with
+    // an animated terminal-style sandbox.
+    const cents = Math.max(0, Math.round(Number(amount)) * 100);
+    const record = newSubmissionFromAnalysis({
+      github_url: url || "https://github.com/example/repo",
+      submitter_email: "demo@hackmarket.io",
+      name: listing.name,
+      description: listing.description,
+      category: listing.category,
+      tech_stack: listing.stack,
+      inputs: listing.inputs,
+      outputs: listing.outputs,
+      pricing_model: pricingModel,
+      price_cents: cents,
+    });
+    upsertSubmission(record);
+    setSubmissionRecord(record);
+
     setPhase("done");
   }
 
@@ -1035,16 +1063,34 @@ export default function SubmitPage() {
                   gap: 10,
                   justifyContent: "center",
                   marginTop: 32,
+                  flexWrap: "wrap",
                 }}
               >
+                {submissionRecord && (
+                  <Link
+                    href={`/submit/${submissionRecord.id}/status`}
+                    style={{
+                      padding: "13px 22px",
+                      borderRadius: 11,
+                      background: "var(--blue)",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 14,
+                      textDecoration: "none",
+                    }}
+                  >
+                    Track status →
+                  </Link>
+                )}
                 <Link
                   href="/dashboard"
                   style={{
                     padding: "13px 22px",
                     borderRadius: 11,
-                    background: "var(--blue)",
-                    color: "#fff",
-                    fontWeight: 700,
+                    background: submissionRecord ? "transparent" : "var(--blue)",
+                    color: submissionRecord ? "var(--text)" : "#fff",
+                    border: submissionRecord ? "1.5px solid var(--border)" : "none",
+                    fontWeight: 600,
                     fontSize: 14,
                     textDecoration: "none",
                   }}
