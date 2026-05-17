@@ -23,7 +23,7 @@ const STAGES: StageDef[] = [
     blurb: "Repo cloned, metadata extracted",
   },
   {
-    id: "ai_testing",
+    id: "testing",
     label: "AI Testing",
     blurb: "Sandbox runs your endpoints against the I/O contract",
   },
@@ -33,11 +33,6 @@ const STAGES: StageDef[] = [
     blurb: "Assigned to a reviewer",
   },
   {
-    id: "approved",
-    label: "Approved",
-    blurb: "Sign-off complete",
-  },
-  {
     id: "listed",
     label: "Listed",
     blurb: "Your tool is live on the marketplace",
@@ -45,7 +40,9 @@ const STAGES: StageDef[] = [
 ];
 
 function stageIndex(stage: SubmissionStage): number {
-  if (stage === "rejected") return STAGES.findIndex((s) => s.id === "manual_review");
+  if (stage === "rejected" || stage === "revoked") {
+    return STAGES.findIndex((s) => s.id === "manual_review");
+  }
   return STAGES.findIndex((s) => s.id === stage);
 }
 
@@ -431,7 +428,7 @@ function StageRow({
         </div>
 
         {/* Stage-specific content */}
-        {stage.id === "ai_testing" &&
+        {stage.id === "testing" &&
           (state === "complete" || state === "current") && (
             <SandboxViewer submission={submission} live={state === "current"} />
           )}

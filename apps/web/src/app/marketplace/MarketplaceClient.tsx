@@ -366,6 +366,33 @@ export default function MarketplaceClient({
   const [matched, setMatched] = useState<ScoredTool[]>([]);
   const [apiReady, setApiReady] = useState(false);
 
+  // Live preview that updates as the user types — runs the kc-mock matcher
+  // synchronously on every keystroke, debounced 120ms. No thinking animation.
+  const [livePreview, setLivePreview] = useState<ScoredTool[]>([]);
+  const livePreviewRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleLiveChange = useCallback((text: string) => {
+    clearTimeout(livePreviewRef.current);
+    const q = text.trim();
+    if (q.length < 2) {
+      setLivePreview([]);
+      return;
+    }
+    livePreviewRef.current = setTimeout(() => {
+      const matches = matchKcModules(q);
+      setLivePreview(
+        matches.slice(0, 5).map((km, i) => ({
+          tool: kcModuleToTool(km.module),
+          score: Math.max(1, 100 - i * 8),
+          hits: km.hits,
+          fit: km.fit,
+          fallback: km.fallback,
+          source: "preview",
+        })),
+      );
+    }, 120);
+  }, []);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Drive thinking animation — gate final transition on apiReady
@@ -534,8 +561,115 @@ export default function MarketplaceClient({
                 What are you building?
               </h1>
               <div style={{ marginTop: 36 }}>
-                <Composer initialSegments={seedSegments ?? undefined} onSubmit={submit} />
+                <Composer
+                  initialSegments={seedSegments ?? undefined}
+                  onSubmit={submit}
+                  onChange={handleLiveChange}
+                />
               </div>
+
+              {livePreview.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "12px 14px",
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 14,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.04)",
+                  }}
+                >
+                  <div
+                    className="v3-mono-label"
+                    style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}
+                  >
+                    <span>Quick matches · Preview</span>
+                    <span style={{ color: "var(--faint)" }}>press ↵ for full ranking</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {livePreview.map((row) => {
+                      const cat = row.tool.category.replace(/_/g, " ");
+                      const color = CAT_COLORS[row.tool.category] ?? "var(--blue)";
+                      return (
+                        <Link
+                          key={row.tool.id}
+                          href={`/tools/${row.tool.slug}`}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border)",
+                            textDecoration: "none",
+                            background: "transparent",
+                            transition: "all 0.12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--bg)";
+                            e.currentTarget.style.borderColor = "var(--ink-3, var(--muted))";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                            e.currentTarget.style.borderColor = "var(--border)";
+                          }}
+                        >
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: `${color}18`,
+                              color,
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 10,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.06em",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {cat}
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--text)",
+                              fontWeight: 600,
+                              fontSize: 13.5,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {row.tool.name}
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--muted)",
+                              fontSize: 12.5,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            — {row.tool.tagline}
+                          </span>
+                          <span
+                            style={{
+                              marginLeft: "auto",
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              border: "1px dashed var(--border)",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 10,
+                              color: "var(--muted)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            Preview
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="v3-examples">
                 <div className="v3-mono-label" style={{ marginBottom: 4 }}>Try one</div>
