@@ -635,10 +635,13 @@ export default function MarketplaceClient({
           {/* INPUT phase */}
           {phase === "input" && (
             <div className="slide-in">
-              <h1 style={{ fontSize: 52, marginTop: 24, letterSpacing: "-0.03em", lineHeight: 1.05 }}>
+              <h1 style={{ fontSize: 40, marginTop: 16, letterSpacing: "-0.03em", lineHeight: 1.05 }}>
                 What are you building?
               </h1>
-              <div style={{ marginTop: 36 }}>
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--muted)" }}>
+                Search the catalog, or browse the {KC_MODULES.length} AI tools below.
+              </p>
+              <div style={{ marginTop: 16 }}>
                 <Composer
                   initialSegments={seedSegments ?? undefined}
                   onSubmit={submit}
@@ -773,47 +776,25 @@ export default function MarketplaceClient({
                 </div>
               )}
 
-              <div className="v3-examples">
-                <div className="v3-mono-label" style={{ marginBottom: 4 }}>Try one</div>
-                {EXAMPLES.map((s) => (
-                  <button key={s} className="v3-example" onClick={() => pickExample(s)}>
-                    <span className="v3-example-label">Example</span>
-                    <span>{s}</span>
-                    <span className="ex-arrow"><ArrowRight size={14} /></span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Sell CTA */}
-              <div style={{
-                marginTop: 28, display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "16px 20px", borderRadius: 14,
-                background: "var(--elevated, var(--card))", border: "1px solid var(--border)",
-                gap: 16, flexWrap: "wrap",
-              }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>
-                    Got a GitHub repo? Turn it into a sellable API.
+              {/* ── CATALOG — directly below the search; the user's first reach. ── */}
+              <div style={{ marginTop: 28 }}>
+                <div className="between" style={{ marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+                  <div>
+                    <div className="v3-mono-label">AI tools · catalog</div>
+                    {!loading && data && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "var(--faint)",
+                          fontFamily: "var(--font-mono)",
+                          marginTop: 2,
+                        }}
+                      >
+                        {data.total} {data.total === 1 ? "tool" : "tools"} ready to integrate
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                    Paste a link → we detect endpoints → you earn on every call.
-                  </div>
-                </div>
-                <Link href="/submit" style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "9px 18px", borderRadius: 9, background: "var(--blue)",
-                  color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none",
-                  whiteSpace: "nowrap", flexShrink: 0,
-                }}>
-                  Submit your build →
-                </Link>
-              </div>
-
-              {/* Browse band below */}
-              <div style={{ marginTop: 64, paddingTop: 40, borderTop: "1px solid var(--border)" }}>
-                <div className="between" style={{ marginBottom: 20 }}>
-                  <span className="v3-mono-label">Or browse the catalog</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     {CATEGORIES.map((cat) => {
                       const active = category === cat.value;
                       const color = cat.value === "all" ? "var(--blue)" : (CAT_COLORS[cat.value] ?? "var(--blue)");
@@ -838,11 +819,6 @@ export default function MarketplaceClient({
                   </div>
                 </div>
 
-                {!loading && data && (
-                  <p className="text-xs mb-4" style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}>
-                    {data.total} tool{data.total !== 1 ? "s" : ""}
-                  </p>
-                )}
                 {error && (
                   <div className="rounded-xl border p-6 text-center mb-6"
                     style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.2)" }}>
@@ -869,6 +845,42 @@ export default function MarketplaceClient({
                 {data && (
                   <Pagination page={data.page} pages={data.pages} total={data.total} limit={data.limit} onChange={handlePage} />
                 )}
+              </div>
+
+              {/* ── Examples + Sell CTA — moved BELOW the catalog ── */}
+              <div className="v3-examples" style={{ marginTop: 40, paddingTop: 32, borderTop: "1px solid var(--border)" }}>
+                <div className="v3-mono-label" style={{ marginBottom: 4 }}>Try a smart-search prompt</div>
+                {EXAMPLES.map((s) => (
+                  <button key={s} className="v3-example" onClick={() => pickExample(s)}>
+                    <span className="v3-example-label">Example</span>
+                    <span>{s}</span>
+                    <span className="ex-arrow"><ArrowRight size={14} /></span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{
+                marginTop: 24, display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "16px 20px", borderRadius: 14,
+                background: "var(--elevated, var(--card))", border: "1px solid var(--border)",
+                gap: 16, flexWrap: "wrap",
+              }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>
+                    Got a GitHub repo? Turn it into a sellable API.
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                    Paste a link → we detect endpoints → you earn on every call.
+                  </div>
+                </div>
+                <Link href="/submit" style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "9px 18px", borderRadius: 9, background: "var(--blue)",
+                  color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none",
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}>
+                  Submit your build →
+                </Link>
               </div>
             </div>
           )}

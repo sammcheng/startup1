@@ -1,28 +1,14 @@
-"use client";
+// Docs page — DocsClient is "use client" so Next handles the boundary.
+// No dynamic-import indirection here; the previous "white flash" was just
+// the IntersectionObserver running on first paint, which is fine.
 
-// Docs is dynamic-imported with ssr:false so the IntersectionObserver
-// scroll-spy + hash deep-linking don't cause a hydration flash on the
-// first paint. Same pattern as /approver.
+import DocsClient from "./DocsClient";
 
-import dynamic from "next/dynamic";
-
-const DocsClient = dynamic(() => import("./DocsClient"), {
-  ssr: false,
-  loading: () => (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "var(--bg)",
-        paddingTop: 120,
-        textAlign: "center",
-        color: "var(--muted)",
-        fontFamily: "var(--font-mono)",
-      }}
-    >
-      Loading docs…
-    </main>
-  ),
-});
+export const metadata = {
+  title: "Documentation — Hackmarket",
+  description:
+    "Getting started, API reference, submission guidelines, approver process, integration, and FAQ.",
+};
 
 export default function DocsPage() {
   return <DocsClient />;
