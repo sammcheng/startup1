@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import FileInput from "./FileInput";
 import DynamicForm from "./DynamicForm";
@@ -32,6 +32,8 @@ export default function DemoRunner({
   inputSchema,
   outputType,
   mockResponse,
+  demoEndpoint: demoEndpointProp,
+  autoRun,
 }: DemoRunnerProps) {
   const schema = (inputSchema ?? {}) as DemoInputSchema;
   const [textValue, setTextValue] = useState(defaultStringValue(schema));
@@ -40,6 +42,7 @@ export default function DemoRunner({
   const [fileValue, setFileValue] = useState<FileValue>(null);
   const [imageValue, setImageValue] = useState<ImageValue>(null);
   const [dynamicValue, setDynamicValue] = useState<Record<string, unknown>>({});
+  const autoRanRef = useRef(false);
   const [result, setResult] = useState<DemoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -77,13 +80,27 @@ export default function DemoRunner({
     return null;
   }, [dynamicFields, dynamicValue, fileValue, imageValue, inputType, jsonValue, textValue, urlValue]);
 
-  async function handleRun() {
+  // Auto-run: pre-fill fields using QA-generated inputs if available, else smartDefault
+  useEffect(() => {
+    if (!autoRun || autoRanRef.current) return;
+    const fields = Array.isArray(schema.fields) ? schema.fields : [];
+    if (fields.length === 0) return;
+    const fills: Record<string, unknown> = {};
+    for (const field of fields) {
+      const val = schema.qa_inputs?.[field.name] ?? smartDefault(field);
+      if (val !== null) fills[field.name] = val;
+    }
+    if (Object.keys(fills).length === 0) return;
+    autoRanRef.current = true;
+    setDynamicValue(fills);
+    const t = setTimeout(() => void handleRun(fills), 700);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRun]);
+
+  async function handleRun(overrideDynamic?: Record<string, unknown>) {
     if (sessionLimited) {
       setError("You’ve used the 10 free demo calls for this session. Sign up to keep testing tools.");
-      return;
-    }
-    if (validationError) {
-      setError(validationError);
       return;
     }
 
@@ -93,6 +110,7 @@ export default function DemoRunner({
 
     const startedAt = performance.now();
     try {
+      const useDynamic = overrideDynamic ?? dynamicValue;
       const payload = buildPayload({
         inputType,
         textValue,
@@ -100,13 +118,14 @@ export default function DemoRunner({
         urlValue,
         fileValue,
         imageValue,
-        dynamicValue,
+        dynamicValue: useDynamic,
         dynamicFields,
       });
 
-      const demoEndpoint = DEMO_API_KEY
-        ? `${GATEWAY_BASE}/tools/${toolSlug}`
-        : `${DEMO_BASE}/tools/${toolSlug}/demo`;
+      const demoEndpoint = demoEndpointProp
+        ?? (DEMO_API_KEY
+          ? `${GATEWAY_BASE}/tools/${toolSlug}`
+          : `${DEMO_BASE}/tools/${toolSlug}/demo`);
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -203,7 +222,7 @@ export default function DemoRunner({
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={handleRun}
+              onClick={() => void handleRun()}
               disabled={isRunning || sessionLimited}
               className="rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-stone-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -582,6 +601,31 @@ function extractFileValue(data: unknown) {
     return String((data as { file_url?: unknown }).file_url ?? "");
   }
   return null;
+}
+
+function smartDefault(field: DemoSchemaField): string | number | null {
+  if (field.type === "file" || field.type === "url") return null;
+  if (field.type === "number") return 42;
+  const n = field.name.toLowerCase();
+  if (n.includes("text") || n.includes("content") || n.includes("input") || n.includes("body"))
+    return "The quick brown fox jumps over the lazy dog. This is an automated demo trial.";
+  if (n.includes("query") || n.includes("question") || n.includes("search") || n.includes("prompt"))
+    return "What can this tool do? Demonstrate its capabilities with this sample query.";
+  if (n.includes("message") || n.includes("msg"))
+    return "Hello! This is an automated demo message.";
+  if (n.includes("code") || n.includes("script") || n.includes("source"))
+    return "def hello():\n    print('Hello, World!')";
+  if (n.includes("description") || n.includes("desc"))
+    return "A sample product for automated demo testing purposes.";
+  if (n.includes("name") || n.includes("title"))
+    return "Demo Sample";
+  if (n.includes("email"))
+    return "demo@example.com";
+  if (n.includes("lang") || n.includes("language"))
+    return "en";
+  return field.placeholder && field.placeholder.length > 3 && field.placeholder !== field.name
+    ? field.placeholder
+    : "sample input";
 }
 
 function readSessionCount() {

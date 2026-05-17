@@ -10,7 +10,14 @@ const CONVERTER_URL =
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Step = "input" | "analyzing" | "done" | "error";
+type Step = "input" | "analyzing" | "qa" | "done" | "error";
+type ListState = "idle" | "listing" | "submitted";
+
+interface QaResult {
+  certified: boolean;
+  avg_ms: number | null;
+  inputs: Record<string, unknown>;
+}
 
 interface Endpoint {
   method: string;
@@ -32,8 +39,8 @@ interface AnalysisResult {
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 function StepDots({ step }: { step: Step }) {
-  const steps = ["input", "analyzing", "done"];
-  const labels = ["Repo", "Analyzing", "Live"];
+  const steps = ["input", "analyzing", "qa", "done"];
+  const labels = ["Repo", "Analyzing", "QA Check", "Live"];
   const idx = step === "error" ? 1 : steps.indexOf(step);
 
   return (
@@ -97,6 +104,58 @@ function Terminal({ lines, done }: { lines: string[]; done: boolean }) {
         </div>
       )}
       <div ref={ref} />
+    </div>
+  );
+}
+
+// ─── QA animation ─────────────────────────────────────────────────────────────
+
+function QaCertAnimation({ done, result }: { done: boolean; result: QaResult | null }) {
+  return (
+    <div style={{ textAlign: "center", padding: "24px 0" }}>
+      {!done ? (
+        <>
+          <div style={{
+            width: 64, height: 64, borderRadius: "50%", margin: "0 auto 20px",
+            background: "rgba(59,130,246,0.12)", border: "2px solid rgba(59,130,246,0.4)",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28,
+            animation: "qaSpinPulse 1.5s ease-in-out infinite",
+          }}>🔬</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: "var(--text)", marginBottom: 8 }}>
+            Running AI QA Check...
+          </div>
+          <div style={{ color: "var(--muted)", fontSize: 13.5, maxWidth: 340, margin: "0 auto" }}>
+            Groq is analyzing your API spec and generating realistic demo inputs. Running 3 benchmark calls.
+          </div>
+          <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: 20 }}>
+            {[0, 1, 2].map(i => (
+              <div key={i} style={{
+                width: 8, height: 8, borderRadius: "50%", background: "var(--blue)",
+                animation: `qaDot 1.2s ease-in-out ${i * 0.2}s infinite`,
+              }} />
+            ))}
+          </div>
+        </>
+      ) : result ? (
+        <div className="fade-up">
+          <div style={{
+            width: 64, height: 64, borderRadius: "50%", margin: "0 auto 20px",
+            background: result.certified ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.12)",
+            border: `2px solid ${result.certified ? "var(--green)" : "#f59e0b"}`,
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28,
+          }}>
+            {result.certified ? "✓" : "⚠"}
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: result.certified ? "var(--green)" : "#f59e0b", marginBottom: 8 }}>
+            {result.certified ? "QA Certified!" : "QA Complete"}
+          </div>
+          {result.avg_ms && (
+            <div style={{ color: "var(--muted)", fontSize: 13.5 }}>
+              Avg latency: <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{result.avg_ms}ms</span>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -191,6 +250,9 @@ export default function PublishPage() {
   const [logLines, setLogLines] = useState<string[]>([]);
   const [result, setResult]   = useState<AnalysisResult | null>(null);
   const [errMsg, setErrMsg]   = useState("");
+  const [listState, setListState] = useState<ListState>("idle");
+  const [qaResult, setQaResult] = useState<QaResult | null>(null);
+  const [qaDone, setQaDone] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   function validate(url: string) {
@@ -267,6 +329,40 @@ export default function PublishPage() {
     }
   }
 
+  async function handleList() {
+    if (!result) return;
+    setListState("listing");
+    try {
+      const listRes = await fetch(`${CONVERTER_URL}/api/tools/${result.slug}/list`, { method: "POST" });
+      if (!listRes.ok) throw new Error(`Status ${listRes.status}`);
+
+      // Show QA animation step
+      setQaDone(false);
+      setQaResult(null);
+      setStep("qa");
+
+      // Run AI QA check
+      try {
+        const qaRes = await fetch(`${CONVERTER_URL}/api/tools/${result.slug}/qa`, { method: "POST" });
+        if (qaRes.ok) {
+          const data = await qaRes.json() as QaResult;
+          setQaResult(data);
+        }
+      } catch {
+        // QA failure is non-fatal
+      }
+
+      setQaDone(true);
+      // Brief pause to show the "certified" state before transitioning
+      await new Promise(r => setTimeout(r, 1400));
+
+      setListState("submitted");
+      setStep("done");
+    } catch {
+      setListState("idle");
+    }
+  }
+
   function reset() {
     abortRef.current?.abort();
     setStep("input");
@@ -275,6 +371,9 @@ export default function PublishPage() {
     setResult(null);
     setErrMsg("");
     setUrlError("");
+    setListState("idle");
+    setQaResult(null);
+    setQaDone(false);
   }
 
   const base = result ? `https://api.hackmarket.io/v1/tools/${result.slug}` : "";
@@ -286,6 +385,8 @@ export default function PublishPage() {
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
         .fade-up { animation: fadeUp 0.35s ease both; }
+        @keyframes qaSpinPulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.12);opacity:0.75} }
+        @keyframes qaDot { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }
       `}</style>
 
       <main style={{
@@ -414,6 +515,19 @@ export default function PublishPage() {
               </div>
             )}
 
+            {/* ── QA Check ───────────────────────────────────────────── */}
+            {step === "qa" && (
+              <div className="fade-up">
+                <h2 style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
+                  AI QA Certification
+                </h2>
+                <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 24 }}>
+                  Generating realistic demo inputs and benchmarking your API.
+                </p>
+                <QaCertAnimation done={qaDone} result={qaResult} />
+              </div>
+            )}
+
             {/* ── Error ──────────────────────────────────────────────── */}
             {step === "error" && (
               <div className="fade-up">
@@ -444,15 +558,18 @@ export default function PublishPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
                   <div style={{
                     width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                    background: "rgba(34,197,94,0.12)", border: "2px solid var(--green)",
+                    background: listState === "submitted" ? "rgba(245,158,11,0.12)" : "rgba(34,197,94,0.12)",
+                    border: listState === "submitted" ? "2px solid #f59e0b" : "2px solid var(--green)",
                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20,
-                  }}>✓</div>
+                  }}>{listState === "submitted" ? "📋" : "✓"}</div>
                   <div>
                     <h2 style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 2 }}>
-                      {result.repo_name} is live.
+                      {listState === "submitted" ? `${result.repo_name} is under review` : `${result.repo_name} is ready.`}
                     </h2>
                     <p style={{ color: "var(--muted)", fontSize: 13.5 }}>
-                      {result.language} · {result.description}
+                      {listState === "submitted"
+                        ? "Typically approved within 24 hours. You'll be notified once it's live."
+                        : `${result.language} · ${result.description}`}
                     </p>
                   </div>
                 </div>
@@ -501,26 +618,109 @@ export default function PublishPage() {
                   </div>
                 )}
 
-                <div style={{ display: "flex", gap: 10 }}>
-                  <Link
-                    href={marketplaceUrl}
-                    style={{
-                      flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-                      padding: "13px", borderRadius: 12, background: "var(--green)",
-                      color: "#000", fontWeight: 700, fontSize: 14, textDecoration: "none",
-                    }}
-                  >
-                    View in Marketplace →
-                  </Link>
-                  <button onClick={reset} style={{
-                    padding: "13px 20px", borderRadius: 12,
-                    border: "1.5px solid var(--border)", background: "transparent",
-                    color: "var(--muted)", fontWeight: 500, fontSize: 14,
-                    fontFamily: "var(--font-body)", cursor: "pointer",
-                  }}>
-                    Publish another
-                  </button>
-                </div>
+                {listState === "submitted" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }} className="fade-up">
+                    <div style={{
+                      padding: "16px 18px", borderRadius: 12,
+                      background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.3)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: qaResult ? 12 : 0 }}>
+                        <span style={{ fontSize: 22 }}>📋</span>
+                        <div>
+                          <div style={{ fontWeight: 700, color: "#f59e0b", fontSize: 14, marginBottom: 2 }}>
+                            {result.repo_name} submitted for review
+                          </div>
+                          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                            A reviewer will approve your tool before it appears on the marketplace.
+                          </div>
+                        </div>
+                      </div>
+                      {qaResult && (
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 10, paddingTop: 10,
+                          borderTop: "1px solid rgba(245,158,11,0.2)",
+                        }}>
+                          <span style={{
+                            fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 700,
+                            padding: "3px 10px", borderRadius: 99,
+                            background: qaResult.certified ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)",
+                            color: qaResult.certified ? "var(--green)" : "#f59e0b",
+                            border: `1px solid ${qaResult.certified ? "rgba(34,197,94,0.3)" : "rgba(245,158,11,0.3)"}`,
+                          }}>
+                            {qaResult.certified ? "✓ QA Certified" : "⚠ QA Partial"}
+                          </span>
+                          {qaResult.avg_ms && (
+                            <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                              {qaResult.avg_ms}ms avg latency
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <Link
+                        href={`/tools/${result.slug}`}
+                        style={{
+                          flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                          padding: "13px", borderRadius: 12, background: "var(--blue)",
+                          color: "#fff", fontWeight: 700, fontSize: 14, textDecoration: "none",
+                        }}
+                      >
+                        View submission →
+                      </Link>
+                      <Link
+                        href="/approver"
+                        style={{
+                          flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                          padding: "13px", borderRadius: 12, background: "transparent",
+                          border: "1.5px solid var(--border)",
+                          color: "var(--muted)", fontWeight: 500, fontSize: 14, textDecoration: "none",
+                        }}
+                      >
+                        Approver dashboard →
+                      </Link>
+                    </div>
+                    <button onClick={reset} style={{
+                      padding: "10px", borderRadius: 10, border: "none",
+                      background: "transparent", color: "var(--faint)", fontSize: 13,
+                      cursor: "pointer",
+                    }}>
+                      + Publish another repo
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={handleList}
+                      disabled={listState === "listing"}
+                      style={{
+                        flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        padding: "13px", borderRadius: 12, background: "var(--green)",
+                        color: "#000", fontWeight: 700, fontSize: 14, border: "none",
+                        cursor: listState === "listing" ? "not-allowed" : "pointer",
+                        opacity: listState === "listing" ? 0.7 : 1,
+                        transition: "opacity 0.15s",
+                      }}
+                    >
+                      {listState === "listing" ? (
+                        <>
+                          <span style={{ display: "inline-block", animation: "blink 0.8s step-end infinite" }}>●</span>
+                          Submitting...
+                        </>
+                      ) : (
+                        <>Submit for Review →</>
+                      )}
+                    </button>
+                    <button onClick={reset} style={{
+                      padding: "13px 20px", borderRadius: 12,
+                      border: "1.5px solid var(--border)", background: "transparent",
+                      color: "var(--muted)", fontWeight: 500, fontSize: 14,
+                      fontFamily: "var(--font-body)", cursor: "pointer",
+                    }}>
+                      Publish another
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

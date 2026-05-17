@@ -8,6 +8,7 @@ import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
 import DemoRunner from "@/components/demo/DemoRunner";
+import LiveBenchmark from "@/components/demo/LiveBenchmark";
 
 export const dynamic = "force-dynamic";
 
@@ -153,9 +154,38 @@ export default async function ToolPage({
 
   const catColor = CAT_COLORS[tool.category] ?? "#6b7280";
   const listingUrlAndImageTool = supportsListingUrlAndImages(tool.input_schema as Record<string, unknown> | null);
+  const isConverterTool = Boolean(tool.api_endpoint?.includes("/api/tools/"));
+  const inputSchemaMeta = tool.input_schema as Record<string, unknown> | null;
+  const isQaCertified = Boolean(inputSchemaMeta?.qa_certified);
+  const qaAvgMs = inputSchemaMeta?.qa_avg_ms as number | undefined;
+  const isPendingReview = inputSchemaMeta?.review_status === "pending_review";
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg)" }}>
+
+      {isPendingReview && (
+        <div style={{
+          background: "rgba(245,158,11,0.08)", borderBottom: "1px solid rgba(245,158,11,0.25)",
+          padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>⏳</span>
+            <span style={{ fontSize: 13, color: "#f59e0b", fontWeight: 600 }}>
+              Pending review — not yet visible on the marketplace
+            </span>
+          </div>
+          <a
+            href="/approver"
+            style={{
+              fontSize: 12, fontFamily: "var(--font-mono)", padding: "4px 12px", borderRadius: 6,
+              border: "1px solid rgba(245,158,11,0.4)", color: "#f59e0b", textDecoration: "none",
+            }}
+          >
+            Review now →
+          </a>
+        </div>
+      )}
 
       {/* ── Breadcrumb nav ──────────────────────────────────────────────── */}
       <nav
@@ -222,7 +252,7 @@ export default async function ToolPage({
                 className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold"
                 style={{ background: `${catColor}25`, color: catColor }}
               >
-                {tool.seller.display_name[0]?.toUpperCase()}
+                {(tool.seller.display_name ?? "?")[0]?.toUpperCase() ?? "?"}
               </div>
             )}
             <span className="text-sm font-medium" style={{ color: "var(--text)" }}>
@@ -353,6 +383,26 @@ export default async function ToolPage({
                 </div>
               </div>
 
+              {isQaCertified && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)",
+                  borderRadius: 8, padding: "8px 12px",
+                }}>
+                  <span style={{ fontSize: 14, color: "var(--green)" }}>✓</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--green)", fontWeight: 700 }}>
+                      QA Certified
+                    </div>
+                    {qaAvgMs && (
+                      <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--faint)" }}>
+                        {qaAvgMs}ms avg · AI-verified demo
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* CTA buttons */}
               <div className="space-y-2.5">
                 {(tool.input_type || tool.input_schema) && tool.output_type && (
@@ -431,6 +481,11 @@ export default async function ToolPage({
                   {tool.ownership_type === "royalty" ? "Revenue share" : "One-time purchase"}
                 </span>
               </div>
+
+              {/* Live benchmark — only for converter tools with a real demo endpoint */}
+              {isConverterTool && tool.api_endpoint && (
+                <LiveBenchmark endpoint={tool.api_endpoint} />
+              )}
             </div>
           </aside>
         </div>
@@ -444,6 +499,8 @@ export default async function ToolPage({
             inputType={tool.input_type}
             inputSchema={tool.input_schema}
             outputType={tool.output_type}
+            demoEndpoint={tool.api_endpoint ?? undefined}
+            autoRun={isConverterTool}
             mockResponse={
               (tool.output_schema as Record<string, unknown> | null)?.example_output ?? undefined
             }
