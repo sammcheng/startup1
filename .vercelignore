@@ -1,0 +1,15 @@
+# Python backend and other apps are NOT deployed to Vercel.
+apps/api
+apps/converter
+apps/seller-tools
+nginx
+docker-compose*.yml
+Dockerfile*
+analyze.py
+scripts
+docs
+
+# OS / editor noise
+.DS_Store
+.idea
+.vscode
