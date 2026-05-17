@@ -9,6 +9,7 @@ import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
 import DemoRunner from "@/components/demo/DemoRunner";
 import LiveBenchmark from "@/components/demo/LiveBenchmark";
+import DemoTabs from "@/components/demos/DemoTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -494,15 +495,20 @@ export default async function ToolPage({
       {/* ── Demo section ────────────────────────────────────────────────── */}
       <div id="demo">
         <div className="max-w-7xl mx-auto px-6 pb-12">
-          <DemoRunner
-            toolSlug={tool.slug}
-            inputType={tool.input_type}
-            inputSchema={tool.input_schema}
-            outputType={tool.output_type}
-            demoEndpoint={tool.api_endpoint ?? undefined}
-            autoRun={isConverterTool}
-            mockResponse={
-              (tool.output_schema as Record<string, unknown> | null)?.example_output ?? undefined
+          <DemoTabs
+            slug={tool.slug}
+            apiPlayground={
+              <DemoRunner
+                toolSlug={tool.slug}
+                inputType={tool.input_type}
+                inputSchema={tool.input_schema}
+                outputType={tool.output_type}
+                demoEndpoint={tool.api_endpoint ?? undefined}
+                autoRun={isConverterTool}
+                mockResponse={
+                  (tool.output_schema as Record<string, unknown> | null)?.example_output ?? undefined
+                }
+              />
             }
           />
         </div>

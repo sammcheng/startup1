@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Tool } from "@/types/tool";
+import HeroPipeline from "@/components/HeroPipeline";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -132,7 +133,7 @@ function FloatingSnippets() {
 function HeroSection() {
   return (
     <section
-      className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-10 pb-16 text-center overflow-hidden"
+      className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-10 pb-16 overflow-hidden"
       style={{ background: "var(--bg)" }}
     >
       {/* Radial spotlight */}
@@ -146,9 +147,11 @@ function HeroSection() {
 
       <FloatingSnippets />
 
-      <div className="relative z-10 max-w-4xl mx-auto">
+      <div className="relative z-10 max-w-7xl mx-auto w-full grid lg:grid-cols-[1.05fr_0.95fr] gap-12 items-center">
+        {/* Left column: text + CTAs */}
+        <div className="text-center lg:text-left">
         {/* Badge */}
-        <div className="animate-fade-up flex justify-center mb-8">
+        <div className="animate-fade-up flex justify-center lg:justify-start mb-8">
           <span
             className="inline-flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-full border"
             style={{
@@ -190,7 +193,7 @@ function HeroSection() {
 
         {/* Sub-headline */}
         <p
-          className="animate-fade-up delay-200 text-lg sm:text-xl leading-relaxed mt-8 mb-10 mx-auto"
+          className="animate-fade-up delay-200 text-lg sm:text-xl leading-relaxed mt-8 mb-10 mx-auto lg:mx-0"
           style={{ color: "var(--muted)", maxWidth: "560px" }}
         >
           A curated API marketplace where developers sell their AI tools and
@@ -198,7 +201,7 @@ function HeroSection() {
         </p>
 
         {/* CTAs */}
-        <div className="animate-fade-up delay-300 flex flex-col sm:flex-row items-center justify-center gap-3">
+        <div className="animate-fade-up delay-300 flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-3">
           <Link
             href="/marketplace"
             className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl text-base font-semibold transition-all hover:opacity-90 active:scale-[0.97]"
@@ -222,7 +225,7 @@ function HeroSection() {
 
         {/* Social proof row */}
         <div
-          className="animate-fade-up delay-400 flex items-center justify-center gap-6 mt-12"
+          className="animate-fade-up delay-400 flex flex-wrap items-center justify-center lg:justify-start gap-x-6 gap-y-2 mt-12"
           style={{ color: "var(--faint)" }}
         >
           <span className="text-xs font-mono">89 developers earning</span>
@@ -230,6 +233,12 @@ function HeroSection() {
           <span className="text-xs font-mono">1,247 tools listed</span>
           <span className="w-1 h-1 rounded-full bg-current opacity-50" />
           <span className="text-xs font-mono">4.2M API calls served</span>
+        </div>
+        </div>
+
+        {/* Right column: animated pipeline visualization */}
+        <div className="hidden lg:flex items-center justify-center animate-fade-up delay-200">
+          <HeroPipeline />
         </div>
       </div>
 
