@@ -1,485 +1,1128 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// Approver Dashboard — reviews submissions waiting for human sign-off.
+// Backed by the local submissions store; each submission can be inspected,
+// a PDF API Quality Report can be downloaded, and the approver can
+// approve (→ "listed") or reject (→ "rejected" with reason).
 
-const CONVERTER_URL =
-  process.env.NEXT_PUBLIC_CONVERTER_URL ?? "http://localhost:8080";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  getSubmission,
+  listSubmissions,
+  updateSubmission,
+  type SubmissionRecord,
+  type SubmissionStage,
+} from "@/lib/submissions";
+import { downloadReport, reportBlobUrl } from "@/lib/pdfReport";
 
-interface Endpoint {
-  method: string;
-  path: string;
-  summary: string;
-  request_body?: Record<string, string>;
-}
+const ADMIN_TOKEN = "admin";
 
-interface PendingTool {
-  id: string;
-  slug: string;
-  repo_url: string;
-  name: string;
-  language: string;
-  description: string;
-  endpoints: Endpoint[];
-  qa_certified: boolean;
-  qa_avg_ms: number | null;
-  pdf_summary: string | null;
-  created_at: string;
-}
-
-type ActionState = "idle" | "approving" | "rejecting";
-
-function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
+function timeAgo(iso: string): string {
+  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
   if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
 }
 
-function renderMarkdown(md: string): string {
-  const lines = md.split("\n");
-  const out: string[] = [];
-  let inTable = false;
-  let tableRows: string[] = [];
-  let inList = false;
-  let listItems: string[] = [];
-
-  function flushTable() {
-    if (tableRows.length) {
-      out.push(`<table style="border-collapse:collapse;width:100%;margin:8px 0">${tableRows.join("")}</table>`);
-      tableRows = [];
-    }
-    inTable = false;
-  }
-  function flushList() {
-    if (listItems.length) {
-      out.push(`<ul style="padding-left:18px;margin:6px 0">${listItems.join("")}</ul>`);
-      listItems = [];
-    }
-    inList = false;
-  }
-
-  for (const raw of lines) {
-    const line = raw
-      .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#e5e5e5">$1</strong>')
-      .replace(/`(.+?)`/g, '<code style="background:#1a1a1a;padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12px;color:#4ade80">$1</code>');
-
-    if (/^\| .+ \|$/.test(line)) {
-      if (inList) flushList();
-      inTable = true;
-      const cells = line.split("|").filter(Boolean).map(c =>
-        `<td style="padding:4px 10px;border:1px solid #333;font-size:12px">${c.trim()}</td>`
-      ).join("");
-      tableRows.push(`<tr>${cells}</tr>`);
-      continue;
-    }
-    if (inTable) flushTable();
-
-    if (/^- .+/.test(line)) {
-      if (inTable) flushTable();
-      inList = true;
-      listItems.push(`<li style="margin:2px 0;font-size:13px">${line.slice(2)}</li>`);
-      continue;
-    }
-    if (inList) flushList();
-
-    if (/^# /.test(line)) {
-      out.push(`<h1 style="font-size:18px;font-weight:700;margin:0 0 12px">${line.slice(2)}</h1>`);
-    } else if (/^## /.test(line)) {
-      out.push(`<h2 style="font-size:14px;font-weight:700;margin:16px 0 8px;color:#d4d4d4">${line.slice(3)}</h2>`);
-    } else if (line === "---") {
-      out.push('<hr style="border:none;border-top:1px solid #333;margin:14px 0"/>');
-    } else if (line === "") {
-      out.push("<br/>");
-    } else {
-      out.push(`<p style="margin:4px 0;font-size:13px">${line}</p>`);
-    }
-  }
-  if (inTable) flushTable();
-  if (inList) flushList();
-  return out.join("");
+function scoreColor(n: number): string {
+  if (n >= 80) return "#16a34a";
+  if (n >= 60) return "#d97706";
+  return "#dc2626";
 }
 
 export default function ApproverPage() {
-  const [tools, setTools] = useState<PendingTool[]>([]);
-  const [selected, setSelected] = useState<PendingTool | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [action, setAction] = useState<ActionState>("idle");
-  const [rejectNotes, setRejectNotes] = useState("");
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [showRejectBox, setShowRejectBox] = useState(false);
+  // ─── Auth gate (URL token or prompt) ──────────────────────────────────
+  const [authed, setAuthed] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => {
-    void fetchPending();
+    const url = new URL(window.location.href);
+    const param = url.searchParams.get("token");
+    const stored = window.sessionStorage.getItem("hackmarket.admin.token");
+    if (param === ADMIN_TOKEN || stored === ADMIN_TOKEN) {
+      window.sessionStorage.setItem("hackmarket.admin.token", ADMIN_TOKEN);
+      setAuthed(true);
+    }
+    setAuthChecked(true);
   }, []);
 
-  async function fetchPending() {
-    setLoading(true);
-    try {
-      const res = await fetch(`${CONVERTER_URL}/api/tools/pending`);
-      const data = await res.json() as { tools: PendingTool[] };
-      setTools(data.tools);
-      if (data.tools.length > 0 && !selected) setSelected(data.tools[0]);
-    } catch {
-      // converter offline
-    } finally {
-      setLoading(false);
-    }
+  // ─── Data ─────────────────────────────────────────────────────────────
+  const [tick, setTick] = useState(0);
+  const submissions = useMemo<SubmissionRecord[]>(() => {
+    void tick;
+    return listSubmissions();
+  }, [tick]);
+
+  // Show submissions awaiting review (manual_review) at the top, then any
+  // that have moved past it (listed/approved/rejected) so the approver can
+  // see their recent actions.
+  const queue = submissions.filter((s) => s.stage === "manual_review");
+  const recent = submissions.filter(
+    (s) =>
+      s.stage === "listed" ||
+      s.stage === "approved" ||
+      s.stage === "rejected",
+  );
+
+  // ─── Focused submission ───────────────────────────────────────────────
+  const [focusId, setFocusId] = useState<string | null>(null);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const focus = url.searchParams.get("focus");
+    if (focus) setFocusId(focus);
+    else if (queue.length > 0) setFocusId(queue[0].id);
+  }, [queue.length]);
+  const focused = focusId ? getSubmission(focusId) : null;
+
+  // ─── Approve / reject ─────────────────────────────────────────────────
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [confirming, setConfirming] = useState<null | "approve" | "reject">(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  function flash(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
   }
 
-  function showToast(msg: string, ok: boolean) {
-    setToast({ msg, ok });
-    setTimeout(() => setToast(null), 3000);
+  function doApprove() {
+    if (!focused) return;
+    updateSubmission(focused.id, { stage: "listed" });
+    setConfirming(null);
+    flash(`Approved ${focused.name} — now live on the marketplace.`);
+    setTick((t) => t + 1);
   }
 
-  async function handleApprove() {
-    if (!selected) return;
-    setAction("approving");
-    try {
-      await fetch(`${CONVERTER_URL}/api/tools/${selected.slug}/approve`, { method: "POST" });
-      setTools(prev => prev.filter(t => t.slug !== selected.slug));
-      const next = tools.find(t => t.slug !== selected.slug) ?? null;
-      setSelected(next);
-      showToast(`✓ ${selected.name} approved and live`, true);
-    } catch {
-      showToast("Approve failed", false);
-    } finally {
-      setAction("idle");
-    }
+  function doReject() {
+    if (!focused || !rejectReason.trim()) return;
+    updateSubmission(focused.id, {
+      stage: "rejected",
+      rejection_reason: rejectReason.trim(),
+    });
+    setConfirming(null);
+    setRejecting(false);
+    setRejectReason("");
+    flash(`Rejected ${focused.name}.`);
+    setTick((t) => t + 1);
   }
 
-  async function handleReject() {
-    if (!selected) return;
-    setAction("rejecting");
-    try {
-      await fetch(`${CONVERTER_URL}/api/tools/${selected.slug}/reject`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: rejectNotes }),
-      });
-      setTools(prev => prev.filter(t => t.slug !== selected.slug));
-      const next = tools.find(t => t.slug !== selected.slug) ?? null;
-      setSelected(next);
-      setRejectNotes("");
-      setShowRejectBox(false);
-      showToast(`✗ ${selected.name} rejected`, false);
-    } catch {
-      showToast("Reject failed", false);
-    } finally {
-      setAction("idle");
-    }
+  // ─── Auth gate UI ─────────────────────────────────────────────────────
+  if (!authChecked) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          background: "var(--bg)",
+          paddingTop: 120,
+          textAlign: "center",
+          color: "var(--muted)",
+        }}
+      >
+        Checking access…
+      </main>
+    );
   }
 
-  return (
-    <>
-      <style>{`
-        @media print {
-          .no-print { display: none !important; }
-          .print-area {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: white; color: black; padding: 40px; font-family: Georgia, serif;
-            font-size: 13px; line-height: 1.6;
-          }
-          .print-area h1 { font-size: 22px; margin-bottom: 6px; }
-          .print-area h2 { font-size: 15px; margin-top: 18px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-          .print-area table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-          .print-area td, .print-area th { border: 1px solid #ccc; padding: 4px 8px; font-size: 12px; }
-          .print-area hr { border-top: 1px solid #ddd; margin: 14px 0; }
-          .print-area code { background: #f5f5f5; padding: 1px 4px; border-radius: 2px; font-size: 11px; }
-        }
-      `}</style>
-
-      {/* Toast */}
-      {toast && (
-        <div style={{
-          position: "fixed", top: 20, right: 20, zIndex: 9999,
-          padding: "12px 20px", borderRadius: 10, fontWeight: 600, fontSize: 13,
-          background: toast.ok ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-          border: `1px solid ${toast.ok ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)"}`,
-          color: toast.ok ? "var(--green)" : "#ef4444",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
-        }}>
-          {toast.msg}
-        </div>
-      )}
-
-      <div style={{ minHeight: "calc(100vh - 56px)", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-        {/* Header */}
-        <div className="no-print" style={{
-          borderBottom: "1px solid var(--border)", padding: "20px 32px",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div>
-            <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--faint)", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4 }}>
-              Internal Tool
-            </div>
-            <h1 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, color: "var(--text)", margin: 0 }}>
-              Approver Dashboard
-            </h1>
+  if (!authed) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          background: "var(--bg)",
+          paddingTop: 120,
+          paddingBottom: 80,
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 420,
+            margin: "0 auto",
+            padding: 32,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: 16,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--blue)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            Admin access
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              padding: "6px 14px", borderRadius: 99, fontSize: 12, fontFamily: "var(--font-mono)",
-              background: tools.length > 0 ? "rgba(245,158,11,0.12)" : "rgba(34,197,94,0.1)",
-              color: tools.length > 0 ? "#f59e0b" : "var(--green)",
-              border: `1px solid ${tools.length > 0 ? "rgba(245,158,11,0.3)" : "rgba(34,197,94,0.25)"}`,
-            }}>
-              {tools.length} pending
-            </div>
-            <button
-              onClick={() => void fetchPending()}
+          <h1
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 22,
+              color: "var(--text)",
+              margin: "10px 0 6px",
+            }}
+          >
+            Reviewer login
+          </h1>
+          <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 18 }}>
+            Enter the admin token to access the approver queue. (Demo token:{" "}
+            <code>admin</code>)
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (tokenInput === ADMIN_TOKEN) {
+                window.sessionStorage.setItem("hackmarket.admin.token", ADMIN_TOKEN);
+                setAuthed(true);
+              } else {
+                setAuthError("Invalid token.");
+              }
+            }}
+          >
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(e) => {
+                setTokenInput(e.target.value);
+                setAuthError("");
+              }}
+              placeholder="Token"
               style={{
-                padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)",
-                background: "transparent", color: "var(--muted)", fontSize: 12,
-                fontFamily: "var(--font-mono)", cursor: "pointer",
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${authError ? "#dc2626" : "var(--border)"}`,
+                background: "var(--bg)",
+                color: "var(--text)",
+                fontSize: 14,
+                fontFamily: "var(--font-mono)",
+              }}
+            />
+            {authError && (
+              <div
+                style={{ color: "#dc2626", fontSize: 12, marginTop: 6 }}
+              >
+                {authError}
+              </div>
+            )}
+            <button
+              type="submit"
+              style={{
+                marginTop: 14,
+                width: "100%",
+                padding: "10px",
+                borderRadius: 8,
+                background: "var(--blue)",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 14,
+                border: "none",
+                cursor: "pointer",
               }}
             >
-              Refresh
+              Sign in
             </button>
-          </div>
+          </form>
         </div>
+      </main>
+    );
+  }
 
-        {/* Body */}
-        <div className="no-print" style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-          {/* Left: queue */}
-          <div style={{
-            width: 280, borderRight: "1px solid var(--border)",
-            overflowY: "auto", flexShrink: 0,
-          }}>
-            {loading ? (
-              <div style={{ padding: 24, color: "var(--faint)", fontSize: 13, fontFamily: "var(--font-mono)" }}>
-                Loading...
-              </div>
-            ) : tools.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center" }}>
-                <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
-                <div style={{ color: "var(--muted)", fontSize: 13 }}>Queue is empty</div>
-              </div>
-            ) : (
-              tools.map(tool => (
-                <button
-                  key={tool.slug}
-                  onClick={() => { setSelected(tool); setShowRejectBox(false); }}
-                  style={{
-                    width: "100%", padding: "14px 16px", textAlign: "left",
-                    background: selected?.slug === tool.slug ? "var(--card)" : "transparent",
-                    border: "none", borderBottom: "1px solid var(--border)",
-                    cursor: "pointer",
-                    borderLeft: selected?.slug === tool.slug ? "3px solid var(--blue)" : "3px solid transparent",
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)", marginBottom: 4 }}>
-                    {tool.name}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{
-                      fontSize: 10, fontFamily: "var(--font-mono)", padding: "2px 6px", borderRadius: 4,
-                      background: "var(--elevated)", color: "var(--muted)",
-                    }}>
-                      {tool.language}
-                    </span>
-                    {tool.qa_certified && (
-                      <span style={{ fontSize: 10, color: "var(--green)", fontFamily: "var(--font-mono)" }}>✓ QA</span>
-                    )}
-                    <span style={{ fontSize: 10, color: "var(--faint)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
-                      {timeAgo(tool.created_at)}
-                    </span>
-                  </div>
-                </button>
-              ))
-            )}
+  // ─── Main dashboard ───────────────────────────────────────────────────
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg)",
+        paddingTop: 92,
+        paddingBottom: 80,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 1180,
+          margin: "0 auto",
+          padding: "0 28px",
+        }}
+      >
+        <header
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            flexWrap: "wrap",
+            gap: 16,
+            marginBottom: 28,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--blue)",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              Approver dashboard
+            </div>
+            <h1
+              style={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 700,
+                fontSize: 32,
+                color: "var(--text)",
+                margin: "12px 0 6px",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {queue.length} pending review
+            </h1>
+            <p style={{ color: "var(--muted)", fontSize: 14 }}>
+              Click a submission to inspect its AI Quality Report.
+            </p>
           </div>
+        </header>
 
-          {/* Right: detail */}
-          {selected ? (
-            <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px" }}>
-              {/* Tool header */}
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                  <div>
-                    <h2 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>
-                      {selected.name}
-                    </h2>
-                    <p style={{ color: "var(--muted)", fontSize: 14, maxWidth: 560, margin: 0 }}>
-                      {selected.description}
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    {selected.qa_certified && (
-                      <span style={{
-                        fontSize: 12, fontFamily: "var(--font-mono)", fontWeight: 700,
-                        padding: "4px 12px", borderRadius: 99,
-                        background: "rgba(34,197,94,0.1)", color: "var(--green)",
-                        border: "1px solid rgba(34,197,94,0.25)",
-                      }}>
-                        ✓ QA Certified{selected.qa_avg_ms ? ` · ${selected.qa_avg_ms}ms` : ""}
-                      </span>
-                    )}
-                    <a
-                      href={selected.repo_url} target="_blank" rel="noopener noreferrer"
-                      style={{
-                        fontSize: 12, fontFamily: "var(--font-mono)", padding: "4px 12px",
-                        borderRadius: 99, border: "1px solid var(--border)",
-                        color: "var(--muted)", textDecoration: "none",
-                      }}
-                    >
-                      GitHub ↗
-                    </a>
-                  </div>
-                </div>
-
-                {/* Endpoints */}
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 11, color: "var(--faint)", fontFamily: "var(--font-mono)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                    {selected.endpoints.length} Endpoints
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {selected.endpoints.map((ep, i) => (
-                      <div key={i} style={{
-                        display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-                        borderRadius: 8, background: "var(--card)", border: "1px solid var(--border)",
-                      }}>
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4,
-                          background: ep.method === "GET" ? "rgba(34,197,94,0.12)" : "rgba(59,130,246,0.12)",
-                          color: ep.method === "GET" ? "var(--green)" : "var(--blue)",
-                          fontFamily: "var(--font-mono)",
-                        }}>
-                          {ep.method}
-                        </span>
-                        <code style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text)" }}>
-                          {ep.path}
-                        </code>
-                        <span style={{ color: "var(--faint)", fontSize: 12 }}>{ep.summary}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* PDF Summary */}
-              {selected.pdf_summary && (
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, color: "var(--faint)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                      AI-Generated Review Summary
-                    </div>
-                    <button
-                      onClick={() => window.print()}
-                      style={{
-                        fontSize: 12, fontFamily: "var(--font-mono)", padding: "4px 12px",
-                        borderRadius: 6, border: "1px solid var(--border)",
-                        background: "transparent", color: "var(--muted)", cursor: "pointer",
-                      }}
-                    >
-                      Print / Save as PDF ↗
-                    </button>
-                  </div>
-                  <div
-                    className="print-area"
-                    style={{
-                      background: "var(--card)", border: "1px solid var(--border)",
-                      borderRadius: 12, padding: "20px 24px",
-                      color: "var(--text)", fontSize: 13, lineHeight: 1.7,
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: focused ? "minmax(320px, 1fr) 1.4fr" : "1fr",
+            gap: 18,
+          }}
+        >
+          {/* Queue column */}
+          <section
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <Section title="Awaiting review" badge={`${queue.length}`}>
+              {queue.length === 0 ? (
+                <EmptyState text="Inbox zero. New submissions land here." />
+              ) : (
+                queue.map((s) => (
+                  <SubmissionCard
+                    key={s.id}
+                    submission={s}
+                    focused={focused?.id === s.id}
+                    onClick={() => {
+                      setFocusId(s.id);
+                      setRejecting(false);
+                      setConfirming(null);
                     }}
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(selected.pdf_summary) }}
                   />
-                </div>
+                ))
               )}
+            </Section>
 
-              {/* Action buttons */}
-              <div style={{
-                padding: "20px 24px", borderRadius: 12,
-                background: "var(--card)", border: "1px solid var(--border)",
-              }}>
-                <div style={{ fontSize: 12, color: "var(--faint)", fontFamily: "var(--font-mono)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                  Decision
-                </div>
+            {recent.length > 0 && (
+              <Section title="Recent actions">
+                {recent.slice(0, 5).map((s) => (
+                  <SubmissionCard
+                    key={s.id}
+                    submission={s}
+                    focused={focused?.id === s.id}
+                    onClick={() => setFocusId(s.id)}
+                    compact
+                  />
+                ))}
+              </Section>
+            )}
+          </section>
 
-                {!showRejectBox ? (
-                  <div style={{ display: "flex", gap: 10 }}>
+          {/* Detail column */}
+          {focused && (
+            <section
+              style={{
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: 16,
+                padding: "26px 28px",
+                position: "relative",
+              }}
+            >
+              <DetailHeader submission={focused} />
+              <ScorecardRow submission={focused} />
+              <ContractBlock submission={focused} />
+              <FindingsBlock submission={focused} />
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  marginTop: 24,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <button
+                  onClick={() => downloadReport(focused)}
+                  style={primaryBtnStyle}
+                >
+                  📄 Download PDF report
+                </button>
+                <button
+                  onClick={() => {
+                    const url = reportBlobUrl(focused);
+                    window.open(url, "_blank");
+                  }}
+                  style={ghostBtnStyle}
+                >
+                  Preview report ↗
+                </button>
+                <div style={{ flex: 1 }} />
+                {focused.stage === "manual_review" && (
+                  <>
                     <button
-                      onClick={() => void handleApprove()}
-                      disabled={action !== "idle"}
-                      style={{
-                        flex: 1, padding: "13px", borderRadius: 10, border: "none",
-                        background: "var(--green)", color: "#000", fontWeight: 700, fontSize: 14,
-                        cursor: action !== "idle" ? "not-allowed" : "pointer",
-                        opacity: action === "approving" ? 0.7 : 1,
+                      onClick={() => {
+                        setRejecting(true);
+                        setConfirming(null);
                       }}
-                    >
-                      {action === "approving" ? "Approving..." : "✓ Approve & Go Live"}
-                    </button>
-                    <button
-                      onClick={() => setShowRejectBox(true)}
-                      disabled={action !== "idle"}
-                      style={{
-                        flex: 1, padding: "13px", borderRadius: 10,
-                        border: "1.5px solid rgba(239,68,68,0.4)",
-                        background: "rgba(239,68,68,0.07)", color: "#ef4444",
-                        fontWeight: 700, fontSize: 14,
-                        cursor: action !== "idle" ? "not-allowed" : "pointer",
-                      }}
+                      style={dangerBtnStyle}
                     >
                       ✗ Reject
                     </button>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <textarea
-                      placeholder="Reason for rejection (optional)..."
-                      value={rejectNotes}
-                      onChange={e => setRejectNotes(e.target.value)}
-                      rows={3}
-                      style={{
-                        width: "100%", padding: "10px 14px", borderRadius: 8,
-                        border: "1.5px solid rgba(239,68,68,0.3)",
-                        background: "var(--surface, #111)", color: "var(--text)",
-                        fontFamily: "var(--font-mono)", fontSize: 13, resize: "vertical",
-                        boxSizing: "border-box",
-                      }}
-                    />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => void handleReject()}
-                        disabled={action !== "idle"}
-                        style={{
-                          flex: 1, padding: "11px", borderRadius: 8, border: "none",
-                          background: "#ef4444", color: "#fff", fontWeight: 700, fontSize: 13,
-                          cursor: action !== "idle" ? "not-allowed" : "pointer",
-                          opacity: action === "rejecting" ? 0.7 : 1,
-                        }}
-                      >
-                        {action === "rejecting" ? "Rejecting..." : "Confirm Reject"}
-                      </button>
-                      <button
-                        onClick={() => { setShowRejectBox(false); setRejectNotes(""); }}
-                        style={{
-                          padding: "11px 18px", borderRadius: 8,
-                          border: "1px solid var(--border)", background: "transparent",
-                          color: "var(--muted)", fontSize: 13, cursor: "pointer",
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                    <button
+                      onClick={() => setConfirming("approve")}
+                      style={approveBtnStyle}
+                    >
+                      ✓ Approve
+                    </button>
+                  </>
+                )}
+                {focused.stage === "listed" && (
+                  <span
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 999,
+                      background: "rgba(22,163,74,0.12)",
+                      color: "#16a34a",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                    }}
+                  >
+                    ✓ LIVE
+                  </span>
+                )}
+                {focused.stage === "rejected" && (
+                  <span
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 999,
+                      background: "rgba(220,38,38,0.12)",
+                      color: "#dc2626",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                    }}
+                  >
+                    ✗ REJECTED
+                  </span>
                 )}
               </div>
-            </div>
-          ) : (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div style={{ textAlign: "center", color: "var(--faint)" }}>
-                <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-                <div style={{ fontSize: 14 }}>Select a submission to review</div>
-              </div>
-            </div>
+
+              {/* Approve confirm */}
+              {confirming === "approve" && (
+                <ConfirmInline
+                  text={`Approve ${focused.name}? This will list it on the marketplace and notify the submitter.`}
+                  cancelLabel="Cancel"
+                  confirmLabel="Yes, approve"
+                  confirmColor="#16a34a"
+                  onCancel={() => setConfirming(null)}
+                  onConfirm={doApprove}
+                />
+              )}
+
+              {/* Reject reason */}
+              {rejecting && (
+                <div
+                  style={{
+                    marginTop: 18,
+                    padding: 14,
+                    background: "rgba(220,38,38,0.06)",
+                    border: "1px solid rgba(220,38,38,0.18)",
+                    borderRadius: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "#dc2626",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Reject with reason
+                  </div>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="What needs to change before resubmission?"
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--card)",
+                      fontSize: 13.5,
+                      color: "var(--text)",
+                      fontFamily: "var(--font-body)",
+                      resize: "vertical",
+                    }}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      marginTop: 10,
+                      justifyContent: "flex-end",
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        setRejecting(false);
+                        setRejectReason("");
+                      }}
+                      style={ghostBtnStyle}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={doReject}
+                      disabled={!rejectReason.trim()}
+                      style={{
+                        ...dangerBtnStyle,
+                        opacity: rejectReason.trim() ? 1 : 0.5,
+                      }}
+                    >
+                      Send rejection
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
           )}
         </div>
       </div>
-    </>
+
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 28,
+            right: 28,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            padding: "12px 18px",
+            borderRadius: 12,
+            boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
+            fontSize: 13.5,
+            color: "var(--text)",
+            zIndex: 100,
+            animation: "toastIn 0.25s ease",
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      <style jsx>{`
+        @keyframes toastIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </main>
   );
 }
+
+// ─── Components ──────────────────────────────────────────────────────────
+
+function Section({
+  title,
+  badge,
+  children,
+}: {
+  title: string;
+  badge?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: 16,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "14px 18px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            fontWeight: 500,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            color: "var(--muted)",
+          }}
+        >
+          {title}
+        </span>
+        {badge && (
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: "var(--elevated)",
+              color: "var(--text)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              fontWeight: 500,
+            }}
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        padding: "24px 14px",
+        textAlign: "center",
+        color: "var(--muted)",
+        fontSize: 13,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function SubmissionCard({
+  submission,
+  focused,
+  onClick,
+  compact,
+}: {
+  submission: SubmissionRecord;
+  focused: boolean;
+  onClick: () => void;
+  compact?: boolean;
+}) {
+  const m = submission.metrics;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: compact ? "10px 12px" : "14px 14px",
+        background: focused ? "rgba(37,99,235,0.06)" : "transparent",
+        border: `1px solid ${focused ? "var(--blue)" : "var(--border)"}`,
+        borderRadius: 12,
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        transition: "all 0.15s",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            fontWeight: 600,
+            fontSize: compact ? 13 : 14,
+            color: "var(--text)",
+          }}
+        >
+          {submission.name}
+        </div>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: scoreColor(m.confidence),
+            fontWeight: 600,
+          }}
+        >
+          {m.confidence}/100
+        </span>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: 11.5,
+          color: "var(--muted)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <span>{submission.tech_stack.slice(0, 2).join(" + ") || submission.language}</span>
+        <span>⏱ {timeAgo(submission.submitted_at)}</span>
+      </div>
+      {!compact && (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--muted)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {submission.submitter_email}
+        </div>
+      )}
+      {compact && (
+        <div style={{ fontSize: 11, color: scoreColor(m.confidence) }}>
+          {submission.stage === "listed"
+            ? "✓ Listed"
+            : submission.stage === "rejected"
+              ? "✗ Rejected"
+              : "Awaiting"}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function DetailHeader({ submission }: { submission: SubmissionRecord }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+        }}
+      >
+        Submission · {submission.id}
+      </div>
+      <h2
+        style={{
+          fontFamily: "var(--font-display)",
+          fontSize: 24,
+          color: "var(--text)",
+          margin: "6px 0 6px",
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {submission.name}
+      </h2>
+      <div
+        style={{
+          color: "var(--muted)",
+          fontSize: 13,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 14,
+        }}
+      >
+        <span>{submission.category}</span>
+        <span>·</span>
+        <span>{submission.tech_stack.join(" · ") || submission.language}</span>
+        <span>·</span>
+        <a
+          href={submission.github_url}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--blue)", textDecoration: "none" }}
+        >
+          repo ↗
+        </a>
+      </div>
+      <p
+        style={{
+          color: "var(--text)",
+          fontSize: 13.5,
+          lineHeight: 1.55,
+          marginTop: 12,
+        }}
+      >
+        {submission.description}
+      </p>
+    </div>
+  );
+}
+
+function ScorecardRow({ submission }: { submission: SubmissionRecord }) {
+  const m = submission.metrics;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: 18,
+        marginTop: 18,
+        padding: "16px 18px",
+        background: "var(--bg)",
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        alignItems: "center",
+      }}
+    >
+      <div
+        style={{
+          width: 88,
+          height: 88,
+          borderRadius: 14,
+          background: scoreColor(m.confidence),
+          color: "#fff",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "var(--font-display)",
+            fontWeight: 700,
+            fontSize: 30,
+            lineHeight: 1,
+          }}
+        >
+          {m.confidence}
+        </div>
+        <div
+          style={{
+            fontSize: 9,
+            fontFamily: "var(--font-mono)",
+            marginTop: 2,
+            opacity: 0.92,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+          }}
+        >
+          / 100 conf
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: 12,
+        }}
+      >
+        <MetricChip
+          label="Endpoints"
+          value={`${m.endpoints_passing}/${m.endpoints_total}`}
+          ok={m.endpoints_passing === m.endpoints_total}
+        />
+        <MetricChip
+          label="I/O Match"
+          value={`${m.io_match_pct}%`}
+          ok={m.io_match_pct >= 90}
+        />
+        <MetricChip
+          label="Avg latency"
+          value={`${m.avg_response_ms}ms`}
+          ok={m.avg_response_ms < 200}
+        />
+        <MetricChip
+          label="Security"
+          value={`${m.security.critical}c · ${m.security.medium}m`}
+          ok={m.security.critical === 0 && m.security.medium === 0}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MetricChip({
+  label,
+  value,
+  ok,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+}) {
+  return (
+    <div>
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--muted)",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          color: ok ? "#16a34a" : "#d97706",
+          fontWeight: 600,
+          fontSize: 14,
+          marginTop: 2,
+        }}
+      >
+        {ok ? "✓ " : "⚠ "}
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ContractBlock({ submission }: { submission: SubmissionRecord }) {
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 12,
+      }}
+    >
+      <ContractCol label="Inputs" text={submission.inputs} />
+      <ContractCol label="Outputs" text={submission.outputs} />
+    </div>
+  );
+}
+
+function ContractCol({ label, text }: { label: string; text: string }) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--bg)",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--muted)",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          color: "var(--text)",
+          fontSize: 13,
+          marginTop: 6,
+          lineHeight: 1.5,
+        }}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function FindingsBlock({ submission }: { submission: SubmissionRecord }) {
+  const m = submission.metrics;
+  const items: Array<{ label: string; value: string; mark: "ok" | "warn" | "err" }> = [
+    {
+      label: "Documentation",
+      value: m.docs_quality,
+      mark: m.docs_quality === "Good" ? "ok" : m.docs_quality === "Fair" ? "warn" : "err",
+    },
+    {
+      label: "Test coverage",
+      value: `${m.test_coverage_pct}%`,
+      mark: m.test_coverage_pct >= 60 ? "ok" : m.test_coverage_pct >= 30 ? "warn" : "err",
+    },
+    {
+      label: "Dependencies",
+      value: `${m.deps_total} (${m.deps_vulnerable} CVE)`,
+      mark: m.deps_vulnerable === 0 ? "ok" : m.deps_vulnerable <= 2 ? "warn" : "err",
+    },
+    {
+      label: "Rate limiting",
+      value: m.rate_limiting ? "Implemented" : "Not implemented",
+      mark: m.rate_limiting ? "ok" : "warn",
+    },
+    {
+      label: "REST conventions",
+      value: m.rest_conventions ? "Followed" : "Non-standard",
+      mark: m.rest_conventions ? "ok" : "warn",
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        padding: 14,
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--bg)",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--muted)",
+          marginBottom: 10,
+        }}
+      >
+        Code quality findings
+      </div>
+      <ul
+        style={{
+          listStyle: "none",
+          padding: 0,
+          margin: 0,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {items.map((f) => (
+          <li
+            key={f.label}
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              fontSize: 13,
+            }}
+          >
+            <span
+              style={{
+                color:
+                  f.mark === "ok" ? "#16a34a" : f.mark === "warn" ? "#d97706" : "#dc2626",
+                fontWeight: 700,
+                marginTop: 1,
+              }}
+            >
+              {f.mark === "ok" ? "✓" : f.mark === "warn" ? "⚠" : "✗"}
+            </span>
+            <div>
+              <div style={{ color: "var(--text)" }}>{f.label}</div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>{f.value}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ConfirmInline({
+  text,
+  cancelLabel,
+  confirmLabel,
+  confirmColor,
+  onCancel,
+  onConfirm,
+}: {
+  text: string;
+  cancelLabel: string;
+  confirmLabel: string;
+  confirmColor: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        padding: 14,
+        background: "rgba(22,163,74,0.06)",
+        border: "1px solid rgba(22,163,74,0.2)",
+        borderRadius: 10,
+      }}
+    >
+      <div style={{ fontSize: 13.5, color: "var(--text)", marginBottom: 10 }}>{text}</div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button onClick={onCancel} style={ghostBtnStyle}>
+          {cancelLabel}
+        </button>
+        <button
+          onClick={onConfirm}
+          style={{ ...primaryBtnStyle, background: confirmColor }}
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Button styles ───────────────────────────────────────────────────────
+
+const primaryBtnStyle: React.CSSProperties = {
+  padding: "9px 16px",
+  borderRadius: 8,
+  background: "var(--blue)",
+  color: "#fff",
+  fontWeight: 600,
+  fontSize: 13,
+  border: "none",
+  cursor: "pointer",
+  fontFamily: "var(--font-body)",
+};
+
+const ghostBtnStyle: React.CSSProperties = {
+  padding: "9px 16px",
+  borderRadius: 8,
+  background: "transparent",
+  color: "var(--text)",
+  border: "1px solid var(--border)",
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: "pointer",
+  fontFamily: "var(--font-body)",
+};
+
+const approveBtnStyle: React.CSSProperties = {
+  ...primaryBtnStyle,
+  background: "#16a34a",
+};
+
+const dangerBtnStyle: React.CSSProperties = {
+  padding: "9px 16px",
+  borderRadius: 8,
+  background: "#fff",
+  color: "#dc2626",
+  border: "1px solid rgba(220,38,38,0.4)",
+  fontSize: 13,
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily: "var(--font-body)",
+};
