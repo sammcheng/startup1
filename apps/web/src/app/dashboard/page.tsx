@@ -23,9 +23,19 @@ import {
 } from "recharts";
 import {
   listSubmissions,
-  sanitizeName,
   type SubmissionRecord,
 } from "@/lib/submissions";
+
+// Inline name sanitizer — avoids an extra import that webpack tree-shaking
+// or stale cached chunks have been confused by. Strips HTML tags + entities.
+function sanitizeName(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/&[a-z0-9#]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 type RangeKey = "7d" | "30d" | "90d";
 const RANGE_DAYS: Record<RangeKey, number> = { "7d": 7, "30d": 30, "90d": 90 };
