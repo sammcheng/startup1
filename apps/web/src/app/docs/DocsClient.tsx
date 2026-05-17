@@ -1289,7 +1289,9 @@ export default function DocsClient() {
       </div>
 
       {/* Mobile: stack sidebar above content. Inline CSS via styled-jsx-free approach. */}
-      <style>{`
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
         @media (max-width: 900px) {
           .docs-shell {
             flex-direction: column !important;
@@ -1306,7 +1308,9 @@ export default function DocsClient() {
             max-width: 100% !important;
           }
         }
-      `}</style>
+      `,
+        }}
+      />
     </main>
   );
 }

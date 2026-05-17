@@ -53,13 +53,65 @@ export default function GlobalError({
           fontSize: 14,
           color: "var(--muted)",
           maxWidth: 400,
-          marginBottom: 24,
+          marginBottom: 16,
           lineHeight: 1.6,
         }}
       >
         We&apos;re sorry about that. You can try again, or head back to the
         home page.
       </p>
+      {/* Show the actual error message so we can debug — dev only. */}
+      {process.env.NODE_ENV !== "production" && (
+        <details
+          style={{
+            background: "var(--elevated)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 14,
+            marginBottom: 18,
+            maxWidth: 720,
+            width: "100%",
+            textAlign: "left",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            color: "var(--text)",
+          }}
+        >
+          <summary style={{ cursor: "pointer", color: "var(--blue)" }}>
+            Error details (dev)
+          </summary>
+          <div
+            style={{
+              marginTop: 10,
+              color: "#dc2626",
+              fontWeight: 600,
+              wordBreak: "break-word",
+            }}
+          >
+            {error.name}: {error.message || "(no message)"}
+          </div>
+          {error.digest && (
+            <div style={{ marginTop: 6, color: "var(--muted)" }}>
+              digest: {error.digest}
+            </div>
+          )}
+          {error.stack && (
+            <pre
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                color: "var(--muted)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                maxHeight: 360,
+                overflow: "auto",
+              }}
+            >
+              {error.stack}
+            </pre>
+          )}
+        </details>
+      )}
       <div style={{ display: "flex", gap: 10 }}>
         <button
           type="button"
