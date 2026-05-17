@@ -14,6 +14,7 @@ const nextConfig = {
   },
 
   async headers() {
+    const isProd = process.env.NODE_ENV === "production";
     return [
       {
         source: "/(.*)",
@@ -24,12 +25,24 @@ const nextConfig = {
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
         ],
       },
-      {
-        source: "/_next/static/(.*)",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
+      // In production, Next already hashes /_next/static/* filenames, so a
+      // year-long immutable cache is safe. In dev, the SAME path can serve
+      // freshly-recompiled JS — long-lived caching there strands the
+      // browser on stale bundles (the hydration mismatch reported), so we
+      // tell the browser not to cache dev chunks at all.
+      isProd
+        ? {
+            source: "/_next/static/(.*)",
+            headers: [
+              { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+            ],
+          }
+        : {
+            source: "/_next/static/(.*)",
+            headers: [
+              { key: "Cache-Control", value: "no-store, must-revalidate" },
+            ],
+          },
     ];
   },
 };
