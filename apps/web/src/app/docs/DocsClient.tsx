@@ -1,6 +1,8 @@
-"use client";
+// Pure static server component — no "use client", no hooks, no
+// IntersectionObserver. The CodeBlock import is a client component, but
+// importing it from a server component is fine (Next handles the boundary).
+// Sidebar is a plain list of anchor links — no active-section highlight.
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import CodeBlock from "@/components/docs/CodeBlock";
@@ -501,7 +503,7 @@ function EndpointCard({
 // Sidebar with IntersectionObserver-driven active state.
 // ----------------------------------------------------------------------------
 
-function Sidebar({ activeId }: { activeId: string }) {
+function Sidebar() {
   return (
     <aside
       style={{
@@ -518,66 +520,55 @@ function Sidebar({ activeId }: { activeId: string }) {
     >
       <p style={{ ...eyebrow, marginBottom: 14 }}>On this page</p>
       <nav>
-        {SIDEBAR.map((section) => {
-          const sectionActive = section.id === activeId;
-          const childActive = section.children?.some((c) => c.id === activeId) ?? false;
-          const groupActive = sectionActive || childActive;
-
-          return (
-            <div key={section.id} style={{ marginBottom: 16 }}>
-              <a
-                href={`#${section.id}`}
-                style={{
-                  display: "block",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  textTransform: "uppercase",
-                  letterSpacing: ".12em",
-                  fontWeight: 600,
-                  color: groupActive ? "var(--blue)" : "var(--text)",
-                  borderLeft: `2px solid ${groupActive ? "var(--blue)" : "transparent"}`,
-                  paddingLeft: 10,
-                  paddingTop: 4,
-                  paddingBottom: 4,
-                  textDecoration: "none",
-                  transition: "color 120ms, border-color 120ms",
-                }}
-              >
-                {section.label}
-              </a>
-              {section.children && groupActive ? (
-                <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0 0" }}>
-                  {section.children.map((child) => {
-                    const isActive = child.id === activeId;
-                    return (
-                      <li key={child.id}>
-                        <a
-                          href={`#${child.id}`}
-                          style={{
-                            display: "block",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: 10.5,
-                            textTransform: "uppercase",
-                            letterSpacing: ".08em",
-                            color: isActive ? "var(--blue)" : "var(--faint)",
-                            borderLeft: `2px solid ${isActive ? "var(--blue)" : "transparent"}`,
-                            paddingLeft: 18,
-                            paddingTop: 4,
-                            paddingBottom: 4,
-                            textDecoration: "none",
-                            transition: "color 120ms, border-color 120ms",
-                          }}
-                        >
-                          {child.label}
-                        </a>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-            </div>
-          );
-        })}
+        {SIDEBAR.map((section) => (
+          <div key={section.id} style={{ marginBottom: 16 }}>
+            <a
+              href={`#${section.id}`}
+              style={{
+                display: "block",
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".12em",
+                fontWeight: 600,
+                color: "var(--text)",
+                borderLeft: "2px solid transparent",
+                paddingLeft: 10,
+                paddingTop: 4,
+                paddingBottom: 4,
+                textDecoration: "none",
+              }}
+            >
+              {section.label}
+            </a>
+            {section.children && (
+              <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0 0" }}>
+                {section.children.map((child) => (
+                  <li key={child.id}>
+                    <a
+                      href={`#${child.id}`}
+                      style={{
+                        display: "block",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 10.5,
+                        textTransform: "uppercase",
+                        letterSpacing: ".08em",
+                        color: "var(--faint)",
+                        borderLeft: "2px solid transparent",
+                        paddingLeft: 18,
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                        textDecoration: "none",
+                      }}
+                    >
+                      {child.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
       </nav>
     </aside>
   );
@@ -587,73 +578,20 @@ function Sidebar({ activeId }: { activeId: string }) {
 // Page
 // ----------------------------------------------------------------------------
 
-export default function DocsClient() {
-  const [activeId, setActiveId] = useState<string>("getting-started");
-  const visibleRef = useRef<Map<string, number>>(new Map());
+const layoutStyle: CSSProperties = {
+  display: "flex",
+  gap: 56,
+  alignItems: "flex-start",
+  maxWidth: 1120,
+  margin: "0 auto",
+  padding: "32px 24px 80px",
+};
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            visibleRef.current.set(entry.target.id, entry.intersectionRatio);
-          } else {
-            visibleRef.current.delete(entry.target.id);
-          }
-        }
-        // Pick the visible section closest to the top of the viewport (by DOM order).
-        const visibleIds = Array.from(visibleRef.current.keys());
-        if (visibleIds.length === 0) return;
-        const ordered = ALL_IDS.filter((id) => visibleIds.includes(id));
-        if (ordered.length > 0) {
-          setActiveId(ordered[0]);
-        }
-      },
-      {
-        rootMargin: `-${NAV_OFFSET + 8}px 0px -55% 0px`,
-        threshold: [0, 0.25, 0.5, 0.75, 1],
-      }
-    );
-
-    const nodes: HTMLElement[] = [];
-    for (const id of ALL_IDS) {
-      const node = document.getElementById(id);
-      if (node) {
-        observer.observe(node);
-        nodes.push(node);
-      }
-    }
-
-    return () => {
-      for (const node of nodes) observer.unobserve(node);
-      observer.disconnect();
-    };
-  }, []);
-
-  // Highlight section from the initial URL hash so deep links land cleanly.
-  useEffect(() => {
-    const hash = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
-    if (hash && ALL_IDS.includes(hash)) {
-      setActiveId(hash);
-    }
-  }, []);
-
-  const layoutStyle = useMemo<CSSProperties>(
-    () => ({
-      display: "flex",
-      gap: 56,
-      alignItems: "flex-start",
-      maxWidth: 1120,
-      margin: "0 auto",
-      padding: "32px 24px 80px",
-    }),
-    []
-  );
-
+export default function DocsContent() {
   return (
     <main style={{ background: "var(--bg)", color: "var(--text)", minHeight: "100vh" }}>
       <div style={layoutStyle} className="docs-shell">
-        <Sidebar activeId={activeId} />
+        <Sidebar />
 
         <article style={{ flex: 1, minWidth: 0, maxWidth: 720 }}>
           <div style={{ marginBottom: 40 }}>
