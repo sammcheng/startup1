@@ -4,6 +4,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { fetchConverterTool } from "@/lib/converterTools";
 import { LOCAL_FALLBACK_TOOLS } from "@/lib/localFallbackTools";
+import { KC_MODULES, kcModuleToTool } from "@/lib/kcMockModules";
 import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
@@ -16,15 +17,28 @@ export const dynamic = "force-dynamic";
 // ── Data ───────────────────────────────────────────────────────────────────
 
 async function fetchTool(slug: string): Promise<Tool | null> {
+  // 1) Live API
   try {
     return await api.get<Tool>(`/tools/${slug}`, { cache: "no-store" });
   } catch {
-    try {
-      return await fetchConverterTool(slug);
-    } catch {
-      return LOCAL_FALLBACK_TOOLS.find((t) => t.slug === slug) ?? null;
-    }
+    // fall through
   }
+
+  // 2) Converter service
+  try {
+    const converted = await fetchConverterTool(slug);
+    if (converted) return converted;
+  } catch {
+    // fall through
+  }
+
+  // 3) The 10 kc Rotshop modules — same source the discovery page uses,
+  //    so any slug a user clicks from search results resolves to a tool.
+  const kc = KC_MODULES.find((m) => m.id === slug.toLowerCase());
+  if (kc) return kcModuleToTool(kc);
+
+  // 4) Hackmarket's curated fallback set
+  return LOCAL_FALLBACK_TOOLS.find((t) => t.slug === slug) ?? null;
 }
 
 async function fetchToolDocs(slug: string): Promise<ToolDocumentation | null> {
