@@ -35,7 +35,11 @@ export default function Nav() {
 
       {/* Center links */}
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {[{ href: "/marketplace", label: "Marketplace" }, { href: "/docs", label: "Docs" }].map((l) => (
+        {[
+          { href: "/marketplace", label: "Marketplace" },
+          { href: "/dashboard", label: "Dashboard" },
+          { href: "/docs", label: "Docs" },
+        ].map((l) => (
           <Link key={l.href} href={l.href} style={{
             padding: "6px 12px", borderRadius: 6, fontSize: 13.5,
             color: pathname.startsWith(l.href) ? "var(--text)" : "var(--muted)",
@@ -49,7 +53,7 @@ export default function Nav() {
       {/* Right actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Link
-          href="/publish"
+          href="/submit"
           style={{
             display: "inline-flex",
             alignItems: "center",

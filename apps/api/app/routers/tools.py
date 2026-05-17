@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.dependencies import get_current_user, get_db, get_redis, require_seller
 from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
-from app.models.tool import ToolStatus
+from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
 from app.schemas.docs import ToolDocumentation
 from app.schemas.tool import (
@@ -22,9 +22,12 @@ from app.schemas.tool import (
     ToolListResponse,
     ToolMatch,
     ToolResponse,
+    ToolSubmitAnalysis,
+    ToolSubmitRequest,
+    ToolSubmitResponse,
     ToolUpdate,
 )
-from app.services import discovery_service, docs_service, proxy_service, tool_service
+from app.services import discovery_service, docs_service, proxy_service, repo_analyzer, tool_service
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -156,6 +159,118 @@ async def discover_tools(
         for tool, score, matched, fit in ranked
     ]
     return ToolDiscoverResponse(matches=matches, query=body.query)
+
+
+# ---------------------------------------------------------------------------
+# POST /tools/submit — single-call submit flow (ported from kc).
+# Paste a GitHub URL, get back a fully-analyzed draft listing. No auth
+# required (anonymous demo submitter); the draft is owned by a system user
+# until claimed via the normal seller flow.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/submit",
+    response_model=ToolSubmitResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a GitHub repo and get back an analyzed draft listing",
+)
+async def submit_repo(
+    body: ToolSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ToolSubmitResponse:
+    """Clone the repo (shallow), run repo_analyzer (OpenRouter Claude Sonnet
+    with heuristic fallback), create a draft Tool owned by the system
+    submitter, and return the analyzed listing for review/edit on the frontend.
+
+    Mirrors kc's POST /api/submit — one call returns a fully-populated draft.
+    """
+    # Lazy imports to keep the module load fast.
+    import secrets
+    import shutil
+    from pathlib import Path
+
+    from app.routers.internal import _get_or_create_system_seller
+
+    github_url = str(body.github_url)
+    seller = await _get_or_create_system_seller(db)
+
+    clone_root = Path(settings.submit_repo_clone_dir)
+    clone_id = secrets.token_hex(6)
+    repo_path = clone_root / clone_id
+    try:
+        try:
+            await repo_analyzer.clone_repo(github_url, repo_path)
+        except Exception as exc:  # noqa: BLE001
+            raise AppError(
+                code="CLONE_FAILED",
+                message=f"Could not clone repository: {exc}",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from exc
+
+        analysis = await repo_analyzer.analyze_repo(repo_path, github_url)
+    finally:
+        # Best-effort cleanup — keep the temp tree small.
+        shutil.rmtree(repo_path, ignore_errors=True)
+
+    # Map kc-shape analysis → main's ToolCreate.
+    tool_data = ToolCreate(
+        name=analysis.name,
+        tagline=(analysis.description or analysis.name)[:200],
+        description=analysis.description or f"Imported from {github_url}.",
+        category=ToolCategory(analysis.tool_category),
+        ownership_type=OwnershipType.royalty
+        if analysis.pricing_model == "royalty"
+        else OwnershipType.full_sale,
+        github_url=github_url,
+        input_schema={
+            "fields": [
+                {
+                    "name": "input",
+                    "type": "string",
+                    "description": analysis.input_contract,
+                    "required": False,
+                }
+            ]
+        },
+        output_schema={
+            "fields": [
+                {
+                    "name": "result",
+                    "type": "object",
+                    "description": analysis.output_contract,
+                }
+            ]
+        },
+        documentation=(
+            f"# {analysis.name}\n\n{analysis.description}\n\n"
+            f"**Complexity:** {analysis.complexity}\n\n"
+            f"**Tech stack:** {', '.join(analysis.tech_stack) or 'unspecified'}\n\n"
+            f"## Input\n{analysis.input_contract}\n\n"
+            f"## Output\n{analysis.output_contract}\n"
+        ),
+    )
+
+    tool = await tool_service.create_tool(db, seller.id, tool_data)
+    return ToolSubmitResponse(
+        tool=ToolResponse.model_validate(tool),
+        analysis=ToolSubmitAnalysis(
+            name=analysis.name,
+            description=analysis.description,
+            category=analysis.category,
+            tech_stack=analysis.tech_stack,
+            input_contract=analysis.input_contract,
+            output_contract=analysis.output_contract,
+            complexity=analysis.complexity,
+            suggested_price_cents=analysis.suggested_price_cents,
+            pricing_model=analysis.pricing_model,
+        ),
+        message=(
+            "Analyzed and saved as draft. Review the details and submit for listing."
+            if settings.openrouter_api_key
+            else "Saved as draft using heuristic analysis (OPENROUTER_API_KEY unset)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

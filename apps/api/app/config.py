@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
 
+    # OpenRouter (used by the single-call submit endpoint for repo analysis)
+    openrouter_api_key: str = ""
+    openrouter_model: str = "anthropic/claude-sonnet-4"
+    openrouter_app_url: str = "https://hackmarket.io"
+    openrouter_app_name: str = "Hackmarket"
+
+    # Single-call submit: where to clone GitHub repos for analysis
+    submit_repo_clone_dir: str = "/tmp/hackmarket-submit-repos"
+
     # Storage
     local_storage_path: str = "/tmp/hackmarket-storage"
 

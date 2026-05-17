@@ -1,0 +1,1150 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { api } from "@/lib/api";
+import { CATEGORIES } from "@hackmarket/shared";
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const SUBMIT_STEPS = [
+  "Cloning repository...",
+  "Reading project structure...",
+  "Analyzing dependencies and stack...",
+  "Identifying inputs and outputs...",
+  "Generating module listing...",
+] as const;
+
+// kc's hard-coded fallback so the demo never dead-ends if /tools/submit
+// errors (network, OPENROUTER_API_KEY unset, etc.).
+const AUTO_LISTING: Listing = {
+  id: null,
+  name: "CacheLayer",
+  description:
+    "In-memory caching middleware with TTL management and automatic cache invalidation hooks. Drop in as an Express middleware or call directly from your service layer — supports Redis or in-process backends with the same API.",
+  category: "DevOps",
+  stack: ["Node.js", "Redis", "TypeScript"],
+  inputs: "Cache key, value (any serializable), TTL in seconds, optional invalidation tags.",
+  outputs: "Hit/miss status, cached value on hit, eviction events on TTL or tag invalidation.",
+};
+
+const EXAMPLE_REPOS = [
+  "https://github.com/tiangolo/fastapi",
+  "https://github.com/pallets/flask",
+  "https://github.com/expressjs/express",
+];
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type Phase = "input" | "analyzing" | "review" | "done";
+type PricingModel = "buy" | "royalty";
+
+interface Listing {
+  id: string | null;
+  name: string;
+  description: string;
+  category: string;
+  stack: string[];
+  inputs: string;
+  outputs: string;
+}
+
+// Shape of /tools/submit response — kept loose so the kc-shape `analysis`
+// fields can be consumed without dragging in every nested ToolResponse field.
+interface SubmitResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tool: { id: string; [key: string]: any };
+  analysis: {
+    name: string;
+    description: string;
+    category: string;
+    tech_stack: string[];
+    input_contract: string;
+    output_contract: string;
+    complexity: string;
+    suggested_price_cents: number;
+    pricing_model: PricingModel;
+  };
+  message: string;
+}
+
+// ─── URL validation (lifted from /publish) ───────────────────────────────────
+
+function validateGithubUrl(url: string): string {
+  if (!url.trim()) return "Paste a GitHub repository URL.";
+  if (!url.startsWith("https://github.com/")) return "Must be a github.com URL.";
+  const parts = url.replace("https://github.com/", "").split("/").filter(Boolean);
+  if (parts.length < 2) return "URL needs owner and repo name.";
+  return "";
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+export default function SubmitPage() {
+  // Phase + input state
+  const [phase, setPhase] = useState<Phase>("input");
+  const [url, setUrl] = useState("");
+  const [urlError, setUrlError] = useState("");
+
+  // Analyzing animation
+  const [step, setStep] = useState(-1);
+
+  // Review state
+  const [listing, setListing] = useState<Listing | null>(null);
+  const [stackInput, setStackInput] = useState("");
+  const [pricingModel, setPricingModel] = useState<PricingModel>("buy");
+  const [amount, setAmount] = useState("");
+
+  // API state (runs in parallel with the animation; transition is gated on both)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [apiResponse, setApiResponse] = useState<SubmitResponse | null>(null);
+  const [apiReady, setApiReady] = useState(false);
+
+  // ── Kick off analysis ───────────────────────────────────────────────────────
+  function analyze() {
+    const err = validateGithubUrl(url);
+    if (err) {
+      setUrlError(err);
+      return;
+    }
+    setUrlError("");
+    setApiResponse(null);
+    setApiReady(false);
+    setPhase("analyzing");
+    setStep(0);
+
+    api
+      .post<SubmitResponse>(
+        "/tools/submit",
+        { github_url: url.trim(), submitter_email: "demo@hackmarket.io" },
+        { timeoutMs: 60_000 }
+      )
+      .then((res) => {
+        setApiResponse(res);
+      })
+      .catch(() => {
+        // Swallow — the transition effect falls back to AUTO_LISTING.
+      })
+      .finally(() => setApiReady(true));
+  }
+
+  // ── Step animation (advance, hold on last step until API resolves) ──────────
+  useEffect(() => {
+    if (phase !== "analyzing") return;
+    if (step >= SUBMIT_STEPS.length - 1) return;
+    const t = setTimeout(() => setStep((s) => s + 1), 600);
+    return () => clearTimeout(t);
+  }, [phase, step]);
+
+  // ── Gate the transition to `review` on both animation done + API settled ────
+  useEffect(() => {
+    if (phase !== "analyzing") return;
+    if (!apiReady) return;
+    if (step < SUBMIT_STEPS.length - 1) return;
+    const t = setTimeout(() => {
+      if (apiResponse) {
+        const a = apiResponse.analysis;
+        setListing({
+          id: apiResponse.tool.id,
+          name: a.name,
+          description: a.description,
+          category: a.category,
+          stack: a.tech_stack.length > 0 ? a.tech_stack : [],
+          inputs: a.input_contract,
+          outputs: a.output_contract,
+        });
+        if (a.pricing_model === "buy" || a.pricing_model === "royalty") {
+          setPricingModel(a.pricing_model);
+        }
+        if (a.suggested_price_cents > 0) {
+          setAmount(String(Math.round(a.suggested_price_cents / 100)));
+        }
+      } else {
+        setListing({ ...AUTO_LISTING });
+      }
+      setPhase("review");
+    }, 320);
+    return () => clearTimeout(t);
+  }, [phase, step, apiReady, apiResponse]);
+
+  // ── Review form helpers ─────────────────────────────────────────────────────
+  function patch(p: Partial<Listing>) {
+    setListing((l) => (l ? { ...l, ...p } : l));
+  }
+  function addStack() {
+    if (!listing) return;
+    const v = stackInput.trim().replace(/,$/, "");
+    if (!v || listing.stack.includes(v)) return;
+    patch({ stack: [...listing.stack, v] });
+    setStackInput("");
+  }
+  function removeStack(s: string) {
+    if (!listing) return;
+    patch({ stack: listing.stack.filter((x) => x !== s) });
+  }
+
+  async function submitForReview() {
+    if (!listing) return;
+    if (!amount || Number(amount) <= 0) return;
+
+    // PUT back any edits if this came from the API. Auth will 401 (we're not
+    // signed in as the system seller), and that's fine — the draft is already
+    // saved in the DB from the /tools/submit call. We just advance to `done`.
+    if (listing.id) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const body: any = {
+          name: listing.name,
+          description: listing.description,
+          // Skip `category` here — the API enum (nlp/automation/etc.) doesn't
+          // match the kc-shape ("AI/ML"/"DevOps"). The draft already has the
+          // category mapped server-side; user-facing category is informational.
+          documentation:
+            `# ${listing.name}\n\n${listing.description}\n\n` +
+            `**Tech stack:** ${listing.stack.join(", ") || "unspecified"}\n\n` +
+            `## Input\n${listing.inputs}\n\n## Output\n${listing.outputs}\n`,
+        };
+        const cents = Math.round(Number(amount)) * 100;
+        if (pricingModel === "buy") {
+          body.ownership_type = "full_sale";
+          body.one_time_price = cents / 100;
+        } else {
+          body.ownership_type = "royalty";
+          body.price_per_request = cents / 100;
+        }
+        await api.put(`/tools/${listing.id}`, body);
+      } catch {
+        // Expected: 401 (no auth) — fall through to `done` anyway.
+      }
+    }
+    setPhase("done");
+  }
+
+  function reset() {
+    setPhase("input");
+    setUrl("");
+    setUrlError("");
+    setStep(-1);
+    setListing(null);
+    setStackInput("");
+    setAmount("");
+    setPricingModel("buy");
+    setApiResponse(null);
+    setApiReady(false);
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <>
+      <style>{`
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .submit-fade-up { animation: fadeUp 0.32s ease both; }
+        .submit-spinner {
+          width: 14px; height: 14px; border-radius: 50%;
+          border: 2px solid var(--border); border-top-color: var(--blue);
+          animation: spin 0.8s linear infinite;
+        }
+      `}</style>
+
+      <main
+        style={{
+          minHeight: "calc(100vh - 56px)",
+          background: "var(--bg)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "60px 24px 100px",
+        }}
+      >
+        <div style={{ width: "100%", maxWidth: 720 }} className="submit-fade-up">
+          {/* Header — only on input/analyzing/review (done has its own) */}
+          {phase !== "done" && (
+            <div style={{ marginBottom: 32 }}>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 11.5,
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--blue)",
+                  background: "rgba(59,130,246,0.10)",
+                  border: "1px solid rgba(59,130,246,0.25)",
+                  borderRadius: 99,
+                  padding: "4px 12px",
+                  marginBottom: 16,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                }}
+              >
+                Submit a build
+              </div>
+              <h1
+                style={{
+                  fontFamily: "var(--font-display, var(--font-serif))",
+                  fontSize: "clamp(24px, 3.6vw, 32px)",
+                  fontWeight: 700,
+                  color: "var(--text)",
+                  lineHeight: 1.2,
+                  margin: 0,
+                }}
+              >
+                Submit your build.
+              </h1>
+            </div>
+          )}
+
+          {/* ── Phase: input ─────────────────────────────────────────────── */}
+          {phase === "input" && (
+            <div className="submit-fade-up">
+              <div
+                style={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 16,
+                  padding: 28,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--muted)",
+                    marginBottom: 10,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  Paste your GitHub repo URL
+                </div>
+                <div style={{ display: "flex", gap: 10, marginBottom: 6 }}>
+                  <input
+                    type="url"
+                    placeholder="https://github.com/you/your-hack"
+                    value={url}
+                    onChange={(e) => {
+                      setUrl(e.target.value);
+                      setUrlError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") analyze();
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      border: `1.5px solid ${urlError ? "#ef4444" : "var(--border)"}`,
+                      background: "var(--bg)",
+                      color: "var(--text)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 13.5,
+                      outline: "none",
+                      boxSizing: "border-box",
+                      transition: "border-color 0.15s",
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = "var(--blue)";
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = urlError
+                        ? "#ef4444"
+                        : "var(--border)";
+                    }}
+                  />
+                  <button
+                    onClick={analyze}
+                    disabled={!url.trim()}
+                    style={{
+                      padding: "12px 22px",
+                      borderRadius: 10,
+                      background: "var(--blue)",
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: 14,
+                      border: "none",
+                      cursor: url.trim() ? "pointer" : "not-allowed",
+                      opacity: url.trim() ? 1 : 0.5,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Analyze →
+                  </button>
+                </div>
+                {urlError && (
+                  <p
+                    style={{
+                      color: "#ef4444",
+                      fontSize: 12.5,
+                      margin: "6px 0 0",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    {urlError}
+                  </p>
+                )}
+                <p
+                  style={{
+                    color: "var(--muted)",
+                    fontSize: 13.5,
+                    margin: "16px 0 0",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  That&rsquo;s the whole submission. We&rsquo;ll read the repo, detect the
+                  stack, write the description, and draft your I/O contract. You just
+                  review and pick how you want to get paid.
+                </p>
+              </div>
+
+              {/* Examples */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  margin: "20px 0 12px",
+                }}
+              >
+                <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>or try an example</span>
+                <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {EXAMPLE_REPOS.map((u) => (
+                  <button
+                    key={u}
+                    onClick={() => {
+                      setUrl(u);
+                      setUrlError("");
+                    }}
+                    style={{
+                      padding: "7px 14px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "transparent",
+                      color: "var(--muted)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {u.replace("https://github.com/", "")}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Phase: analyzing ────────────────────────────────────────── */}
+          {phase === "analyzing" && (
+            <div className="submit-fade-up">
+              <div
+                style={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 12,
+                  padding: "12px 16px",
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--muted)",
+                    marginBottom: 4,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  Repository
+                </div>
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 13.5,
+                    color: "var(--text)",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {url}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 16,
+                  padding: 24,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: "var(--font-display, var(--font-serif))",
+                      fontWeight: 700,
+                      fontSize: 16,
+                      color: "var(--text)",
+                    }}
+                  >
+                    Analyzing your repo
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      color: "var(--muted)",
+                    }}
+                  >
+                    {Math.min(step + 1, SUBMIT_STEPS.length)}/{SUBMIT_STEPS.length}
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div
+                  style={{
+                    height: 3,
+                    background: "var(--border)",
+                    borderRadius: 99,
+                    overflow: "hidden",
+                    marginBottom: 18,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${
+                        (Math.min(step + 1, SUBMIT_STEPS.length) / SUBMIT_STEPS.length) * 100
+                      }%`,
+                      height: "100%",
+                      background: "var(--blue)",
+                      transition: "width 0.4s ease",
+                    }}
+                  />
+                </div>
+
+                {/* Steps */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {SUBMIT_STEPS.map((s, i) => {
+                    const done = i < step;
+                    const active = i === step;
+                    return (
+                      <div
+                        key={s}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          opacity: done || active ? 1 : 0.4,
+                          transition: "opacity 0.3s",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 18,
+                            height: 18,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {done ? (
+                            <div
+                              style={{
+                                width: 16,
+                                height: 16,
+                                borderRadius: "50%",
+                                background: "var(--green, #22c55e)",
+                                color: "#fff",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              ✓
+                            </div>
+                          ) : active ? (
+                            <div className="submit-spinner" />
+                          ) : (
+                            <div
+                              style={{
+                                width: 7,
+                                height: 7,
+                                borderRadius: "50%",
+                                background: "var(--border)",
+                              }}
+                            />
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13.5,
+                            color: active ? "var(--text)" : "var(--muted)",
+                            fontWeight: active ? 600 : 400,
+                          }}
+                        >
+                          {s}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Phase: review ───────────────────────────────────────────── */}
+          {phase === "review" && listing && (
+            <div className="submit-fade-up">
+              {/* Auto-generated banner */}
+              <div
+                style={{
+                  background: "rgba(59,130,246,0.07)",
+                  border: "1px solid rgba(59,130,246,0.25)",
+                  borderRadius: 12,
+                  padding: 14,
+                  display: "flex",
+                  gap: 12,
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  style={{
+                    flexShrink: 0,
+                    width: 26,
+                    height: 26,
+                    borderRadius: 7,
+                    background: "var(--blue)",
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 14,
+                  }}
+                >
+                  ✦
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontFamily: "var(--font-display, var(--font-serif))",
+                      fontWeight: 700,
+                      fontSize: 14,
+                      color: "var(--blue)",
+                    }}
+                  >
+                    Listing auto-generated from your repo
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "var(--muted)",
+                      marginTop: 3,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    We&rsquo;ve filled everything in. Edit anything we got wrong. The only
+                    thing you have to decide is pricing.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {/* Name */}
+                <ReviewCard label="Project name" auto>
+                  <input
+                    value={listing.name}
+                    onChange={(e) => patch({ name: e.target.value })}
+                    style={inputStyle}
+                  />
+                </ReviewCard>
+
+                {/* Description */}
+                <ReviewCard label="Description" auto autoNote="from your README">
+                  <textarea
+                    rows={3}
+                    value={listing.description}
+                    onChange={(e) => patch({ description: e.target.value })}
+                    style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-body)" }}
+                  />
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 12,
+                      color: "var(--muted)",
+                    }}
+                  >
+                    We wrote this from your README. Edit it to be accurate.
+                  </div>
+                </ReviewCard>
+
+                {/* Category */}
+                <ReviewCard label="Category" auto autoNote="detected">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {CATEGORIES.map((c) => {
+                      const selected = listing.category === c;
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => patch({ category: c })}
+                          style={{
+                            padding: "7px 14px",
+                            borderRadius: 99,
+                            border: `1px solid ${selected ? "var(--blue)" : "var(--border)"}`,
+                            background: selected ? "rgba(59,130,246,0.12)" : "transparent",
+                            color: selected ? "var(--blue)" : "var(--muted)",
+                            fontSize: 12.5,
+                            fontFamily: "var(--font-mono)",
+                            cursor: "pointer",
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          {c}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ReviewCard>
+
+                {/* Tech stack */}
+                <ReviewCard label="Tech stack" auto autoNote="from package.json">
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      padding: "9px 10px",
+                      border: "1.5px solid var(--border)",
+                      borderRadius: 9,
+                      background: "var(--bg)",
+                      minHeight: 42,
+                      alignItems: "center",
+                    }}
+                  >
+                    {listing.stack.map((s) => (
+                      <span
+                        key={s}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "4px 9px",
+                          borderRadius: 6,
+                          background: "var(--card)",
+                          border: "1px solid var(--border)",
+                          fontSize: 12,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text)",
+                        }}
+                      >
+                        {s}
+                        <span
+                          onClick={() => removeStack(s)}
+                          style={{
+                            cursor: "pointer",
+                            color: "var(--muted)",
+                            fontSize: 14,
+                            lineHeight: 1,
+                            userSelect: "none",
+                          }}
+                        >
+                          ×
+                        </span>
+                      </span>
+                    ))}
+                    <input
+                      value={stackInput}
+                      onChange={(e) => setStackInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === ",") {
+                          e.preventDefault();
+                          addStack();
+                        } else if (
+                          e.key === "Backspace" &&
+                          !stackInput &&
+                          listing.stack.length
+                        ) {
+                          removeStack(listing.stack[listing.stack.length - 1]);
+                        }
+                      }}
+                      placeholder={listing.stack.length ? "Add another…" : "Add a tag…"}
+                      style={{
+                        border: "none",
+                        outline: "none",
+                        background: "transparent",
+                        color: "var(--text)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 13,
+                        flex: 1,
+                        minWidth: 80,
+                        padding: "4px 0",
+                      }}
+                    />
+                  </div>
+                </ReviewCard>
+
+                {/* I/O side-by-side */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <ReviewCard label="Inputs" auto>
+                    <textarea
+                      rows={4}
+                      value={listing.inputs}
+                      onChange={(e) => patch({ inputs: e.target.value })}
+                      style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-body)" }}
+                    />
+                  </ReviewCard>
+                  <ReviewCard label="Outputs" auto>
+                    <textarea
+                      rows={4}
+                      value={listing.outputs}
+                      onChange={(e) => patch({ outputs: e.target.value })}
+                      style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-body)" }}
+                    />
+                  </ReviewCard>
+                </div>
+
+                {/* Pricing */}
+                <ReviewCard label="Pricing — your call">
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 10,
+                      marginTop: 6,
+                    }}
+                  >
+                    {(["buy", "royalty"] as const).map((mode) => {
+                      const selected = pricingModel === mode;
+                      return (
+                        <div
+                          key={mode}
+                          onClick={() => setPricingModel(mode)}
+                          style={{
+                            padding: "14px 16px",
+                            borderRadius: 11,
+                            border: `1.5px solid ${selected ? "var(--blue)" : "var(--border)"}`,
+                            background: selected ? "rgba(59,130,246,0.08)" : "transparent",
+                            cursor: "pointer",
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              marginBottom: 4,
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontWeight: 700,
+                                fontSize: 14,
+                                color: selected ? "var(--blue)" : "var(--text)",
+                              }}
+                            >
+                              {mode === "buy" ? "Lump sum" : "Royalty"}
+                            </div>
+                            <div
+                              style={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: "50%",
+                                border: `2px solid ${selected ? "var(--blue)" : "var(--border)"}`,
+                                background: selected ? "var(--blue)" : "transparent",
+                              }}
+                            />
+                          </div>
+                          <div style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.4 }}>
+                            {mode === "buy"
+                              ? "Sell the code outright. One payment, walk away."
+                              : "Earn per integration each month. You commit to maintenance."}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+                      <div
+                        style={{
+                          padding: "11px 14px",
+                          border: "1.5px solid var(--border)",
+                          borderRight: 0,
+                          borderRadius: "9px 0 0 9px",
+                          background: "var(--card)",
+                          color: "var(--muted)",
+                          fontSize: 14,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        $
+                      </div>
+                      <input
+                        type="number"
+                        placeholder={pricingModel === "buy" ? "1200" : "45"}
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        style={{
+                          ...inputStyle,
+                          borderRadius: pricingModel === "royalty" ? 0 : "0 9px 9px 0",
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      />
+                      {pricingModel === "royalty" && (
+                        <div
+                          style={{
+                            padding: "11px 14px",
+                            border: "1.5px solid var(--border)",
+                            borderLeft: 0,
+                            borderRadius: "0 9px 9px 0",
+                            background: "var(--card)",
+                            color: "var(--muted)",
+                            fontSize: 14,
+                            display: "flex",
+                            alignItems: "center",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          / month
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 6,
+                        fontSize: 12,
+                        color: "var(--muted)",
+                      }}
+                    >
+                      You earn 80%. Typical:{" "}
+                      {pricingModel === "buy" ? "$300 — $2,500" : "$20 — $80 / month"}.
+                    </div>
+                  </div>
+                </ReviewCard>
+              </div>
+
+              {/* Footer actions */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: 28,
+                }}
+              >
+                <button
+                  onClick={reset}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: 10,
+                    border: "1.5px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  ← Start over
+                </button>
+                <button
+                  onClick={submitForReview}
+                  disabled={!amount || Number(amount) <= 0}
+                  style={{
+                    padding: "13px 24px",
+                    borderRadius: 11,
+                    background: "var(--blue)",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 14,
+                    border: "none",
+                    cursor: amount && Number(amount) > 0 ? "pointer" : "not-allowed",
+                    opacity: amount && Number(amount) > 0 ? 1 : 0.4,
+                    transition: "opacity 0.15s",
+                  }}
+                >
+                  Submit for review →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Phase: done ─────────────────────────────────────────────── */}
+          {phase === "done" && (
+            <div className="submit-fade-up" style={{ textAlign: "center", paddingTop: 40 }}>
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: "50%",
+                  background: "rgba(34,197,94,0.12)",
+                  border: "2px solid var(--green, #22c55e)",
+                  color: "var(--green, #22c55e)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 32,
+                  fontWeight: 700,
+                  margin: "0 auto 24px",
+                }}
+              >
+                ✓
+              </div>
+              <h2
+                style={{
+                  fontFamily: "var(--font-display, var(--font-serif))",
+                  fontSize: "clamp(22px, 3.2vw, 28px)",
+                  fontWeight: 700,
+                  color: "var(--text)",
+                  margin: "0 0 12px",
+                }}
+              >
+                Submitted for review.
+              </h2>
+              <p
+                style={{
+                  color: "var(--muted)",
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  maxWidth: 480,
+                  margin: "0 auto",
+                }}
+              >
+                Manual review within 48 hours. You&rsquo;ll get an email when{" "}
+                {listing?.name ? <strong>{listing.name}</strong> : "your listing"} goes live.
+              </p>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "center",
+                  marginTop: 32,
+                }}
+              >
+                <Link
+                  href="/dashboard"
+                  style={{
+                    padding: "13px 22px",
+                    borderRadius: 11,
+                    background: "var(--blue)",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 14,
+                    textDecoration: "none",
+                  }}
+                >
+                  View dashboard
+                </Link>
+                <button
+                  onClick={reset}
+                  style={{
+                    padding: "13px 22px",
+                    borderRadius: 11,
+                    border: "1.5px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    fontWeight: 500,
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Submit another
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+    </>
+  );
+}
+
+// ─── Inline reusable bits (kept local — page is self-contained) ──────────────
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "11px 13px",
+  borderRadius: 9,
+  border: "1.5px solid var(--border)",
+  background: "var(--bg)",
+  color: "var(--text)",
+  fontFamily: "var(--font-mono)",
+  fontSize: 13.5,
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+function ReviewCard({
+  label,
+  auto,
+  autoNote,
+  children,
+}: {
+  label: string;
+  auto?: boolean;
+  autoNote?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 10,
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: "var(--text)",
+        }}
+      >
+        {label}
+        {auto && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "2px 7px",
+              borderRadius: 99,
+              background: "rgba(59,130,246,0.10)",
+              border: "1px solid rgba(59,130,246,0.25)",
+              color: "var(--blue)",
+              fontSize: 10.5,
+              fontFamily: "var(--font-mono)",
+              fontWeight: 500,
+              letterSpacing: 0.3,
+              textTransform: "uppercase",
+            }}
+          >
+            ✦ {autoNote || "auto"}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}

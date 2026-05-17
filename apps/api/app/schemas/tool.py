@@ -196,6 +196,45 @@ class ToolDiscoverResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Single-call submit (kc-style: paste GitHub URL → analyzed draft listing)
+# ---------------------------------------------------------------------------
+
+
+class ToolSubmitRequest(BaseModel):
+    github_url: HttpUrl
+    submitter_email: str | None = None
+
+    @field_validator("github_url")
+    @classmethod
+    def validate_github_url(cls, value: HttpUrl) -> HttpUrl:
+        if value.host not in {"github.com", "www.github.com"}:
+            raise ValueError("github_url must point to github.com.")
+        return value
+
+
+class ToolSubmitAnalysis(BaseModel):
+    """Raw analyzer output preserved alongside the created tool row so the
+    frontend review form can show the source-of-truth values it used to
+    populate fields (especially the kc-shape fields that don't map 1:1)."""
+
+    name: str
+    description: str
+    category: str
+    tech_stack: list[str]
+    input_contract: str
+    output_contract: str
+    complexity: str
+    suggested_price_cents: int
+    pricing_model: str
+
+
+class ToolSubmitResponse(BaseModel):
+    tool: ToolResponse
+    analysis: ToolSubmitAnalysis
+    message: str
+
+
+# ---------------------------------------------------------------------------
 # Query-parameter schema (used via Depends in router)
 # ---------------------------------------------------------------------------
 
