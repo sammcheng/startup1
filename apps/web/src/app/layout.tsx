@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import AppProviders from "./AppProviders";
-import Nav from "@/components/ui/Nav";
+import SiteNav from "@/components/ui/SiteNav";
 import "./globals.css";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hackmarket.io";
@@ -115,7 +115,7 @@ export default function RootLayout({
       </head>
       <body>
         <AppProviders>
-          <Nav />
+          <SiteNav />
           <div style={{ paddingTop: 56 }}>
             {children}
           </div>

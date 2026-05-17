@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
-export default function Nav() {
+export default function SiteNav() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
