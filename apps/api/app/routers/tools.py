@@ -14,8 +14,17 @@ from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotF
 from app.models.tool import ToolStatus
 from app.models.user import User
 from app.schemas.docs import ToolDocumentation
-from app.schemas.tool import ToolCreate, ToolFilters, ToolListResponse, ToolResponse, ToolUpdate
-from app.services import docs_service, proxy_service, tool_service
+from app.schemas.tool import (
+    ToolCreate,
+    ToolDiscoverRequest,
+    ToolDiscoverResponse,
+    ToolFilters,
+    ToolListResponse,
+    ToolMatch,
+    ToolResponse,
+    ToolUpdate,
+)
+from app.services import discovery_service, docs_service, proxy_service, tool_service
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -108,6 +117,45 @@ async def create_tool(
     """Create a tool in 'draft' status. Requires seller role."""
     tool = await tool_service.create_tool(db, current_user.id, body)
     return ToolResponse.model_validate(tool)
+
+
+# ---------------------------------------------------------------------------
+# POST /tools/discover — server-side keyword-weighted ranking (ported from kc)
+# Declared BEFORE /{slug} routes to avoid routing collision.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/discover",
+    response_model=ToolDiscoverResponse,
+    summary="Discover live tools via keyword-weighted scoring",
+)
+async def discover_tools(
+    body: ToolDiscoverRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ToolDiscoverResponse:
+    """Tokenize the query, score live tools across name/tagline/description/
+    category/schema, and return the top *limit* with a per-result fit line.
+
+    Empty query → returns the most-requested live tools as discovery defaults.
+    """
+    ranked = await discovery_service.discover_tools(
+        db,
+        query=body.query,
+        categories=body.categories,
+        limit=body.limit,
+    )
+    matches = [
+        ToolMatch(
+            tool=ToolResponse.model_validate(tool),
+            fit_line=fit,
+            match_score=score,
+            matched_keywords=matched,
+            source="verified",
+        )
+        for tool, score, matched, fit in ranked
+    ]
+    return ToolDiscoverResponse(matches=matches, query=body.query)
 
 
 # ---------------------------------------------------------------------------

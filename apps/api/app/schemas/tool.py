@@ -172,6 +172,30 @@ class ToolListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Discovery (kc-style server-side keyword scoring)
+# ---------------------------------------------------------------------------
+
+
+class ToolDiscoverRequest(BaseModel):
+    query: str = Field(min_length=0, max_length=500)
+    categories: list[ToolCategory] | None = None
+    limit: int = Field(default=12, ge=1, le=24)
+
+
+class ToolMatch(BaseModel):
+    tool: ToolResponse
+    fit_line: str
+    match_score: float
+    matched_keywords: list[str]
+    source: Literal["verified", "preview"] = "verified"
+
+
+class ToolDiscoverResponse(BaseModel):
+    matches: list[ToolMatch]
+    query: str
+
+
+# ---------------------------------------------------------------------------
 # Query-parameter schema (used via Depends in router)
 # ---------------------------------------------------------------------------
 

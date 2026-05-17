@@ -383,8 +383,36 @@ export default function MarketplaceClient({
     const initial = matchTools(segs, data?.items ?? []);
     setMatched(initial);
 
+    // Prefer the server-side /tools/discover endpoint (ported from kc) —
+    // it returns ranked matches with fit lines computed against the live DB.
     try {
-      // Fetch from main API first (with search param)
+      const discoverResp = await api.post<{
+        matches: Array<{
+          tool: Tool;
+          fit_line: string;
+          match_score: number;
+          matched_keywords: string[];
+        }>;
+        query: string;
+      }>("/tools/discover", { query: plainText, limit: 12 });
+
+      if (discoverResp.matches.length > 0) {
+        const maxScore = Math.max(...discoverResp.matches.map((m) => m.match_score), 1);
+        const verified: ScoredTool[] = discoverResp.matches.map((m) => ({
+          tool: m.tool,
+          score: Math.round((m.match_score / maxScore) * 100),
+          hits: m.matched_keywords,
+          fit: m.fit_line,
+        }));
+        setMatched(verified);
+        setApiReady(true);
+        return;
+      }
+    } catch {
+      // Fall through to legacy search + client-side scoring.
+    }
+
+    try {
       let tools: Tool[] = [];
       try {
         const result = await api.get<ToolListResponse>(
@@ -392,7 +420,6 @@ export default function MarketplaceClient({
         );
         tools = result.items;
       } catch {
-        // Fall back to converter with text search
         const params = new URLSearchParams({ q: plainText, limit: "100" });
         const res = await fetch(`${CONVERTER_URL}/api/tools?${params}`, { cache: "no-store" });
         if (res.ok) {
