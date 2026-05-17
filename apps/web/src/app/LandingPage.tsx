@@ -574,7 +574,7 @@ function FeaturedTools({ tools, unavailable }: { tools: Tool[]; unavailable: boo
             </p>
             <div className="flex flex-wrap gap-3 mt-6">
               <Link href="/marketplace" className="hero-btn-primary">Browse marketplace</Link>
-              <Link href="/publish" className="hero-btn-secondary">List a tool</Link>
+              <Link href="/submit" className="hero-btn-secondary">Submit your build</Link>
             </div>
           </div>
         )}
@@ -1040,11 +1040,11 @@ function SellerCTA() {
 
               <div className="flex flex-col gap-3 lg:min-w-44">
                 <Link
-                  href="/publish"
+                  href="/submit"
                   className="flex items-center justify-center gap-2 px-8 py-3.5 rounded-xl text-base font-semibold transition-all hover:opacity-90 active:scale-[0.97] whitespace-nowrap"
                   style={{ background: "var(--green)", color: "#000" }}
                 >
-                  List your tool
+                  Submit your build
                   <span>→</span>
                 </Link>
                 <Link
