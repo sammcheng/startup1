@@ -174,6 +174,9 @@ export interface ScoredTool {
   fit: string;
   hits: string[];
   fallback?: boolean;
+  /** "verified" rows come from the live API; "preview" rows come from the
+   * local kc mock catalog. The Discovery UI shows a different pill for each. */
+  source?: "verified" | "preview";
 }
 
 export function matchTools(segments: Segment[], tools: Tool[]): ScoredTool[] {

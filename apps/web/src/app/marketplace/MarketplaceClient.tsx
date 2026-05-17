@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, buildQuery } from "@/lib/api";
 import { tokenize, matchTools, segmentsToText } from "@/lib/nlpSearch";
 import type { Segment, ScoredTool } from "@/lib/nlpSearch";
+import { kcModuleToTool, matchKcModules } from "@/lib/kcMockModules";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
 
@@ -302,7 +303,8 @@ function Pagination({ page, pages, total, limit, onChange }: {
 // ── ResultCard (KC's exact layout, adapted for Tool data) ──────────────────
 
 function ResultCard({ row, delay, onClick }: { row: ScoredTool; delay: number; onClick: () => void }) {
-  const { tool, fit, fallback } = row;
+  const { tool, fit, fallback, source } = row;
+  const isPreview = source === "preview";
   return (
     <button className="v3-result-card" style={{ animationDelay: `${delay}ms` }} onClick={onClick}>
       <div className="v3-result-main">
@@ -311,7 +313,9 @@ function ResultCard({ row, delay, onClick }: { row: ScoredTool; delay: number; o
           <span className="pill pill-primary">{tool.category.replace(/_/g, " ")}</span>
           {fallback
             ? <span className="pill">Featured</span>
-            : <span className="pill pill-good"><CheckIcon size={11} /> Matched</span>}
+            : isPreview
+              ? <span className="pill pill-preview">Preview</span>
+              : <span className="pill pill-good"><CheckIcon size={11} /> Verified</span>}
         </div>
         <div className="v3-result-desc">{tool.tagline}</div>
         {!fallback && fit && (
@@ -379,12 +383,26 @@ export default function MarketplaceClient({
   async function fetchAndMatch(segs: Segment[]): Promise<void> {
     const plainText = segmentsToText(segs).trim();
 
-    // Seed with whatever tools we already have so results appear fast
-    const initial = matchTools(segs, data?.items ?? []);
-    setMatched(initial);
+    // 1) ALWAYS run local kc-mock keyword matching first — this is the
+    //    catalog-feels-full guarantee. These render as dashed "Preview" pills.
+    const kcMatches = matchKcModules(plainText);
+    const kcPreview: ScoredTool[] = kcMatches.map((km, i) => ({
+      tool: kcModuleToTool(km.module),
+      score: Math.max(1, 100 - i * 8),
+      hits: km.hits,
+      fit: km.fit,
+      fallback: km.fallback,
+      source: "preview",
+    }));
 
-    // Prefer the server-side /tools/discover endpoint (ported from kc) —
-    // it returns ranked matches with fit lines computed against the live DB.
+    // Show kc previews instantly so the results panel never appears empty.
+    setMatched(kcPreview);
+
+    // 2) In parallel: try the live API. Prefer /tools/discover, then the
+    //    legacy /tools?search= and converter fallbacks. Whatever returns
+    //    real rows gets merged AHEAD of the kc previews (verified > preview),
+    //    deduped by tool name.
+    let verified: ScoredTool[] = [];
     try {
       const discoverResp = await api.post<{
         matches: Array<{
@@ -398,45 +416,50 @@ export default function MarketplaceClient({
 
       if (discoverResp.matches.length > 0) {
         const maxScore = Math.max(...discoverResp.matches.map((m) => m.match_score), 1);
-        const verified: ScoredTool[] = discoverResp.matches.map((m) => ({
+        verified = discoverResp.matches.map((m) => ({
           tool: m.tool,
           score: Math.round((m.match_score / maxScore) * 100),
           hits: m.matched_keywords,
           fit: m.fit_line,
+          source: "verified",
         }));
-        setMatched(verified);
-        setApiReady(true);
-        return;
       }
     } catch {
-      // Fall through to legacy search + client-side scoring.
+      // discover endpoint unreachable; try the legacy paths
     }
 
-    try {
-      let tools: Tool[] = [];
+    if (verified.length === 0) {
       try {
-        const result = await api.get<ToolListResponse>(
-          `/tools${buildQuery({ search: plainText, limit: 100 })}`
-        );
-        tools = result.items;
-      } catch {
-        const params = new URLSearchParams({ q: plainText, limit: "100" });
-        const res = await fetch(`${CONVERTER_URL}/api/tools?${params}`, { cache: "no-store" });
-        if (res.ok) {
-          const raw = (await res.json()) as { tools: ConverterTool[] };
-          tools = raw.tools.map(converterToTool);
+        let tools: Tool[] = [];
+        try {
+          const result = await api.get<ToolListResponse>(
+            `/tools${buildQuery({ search: plainText, limit: 100 })}`,
+          );
+          tools = result.items;
+        } catch {
+          const params = new URLSearchParams({ q: plainText, limit: "100" });
+          const res = await fetch(`${CONVERTER_URL}/api/tools?${params}`, { cache: "no-store" });
+          if (res.ok) {
+            const raw = (await res.json()) as { tools: ConverterTool[] };
+            tools = raw.tools.map(converterToTool);
+          }
         }
+        if (tools.length > 0) {
+          verified = matchTools(segs, tools).map((r) => ({ ...r, source: "verified" }));
+        }
+      } catch {
+        // stay on kc previews
       }
-
-      if (tools.length > 0) {
-        const fresh = matchTools(segs, tools);
-        setMatched(fresh);
-      }
-    } catch {
-      // Stick with the initial local matches
-    } finally {
-      setApiReady(true);
     }
+
+    // 3) Merge — verified first, then any kc previews whose name isn't
+    //    already represented by a verified row.
+    const verifiedNames = new Set(verified.map((r) => r.tool.name.toLowerCase()));
+    const previewSurvivors = kcPreview.filter(
+      (r) => !verifiedNames.has(r.tool.name.toLowerCase()),
+    );
+    setMatched([...verified, ...previewSurvivors]);
+    setApiReady(true);
   }
 
   function submit(segs: Segment[]) {
