@@ -4,6 +4,7 @@ const nextConfig = {
   poweredByHeader: false,
   compress: true,
   reactStrictMode: true,
+  transpilePackages: ["@hackmarket/shared"],
 
   images: {
     remotePatterns: [
