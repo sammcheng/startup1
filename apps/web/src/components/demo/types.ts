@@ -15,6 +15,9 @@ export interface DemoInputSchema {
   placeholder?: string;
   example?: unknown;
   example_input?: unknown;
+  qa_inputs?: Record<string, string | number>;
+  qa_certified?: boolean;
+  qa_avg_ms?: number;
 }
 
 export interface DemoInputProps<TValue> {
@@ -52,4 +55,6 @@ export interface DemoRunnerProps {
   inputSchema: Record<string, unknown> | null;
   outputType: OutputType | null;
   mockResponse?: unknown;
+  demoEndpoint?: string;
+  autoRun?: boolean;
 }
