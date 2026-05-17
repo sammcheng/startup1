@@ -41,8 +41,10 @@ const EXAMPLE_REPOS = [
   "https://github.com/expressjs/express",
 ];
 
-// Page wrapper height — bounded so the review phase fits without scroll.
-const PAGE_HEIGHT = "min(900px, calc(100vh - 56px))";
+// Page wrapper — natural height (was a constrained "min(900px, calc(100vh - 56px))"
+// with overflow:hidden, but that combination can collapse to ~0 in some
+// browsers/viewports, leaving the page blank. Let the content flow.
+const PAGE_MIN_HEIGHT = "calc(100vh - 56px)";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -299,13 +301,12 @@ export default function SubmitPage() {
 
       <main
         style={{
-          height: PAGE_HEIGHT,
+          minHeight: PAGE_MIN_HEIGHT,
           background: "var(--bg)",
-          overflow: "hidden",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          padding: phase === "review" ? "16px 24px" : "40px 24px",
+          padding: phase === "review" ? "16px 24px 32px" : "60px 24px",
           boxSizing: "border-box",
         }}
       >
@@ -368,7 +369,7 @@ function InputPhase({
   analyze: () => void;
 }) {
   return (
-    <div className="submit-fade-up" style={{ width: "100%", maxWidth: 720, margin: "auto 0" }}>
+    <div className="submit-fade-up" style={{ width: "100%", maxWidth: 720 }}>
       <div style={{ marginBottom: 28 }}>
         <Badge>Submit a build</Badge>
         <h1

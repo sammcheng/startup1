@@ -63,6 +63,7 @@ export default function GlobalError({
       {/* Show the actual error message so we can debug — dev only. */}
       {process.env.NODE_ENV !== "production" && (
         <details
+          open
           style={{
             background: "var(--elevated)",
             border: "1px solid var(--border)",
