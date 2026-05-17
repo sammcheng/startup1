@@ -107,11 +107,9 @@ export default function DataPourDemo() {
   function validate() {
     setResults(null);
     const STEPS = [
-      { label: "Parsing file", ms: 80 },
-      { label: "Detecting schema", ms: 120 },
-      { label: `Validating ${rows.length} rows`, ms: 95 },
-      { label: "Separating clean/rejected", ms: 30 },
-      { label: "Ingestion complete", ms: 15 },
+      { label: "Parsing file", ms: 400 },
+      { label: `Validating ${rows.length} rows`, ms: 900 },
+      { label: "Building report", ms: 600 },
     ];
     setPhase("validate");
     run(STEPS, setVStep, () => {
@@ -258,11 +256,9 @@ export default function DataPourDemo() {
           <div className="vv-phase-body">
             <Pipeline
               steps={[
-                { label: "Parsing file", ms: 80 },
-                { label: "Detecting schema", ms: 120 },
-                { label: `Validating ${rows.length} rows`, ms: 95 },
-                { label: "Separating clean/rejected", ms: 30 },
-                { label: "Ingestion complete", ms: 15 },
+                { label: "Parsing file", ms: 400 },
+                { label: `Validating ${rows.length} rows`, ms: 900 },
+                { label: "Building report", ms: 600 },
               ]}
               currentIdx={vStep}
               complete={Boolean(results)}

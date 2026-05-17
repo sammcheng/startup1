@@ -202,59 +202,59 @@ export default async function ToolPage({
         </div>
       )}
 
-      {/* ── Breadcrumb nav ──────────────────────────────────────────────── */}
-      <nav
-        className="border-b"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-2 text-xs"
-          style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}
-        >
-          <Link href="/marketplace" className="hover:text-[var(--blue)] transition-colors"
-            style={{ color: "var(--faint)" }}
+      {/* ── HERO — breadcrumb · category pill · name · side-by-side cards ── */}
+      <header className="border-b" style={{ borderColor: "var(--border)" }}>
+        <div className="max-w-7xl mx-auto px-6 pt-6 pb-8">
+          {/* Breadcrumb */}
+          <div
+            className="flex items-center gap-2 text-xs mb-6"
+            style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}
           >
-            marketplace
-          </Link>
-          <span>/</span>
-          <span style={{ color: "var(--muted)" }}>{tool.slug}</span>
-        </div>
-      </nav>
+            <Link
+              href="/marketplace"
+              className="hover:text-[var(--blue)] transition-colors"
+              style={{ color: "var(--faint)" }}
+            >
+              marketplace
+            </Link>
+            <span>/</span>
+            <span style={{ color: "var(--muted)" }}>{tool.slug}</span>
+          </div>
 
-      {/* ── Hero ────────────────────────────────────────────────────────── */}
-      <header
-        className="border-b"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-12">
+          {/* Category pill */}
           <div className="animate-fade-up">
             <span
-              className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider px-2.5 py-1 rounded-md mb-4"
+              className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider px-2.5 py-1 rounded-md mb-3"
               style={{
                 background: `${catColor}15`,
                 color: catColor,
                 border: `1px solid ${catColor}35`,
               }}
             >
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: catColor }} />
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: catColor }}
+              />
               {tool.category.replace(/_/g, " ")}
             </span>
           </div>
 
+          {/* Name + tagline */}
           <h1
-            className="text-4xl sm:text-5xl font-bold leading-tight mb-3 animate-fade-up delay-50"
+            className="text-4xl sm:text-5xl font-bold leading-tight mb-2 animate-fade-up delay-50"
             style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}
           >
             {tool.name}
           </h1>
           <p
-            className="text-lg mb-6 animate-fade-up delay-100"
-            style={{ color: "var(--muted)", maxWidth: "600px" }}
+            className="text-lg animate-fade-up delay-100"
+            style={{ color: "var(--muted)", maxWidth: "720px" }}
           >
             {tool.tagline}
           </p>
 
-          {/* Seller */}
-          <div className="flex items-center gap-2.5 animate-fade-up delay-150">
+          {/* Seller + GitHub */}
+          <div className="flex items-center gap-2.5 mt-4 animate-fade-up delay-150">
             <span className="text-sm" style={{ color: "var(--faint)" }}>by</span>
             {tool.seller.avatar_url ? (
               <img
@@ -270,7 +270,10 @@ export default async function ToolPage({
                 {(tool.seller.display_name ?? "?")[0]?.toUpperCase() ?? "?"}
               </div>
             )}
-            <span className="text-sm font-medium" style={{ color: "var(--text)" }}>
+            <span
+              className="text-sm font-medium"
+              style={{ color: "var(--text)" }}
+            >
               {tool.seller.display_name}
             </span>
             {tool.github_url && (
@@ -289,20 +292,188 @@ export default async function ToolPage({
               </a>
             )}
           </div>
+
+          {/* SIDE-BY-SIDE: price card + info card */}
+          <div
+            className="mt-6 grid gap-4 animate-fade-up delay-200"
+            style={{ gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)" }}
+          >
+            {/* Price + CTAs */}
+            <div
+              className="rounded-xl border p-5"
+              style={{ background: "var(--card)", borderColor: "var(--border)" }}
+            >
+              <div
+                className="flex items-baseline gap-2 mb-1"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                <span
+                  className="text-3xl font-bold"
+                  style={{ color: "var(--text)" }}
+                >
+                  {formatPrice(tool.price_per_request)}
+                </span>
+                <span
+                  className="text-xs"
+                  style={{ color: "var(--faint)" }}
+                >
+                  {tool.ownership_type === "royalty"
+                    ? "per request"
+                    : "one-time"}
+                </span>
+              </div>
+              {isQaCertified && (
+                <div
+                  className="flex items-center gap-2 mt-3 mb-3"
+                  style={{
+                    background: "rgba(16,185,129,0.08)",
+                    border: "1px solid rgba(16,185,129,0.25)",
+                    borderRadius: 8,
+                    padding: "6px 10px",
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: "var(--green)" }}>✓</span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--green)",
+                      fontWeight: 700,
+                    }}
+                  >
+                    QA CERTIFIED
+                    {qaAvgMs ? (
+                      <span
+                        style={{ color: "var(--faint)", marginLeft: 6, fontWeight: 500 }}
+                      >
+                        · {qaAvgMs}ms avg
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              )}
+              <div className="space-y-2 mt-4">
+                {(tool.input_type || tool.input_schema) && tool.output_type && (
+                  <a
+                    href="#demo"
+                    className="flex items-center justify-center gap-2 w-full rounded-lg py-2.5 text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
+                    style={{ background: "var(--blue)", color: "#fff" }}
+                  >
+                    Try Demo
+                    <span>↓</span>
+                  </a>
+                )}
+                <Link
+                  href="/dashboard"
+                  className="flex items-center justify-center gap-2 w-full rounded-lg py-2.5 text-sm font-medium border transition-all hover:border-[var(--border-h)]"
+                  style={{
+                    background: "transparent",
+                    borderColor: "var(--border)",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Get API Key
+                  <span>→</span>
+                </Link>
+              </div>
+            </div>
+
+            {/* Info card — stats + stack */}
+            <div
+              className="rounded-xl border p-5"
+              style={{ background: "var(--card)", borderColor: "var(--border)" }}
+            >
+              <div
+                className="grid gap-4"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                }}
+              >
+                <HeroStat
+                  label="Integrations"
+                  value={formatCount(tool.total_requests)}
+                  icon="↗"
+                />
+                <HeroStat
+                  label="Avg latency"
+                  value={
+                    tool.avg_response_time_ms != null
+                      ? `${tool.avg_response_time_ms}ms`
+                      : "—"
+                  }
+                  icon="⚡"
+                />
+                <HeroStat
+                  label="Uptime"
+                  value={
+                    tool.uptime_percentage
+                      ? `${parseFloat(tool.uptime_percentage).toFixed(1)}%`
+                      : "—"
+                  }
+                  valueColor="var(--green)"
+                  icon="●"
+                />
+                <HeroStat
+                  label="Model"
+                  value={
+                    tool.ownership_type === "royalty"
+                      ? "Revenue share"
+                      : "One-time"
+                  }
+                  icon="◈"
+                />
+              </div>
+              <div
+                className="mt-4 pt-4 border-t flex flex-wrap gap-2"
+                style={{ borderColor: "var(--border)" }}
+              >
+                {tool.input_type && (
+                  <StackPill label={`In: ${tool.input_type}`} />
+                )}
+                {tool.output_type && (
+                  <StackPill label={`Out: ${tool.output_type}`} />
+                )}
+                {isConverterTool && <StackPill label="Converter-hosted" />}
+              </div>
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* ── Main content ────────────────────────────────────────────────── */}
-      <div className="max-w-7xl mx-auto px-6 py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-10">
+      {/* ── DEMO / PLAYGROUND — directly below the hero, above the fold ── */}
+      <div id="demo">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <DemoTabs
+            slug={tool.slug}
+            apiPlayground={
+              <DemoRunner
+                toolSlug={tool.slug}
+                inputType={tool.input_type}
+                inputSchema={tool.input_schema}
+                outputType={tool.output_type}
+                demoEndpoint={tool.api_endpoint ?? undefined}
+                autoRun={isConverterTool}
+                mockResponse={
+                  (tool.output_schema as Record<string, unknown> | null)
+                    ?.example_output ?? undefined
+                }
+              />
+            }
+          />
+        </div>
+      </div>
 
-          {/* ── Left column ─────────────────────────────────────────────── */}
+      {/* ── TECHNICAL DETAILS — for people who scrolled this far ── */}
+      <section
+        className="border-t"
+        style={{ borderColor: "var(--border)", background: "var(--bg)" }}
+      >
+        <div className="max-w-7xl mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
           <div className="min-w-0 space-y-10">
-
-            {/* Description */}
-            <section className="animate-fade-up delay-200">
+            {/* About */}
+            <section>
               <h2
-                className="text-xs font-mono uppercase tracking-widest mb-4"
+                className="text-xs font-mono uppercase tracking-widest mb-3"
                 style={{ color: "var(--faint)" }}
               >
                 About
@@ -313,27 +484,28 @@ export default async function ToolPage({
               >
                 {tool.description}
               </div>
-              {listingUrlAndImageTool ? (
+              {listingUrlAndImageTool && (
                 <div
-                  className="mt-5 rounded-2xl border px-4 py-4 text-sm leading-6"
+                  className="mt-4 rounded-xl border px-4 py-3 text-sm leading-6"
                   style={{
                     background: "rgba(245, 158, 11, 0.08)",
                     borderColor: "rgba(245, 158, 11, 0.2)",
                     color: "var(--text)",
                   }}
                 >
-                  This tool accepts either a property listing URL or direct photo uploads. Listing sites like Zillow
-                  can block automated scraping in production, so uploading photos is the most reliable path if a URL
-                  request is rejected.
+                  This tool accepts either a property listing URL or direct
+                  photo uploads. Listing sites like Zillow can block automated
+                  scraping in production, so uploading photos is the most
+                  reliable path if a URL request is rejected.
                 </div>
-              ) : null}
+              )}
             </section>
 
-            {/* Input / Output Schema */}
+            {/* I/O contract */}
             {(tool.input_schema || tool.output_schema) && (
-              <section className="animate-fade-up delay-250">
+              <section>
                 <h2
-                  className="text-xs font-mono uppercase tracking-widest mb-5"
+                  className="text-xs font-mono uppercase tracking-widest mb-4"
                   style={{ color: "var(--faint)" }}
                 >
                   API Contract
@@ -341,18 +513,28 @@ export default async function ToolPage({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {tool.input_schema && (
                     <div>
-                      <p className="text-xs font-mono mb-2" style={{ color: "var(--blue)" }}>
+                      <p
+                        className="text-xs font-mono mb-2"
+                        style={{ color: "var(--blue)" }}
+                      >
                         → Input schema
                       </p>
-                      <SchemaBlock schema={tool.input_schema as Record<string, unknown>} />
+                      <SchemaBlock
+                        schema={tool.input_schema as Record<string, unknown>}
+                      />
                     </div>
                   )}
                   {tool.output_schema && (
                     <div>
-                      <p className="text-xs font-mono mb-2" style={{ color: "var(--green)" }}>
+                      <p
+                        className="text-xs font-mono mb-2"
+                        style={{ color: "var(--green)" }}
+                      >
                         ← Output schema
                       </p>
-                      <SchemaBlock schema={tool.output_schema as Record<string, unknown>} />
+                      <SchemaBlock
+                        schema={tool.output_schema as Record<string, unknown>}
+                      />
                     </div>
                   )}
                 </div>
@@ -362,9 +544,9 @@ export default async function ToolPage({
             {toolDocs && <ToolDocs docs={toolDocs} />}
 
             {tool.documentation && (
-              <section className="animate-fade-up">
+              <section>
                 <h2
-                  className="text-xs font-mono uppercase tracking-widest mb-4"
+                  className="text-xs font-mono uppercase tracking-widest mb-3"
                   style={{ color: "var(--faint)" }}
                 >
                   Seller Notes
@@ -379,154 +561,107 @@ export default async function ToolPage({
             )}
           </div>
 
-          {/* ── Right column ────────────────────────────────────────────── */}
+          {/* Right rail — performance + benchmark */}
           <aside className="space-y-4">
-            {/* Pricing card */}
             <div
-              className="rounded-xl border p-6 sticky top-20 animate-fade-up delay-100 space-y-5"
+              className="rounded-xl border p-5"
               style={{ background: "var(--card)", borderColor: "var(--border)" }}
             >
-              <div>
-                <div
-                  className="text-3xl font-bold mb-1"
-                  style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}
-                >
-                  {formatPrice(tool.price_per_request)}
-                </div>
-                <div className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}>
-                  per request
-                </div>
-              </div>
-
-              {isQaCertified && (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)",
-                  borderRadius: 8, padding: "8px 12px",
-                }}>
-                  <span style={{ fontSize: 14, color: "var(--green)" }}>✓</span>
-                  <div>
-                    <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--green)", fontWeight: 700 }}>
-                      QA Certified
-                    </div>
-                    {qaAvgMs && (
-                      <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--faint)" }}>
-                        {qaAvgMs}ms avg · AI-verified demo
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* CTA buttons */}
-              <div className="space-y-2.5">
-                {(tool.input_type || tool.input_schema) && tool.output_type && (
-                  <a
-                    href="#demo"
-                    className="flex items-center justify-center gap-2 w-full rounded-xl py-3 text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
-                    style={{ background: "var(--blue)", color: "#fff" }}
-                  >
-                    Try Demo
-                    <span>↓</span>
-                  </a>
-                )}
-                <Link
-                  href="/dashboard"
-                  className="flex items-center justify-center gap-2 w-full rounded-xl py-3 text-sm font-medium border transition-all hover:border-[var(--border-h)]"
-                  style={{
-                    background: "transparent",
-                    borderColor: "var(--border)",
-                    color: "var(--muted)",
-                  }}
-                >
-                  Get API Key
-                  <span>→</span>
-                </Link>
-              </div>
-
-              {/* Stats */}
-              <div className="pt-2">
-                <p
-                  className="text-xs font-mono uppercase tracking-widest mb-2"
-                  style={{ color: "var(--faint)" }}
-                >
-                  Performance
-                </p>
-                {tool.uptime_percentage && (
-                  <StatRow
-                    icon="●"
-                    label="Uptime"
-                    value={`${parseFloat(tool.uptime_percentage).toFixed(1)}%`}
-                    valueColor="var(--green)"
-                  />
-                )}
-                <StatRow
-                  icon="⚡"
-                  label="Avg latency"
-                  value={
-                    tool.avg_response_time_ms != null
-                      ? `${tool.avg_response_time_ms}ms`
-                      : "—"
-                  }
-                />
-                <StatRow
-                  icon="↗"
-                  label="Total requests"
-                  value={formatCount(tool.total_requests)}
-                />
-                <StatRow
-                  icon="◈"
-                  label="Input"
-                  value={tool.input_type ?? "—"}
-                />
-                <StatRow
-                  icon="◇"
-                  label="Output"
-                  value={tool.output_type ?? "—"}
-                />
-              </div>
-
-              {/* Ownership badge */}
-              <div
-                className="rounded-lg px-3 py-2.5 flex items-center justify-between text-xs"
-                style={{ background: "var(--elevated)", border: "1px solid var(--border)" }}
+              <p
+                className="text-xs font-mono uppercase tracking-widest mb-3"
+                style={{ color: "var(--faint)" }}
               >
-                <span style={{ color: "var(--muted)" }}>Model</span>
-                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>
-                  {tool.ownership_type === "royalty" ? "Revenue share" : "One-time purchase"}
-                </span>
-              </div>
-
-              {/* Live benchmark — only for converter tools with a real demo endpoint */}
-              {isConverterTool && tool.api_endpoint && (
-                <LiveBenchmark endpoint={tool.api_endpoint} />
+                Performance
+              </p>
+              {tool.uptime_percentage && (
+                <StatRow
+                  icon="●"
+                  label="Uptime"
+                  value={`${parseFloat(tool.uptime_percentage).toFixed(1)}%`}
+                  valueColor="var(--green)"
+                />
               )}
-            </div>
-          </aside>
-        </div>
-      </div>
-
-      {/* ── Demo section ────────────────────────────────────────────────── */}
-      <div id="demo">
-        <div className="max-w-7xl mx-auto px-6 pb-12">
-          <DemoTabs
-            slug={tool.slug}
-            apiPlayground={
-              <DemoRunner
-                toolSlug={tool.slug}
-                inputType={tool.input_type}
-                inputSchema={tool.input_schema}
-                outputType={tool.output_type}
-                demoEndpoint={tool.api_endpoint ?? undefined}
-                autoRun={isConverterTool}
-                mockResponse={
-                  (tool.output_schema as Record<string, unknown> | null)?.example_output ?? undefined
+              <StatRow
+                icon="⚡"
+                label="Avg latency"
+                value={
+                  tool.avg_response_time_ms != null
+                    ? `${tool.avg_response_time_ms}ms`
+                    : "—"
                 }
               />
-            }
-          />
+              <StatRow
+                icon="↗"
+                label="Total requests"
+                value={formatCount(tool.total_requests)}
+              />
+              <StatRow icon="◈" label="Input" value={tool.input_type ?? "—"} />
+              <StatRow
+                icon="◇"
+                label="Output"
+                value={tool.output_type ?? "—"}
+              />
+            </div>
+
+            {isConverterTool && tool.api_endpoint && (
+              <div
+                className="rounded-xl border p-5"
+                style={{ background: "var(--card)", borderColor: "var(--border)" }}
+              >
+                <LiveBenchmark endpoint={tool.api_endpoint} />
+              </div>
+            )}
+          </aside>
         </div>
+      </section>
+    </div>
+  );
+}
+
+function HeroStat({
+  label,
+  value,
+  valueColor,
+  icon,
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+  icon?: string;
+}) {
+  return (
+    <div>
+      <div
+        className="text-xs font-mono uppercase tracking-wider mb-1"
+        style={{ color: "var(--faint)" }}
+      >
+        {icon && <span style={{ marginRight: 4 }}>{icon}</span>}
+        {label}
+      </div>
+      <div
+        className="text-lg font-semibold"
+        style={{
+          fontFamily: "var(--font-mono)",
+          color: valueColor ?? "var(--text)",
+        }}
+      >
+        {value}
       </div>
     </div>
+  );
+}
+
+function StackPill({ label }: { label: string }) {
+  return (
+    <span
+      className="text-xs font-mono px-2 py-1 rounded-md border"
+      style={{
+        background: "var(--elevated)",
+        borderColor: "var(--border)",
+        color: "var(--muted)",
+      }}
+    >
+      {label}
+    </span>
   );
 }

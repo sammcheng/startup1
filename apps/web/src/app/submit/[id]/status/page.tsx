@@ -724,12 +724,20 @@ function SandboxLineView({ line, prefix }: { line: SandboxLine; prefix: string }
 
 function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
   const m = submission.metrics;
-  const color = scoreColor(m.confidence);
+  const isTesting = submission.stage === "testing";
+  const color = isTesting ? "var(--muted)" : scoreColor(m.confidence);
 
-  let verdict = "Passed AI review — forwarded to manual review.";
-  if (m.confidence < 60) verdict = "Failed AI review — major issues need addressing.";
-  else if (m.confidence < 80)
+  let verdict: string;
+  if (isTesting) {
+    verdict =
+      "AI testing is still running. Your confidence score appears here once the sandbox suite finishes.";
+  } else if (m.confidence < 60) {
+    verdict = "Failed AI review — major issues need addressing.";
+  } else if (m.confidence < 80) {
     verdict = "Passed with reservations — manual reviewer will assess.";
+  } else {
+    verdict = "Passed AI review — forwarded to manual review.";
+  }
 
   return (
     <div
@@ -762,7 +770,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
             lineHeight: 1,
           }}
         >
-          {m.confidence}
+          {isTesting ? "—" : m.confidence}
         </div>
         <div
           style={{
@@ -771,7 +779,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
             paddingBottom: 8,
           }}
         >
-          / 100
+          {isTesting ? "computing…" : "/ 100"}
         </div>
       </div>
 
@@ -787,7 +795,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
       >
         <div
           style={{
-            width: `${m.confidence}%`,
+            width: `${isTesting ? 0 : m.confidence}%`,
             height: "100%",
             background: color,
             transition: "width 0.6s ease",

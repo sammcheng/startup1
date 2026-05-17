@@ -664,7 +664,35 @@ function loadAll(): SubmissionRecord[] {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(MOCK_SUBMISSIONS));
       return MOCK_SUBMISSIONS;
     }
-    return parsed;
+
+    // Defensive scrubs on every load:
+    //   1) Strip HTML from names (READMEs sometimes ship `<p align="center">`).
+    //   2) If a "testing" submission's timer has expired, refresh it so the
+    //      demo Stage-A visualization is always visible at least once per visit.
+    let mutated = false;
+    const cleaned = parsed.map((r) => {
+      const sanitized = sanitizeName(r.name);
+      const next = { ...r };
+      if (sanitized && sanitized !== r.name) {
+        next.name = sanitized;
+        mutated = true;
+      }
+      if (r.stage === "testing") {
+        const startedAt = r.testing_started_at
+          ? new Date(r.testing_started_at).getTime()
+          : 0;
+        const elapsed = Date.now() - startedAt;
+        // If the timer has expired or never started, restart so Stage A is
+        // visible. (Approve flow still moves these to manual_review properly.)
+        if (!r.testing_started_at || elapsed > 30_000) {
+          next.testing_started_at = new Date().toISOString();
+          mutated = true;
+        }
+      }
+      return next;
+    });
+    if (mutated) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+    return cleaned;
   } catch {
     return MOCK_SUBMISSIONS;
   }
@@ -722,6 +750,19 @@ export function resetSubmissions(): void {
 
 export function newSubmissionId(): string {
   return `sub_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Strip HTML tags + collapse whitespace. Defends against tool names that
+ *  came from a README's first line, which can contain `<p align="center">`,
+ *  `<br>`, image tags, etc. Used both at ingest and as a defensive render-
+ *  time helper in the approver / status / tool detail views. */
+export function sanitizeName(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/&[a-z0-9#]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function generateMetricsForCategory(category: string): SubmissionMetrics {
@@ -1131,13 +1172,14 @@ export function newSubmissionFromAnalysis(args: {
   price_cents: number;
 }): SubmissionRecord {
   const id = newSubmissionId();
-  const slug = args.name
+  const cleanName = sanitizeName(args.name) || "Untitled submission";
+  const slug = cleanName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
   return {
     id,
-    name: args.name,
+    name: cleanName,
     slug,
     github_url: args.github_url,
     submitter_email: args.submitter_email,

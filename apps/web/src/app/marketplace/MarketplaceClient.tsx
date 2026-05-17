@@ -368,20 +368,28 @@ export default function MarketplaceClient({
 
   // Live preview that updates as the user types — runs the kc-mock matcher
   // synchronously on every keystroke, debounced 120ms. No thinking animation.
+  // Caps the dropdown at MAX_DROPDOWN matches; surplus rolls into a "See all"
+  // affordance that submits the query through the full thinking + results flow.
+  const MAX_DROPDOWN = 2;
   const [livePreview, setLivePreview] = useState<ScoredTool[]>([]);
+  const [livePreviewTotal, setLivePreviewTotal] = useState(0);
+  const [liveQuery, setLiveQuery] = useState("");
   const livePreviewRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleLiveChange = useCallback((text: string) => {
     clearTimeout(livePreviewRef.current);
     const q = text.trim();
+    setLiveQuery(q);
     if (q.length < 2) {
       setLivePreview([]);
+      setLivePreviewTotal(0);
       return;
     }
     livePreviewRef.current = setTimeout(() => {
       const matches = matchKcModules(q);
+      setLivePreviewTotal(matches.length);
       setLivePreview(
-        matches.slice(0, 5).map((km, i) => ({
+        matches.slice(0, MAX_DROPDOWN).map((km, i) => ({
           tool: kcModuleToTool(km.module),
           score: Math.max(1, 100 - i * 8),
           hits: km.hits,
@@ -668,6 +676,30 @@ export default function MarketplaceClient({
                       );
                     })}
                   </div>
+                  {livePreviewTotal > MAX_DROPDOWN && (
+                    <button
+                      onClick={() => {
+                        const segs = tokenize(liveQuery);
+                        submit(segs);
+                      }}
+                      style={{
+                        marginTop: 8,
+                        width: "100%",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: "1px dashed var(--border)",
+                        background: "transparent",
+                        color: "var(--blue)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        textAlign: "center",
+                      }}
+                    >
+                      See all {livePreviewTotal} results →
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -697,13 +729,13 @@ export default function MarketplaceClient({
                     Paste a link → we detect endpoints → you earn on every call.
                   </div>
                 </div>
-                <Link href="/publish" style={{
+                <Link href="/submit" style={{
                   display: "inline-flex", alignItems: "center", gap: 6,
                   padding: "9px 18px", borderRadius: 9, background: "var(--blue)",
                   color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none",
                   whiteSpace: "nowrap", flexShrink: 0,
                 }}>
-                  List your tool →
+                  Submit your build →
                 </Link>
               </div>
 

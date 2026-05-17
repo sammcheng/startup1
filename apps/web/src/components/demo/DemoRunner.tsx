@@ -180,7 +180,7 @@ export default function DemoRunner({
     <section className="rounded-[32px] border border-stone-800 bg-stone-950/80 p-6 shadow-2xl shadow-black/20">
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-cyan-300/70">Interactive Demo</div>
+          <div className="text-xs uppercase tracking-[0.25em] text-cyan-300/70">API Playground</div>
           <h2 className="mt-2 text-2xl font-semibold text-stone-100">Try the live tool through the gateway</h2>
           <p className="mt-2 text-sm leading-6 text-stone-400">
             Demo runs are rate limited and count against a 10-call session limit in this browser.

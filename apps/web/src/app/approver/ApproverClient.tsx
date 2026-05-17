@@ -27,6 +27,7 @@ import {
   liveTestDurationMs,
   listSubmissions,
   revokeSubmission,
+  sanitizeName,
   updateSubmission,
   type LiveTestStage,
   type SandboxLine,
@@ -201,7 +202,7 @@ function PageShell({ children }: { children: ReactNode }) {
       style={{
         minHeight: "100vh",
         background: "var(--bg)",
-        paddingTop: 80,
+        paddingTop: 68,
         paddingBottom: 24,
       }}
     >
@@ -222,10 +223,10 @@ function Header({
       style={{
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "flex-end",
+        alignItems: "center",
         flexWrap: "wrap",
         gap: 12,
-        marginBottom: 16,
+        marginBottom: 12,
       }}
     >
       <div>
@@ -234,15 +235,15 @@ function Header({
           style={{
             fontFamily: "var(--font-display)",
             fontWeight: 700,
-            fontSize: 26,
+            fontSize: 22,
             color: "var(--text)",
-            margin: "10px 0 4px",
+            margin: "4px 0 2px",
             letterSpacing: "-0.01em",
           }}
         >
           {counts.review} pending review
         </h1>
-        <p style={{ color: "var(--muted)", fontSize: 13 }}>
+        <p style={{ color: "var(--muted)", fontSize: 12.5 }}>
           {counts.testing} testing · {counts.review} ready · {counts.live} live
         </p>
       </div>
@@ -549,7 +550,7 @@ function CardLine({ name, right }: { name: string; right: ReactNode }) {
           whiteSpace: "nowrap",
         }}
       >
-        {name}
+        {sanitizeName(name) || "Untitled"}
       </span>
       {right}
     </div>
@@ -630,7 +631,7 @@ function DetailHeader({ submission }: { submission: SubmissionRecord }) {
           letterSpacing: "-0.01em",
         }}
       >
-        {submission.name}
+        {sanitizeName(submission.name) || "Untitled"}
       </h2>
       <div
         style={{
@@ -832,7 +833,12 @@ function TestingPanel({
           </div>
 
           {/* Terminal-style live output */}
-          <LiveTerminal plan={plan} stageIdx={stageIdx} stageElapsed={stageElapsed} />
+          <LiveTerminal
+            plan={plan}
+            stageIdx={stageIdx}
+            stageElapsed={stageElapsed}
+            startedAt={startedAt}
+          />
         </div>
       }
       actions={
@@ -856,35 +862,73 @@ function TestingPanel({
   );
 }
 
+// Each terminal line is paced 1.6x its declared delay (with a floor) so the
+// user actually reads it instead of seeing all lines arrive at once.
+const LINE_PACE_SCALE = 1.6;
+const LINE_PACE_MIN_MS = 280;
+
+function pacedLineDelay(ms: number | undefined): number {
+  return Math.max(LINE_PACE_MIN_MS, Math.round((ms ?? 220) * LINE_PACE_SCALE));
+}
+
+function fmtTimestamp(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `[${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}]`;
+}
+
 function LiveTerminal({
   plan,
   stageIdx,
   stageElapsed,
+  startedAt,
 }: {
   plan: LiveTestStage[];
   stageIdx: number;
   stageElapsed: number;
+  startedAt: number;
 }) {
   const safeIdx = Math.min(stageIdx, plan.length - 1);
 
-  // Lines visible: all completed stages' lines + the current stage's lines up
-  // to the elapsed cumulative delay.
-  const visible: { stage: number; line: SandboxLine; key: string }[] = [];
-  for (let i = 0; i < safeIdx; i++) {
+  // Build the canonical timeline of every line in the plan with both
+  // (a) the running offsetMs from start used to gate visibility, and
+  // (b) the absolute wall-clock timestamp to print as `[HH:MM:SS]`.
+  const timeline: { key: string; line: SandboxLine; offsetMs: number; ts: number }[] = [];
+  let stageOffset = 0;
+  for (let i = 0; i < plan.length; i++) {
+    let lineOffset = stageOffset;
     plan[i].lines.forEach((line, j) => {
-      visible.push({ stage: i, line, key: `${i}-${j}` });
+      lineOffset += pacedLineDelay(line.delay);
+      timeline.push({
+        key: `${i}-${j}`,
+        line,
+        offsetMs: lineOffset,
+        ts: startedAt + lineOffset,
+      });
     });
+    stageOffset += plan[i].ms;
   }
-  // Within current stage, walk delays cumulatively.
-  if (safeIdx < plan.length) {
-    let cum = 0;
-    plan[safeIdx].lines.forEach((line, j) => {
-      cum += line.delay ?? 220;
-      if (cum <= stageElapsed) {
-        visible.push({ stage: safeIdx, line, key: `${safeIdx}-${j}` });
+
+  // Lines visible right now:
+  //   - everything from completed stages (i < safeIdx), plus
+  //   - lines in the current stage whose paced cum-delay ≤ stageElapsed.
+  const visible = timeline.filter((t) => {
+    const [stageStr] = t.key.split("-");
+    const stage = Number(stageStr);
+    if (stage < safeIdx) return true;
+    if (stage === safeIdx) {
+      // For the current stage, recompute the per-stage cum delay.
+      const stageStart = plan.slice(0, stage).reduce((s, p) => s + 0, 0); // 0 — we want per-stage local
+      void stageStart;
+      // Simpler: walk this stage's lines linearly and check stageElapsed.
+      let localCum = 0;
+      for (let j = 0; j <= Number(t.key.split("-")[1]); j++) {
+        localCum += pacedLineDelay(plan[stage].lines[j].delay);
       }
-    });
-  }
+      return localCum <= stageElapsed;
+    }
+    return false;
+  });
 
   // Auto-scroll the terminal to the bottom as lines arrive.
   const ref = useRef<HTMLDivElement>(null);
@@ -921,8 +965,24 @@ function LiveTerminal({
         }}
       >
         <span>sandbox.{plan[safeIdx]?.name.toLowerCase().replace(/\s+/g, "-")}</span>
-        <span style={{ color: "#ef4444", display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span className="appr-pulse-rec" /> LIVE
+        <span
+          style={{
+            color: "#9ca3af",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              background: "#9ca3af",
+              animation: "blink 1.6s ease-in-out infinite",
+            }}
+          />
+          running
         </span>
       </div>
       <div
@@ -931,7 +991,7 @@ function LiveTerminal({
           padding: "12px 14px",
           fontFamily: "var(--font-mono)",
           fontSize: 11.5,
-          lineHeight: 1.6,
+          lineHeight: 1.65,
           color: "#cbd5e1",
           flex: 1,
           overflowY: "auto",
@@ -940,16 +1000,19 @@ function LiveTerminal({
         }}
       >
         {visible.map((v) => (
-          <Line key={v.key} line={v.line} />
+          <Line key={v.key} line={v.line} ts={v.ts} />
         ))}
+        {/* Subtle gray pulsing cursor (not a big red blinking block) */}
         <span
           style={{
             display: "inline-block",
-            width: 8,
-            height: 14,
-            background: "#cbd5e1",
+            marginLeft: 2,
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            background: "#64748b",
             verticalAlign: "middle",
-            animation: "blink 1s ease-in-out infinite",
+            animation: "blink 1.6s ease-in-out infinite",
           }}
         />
       </div>
@@ -957,7 +1020,7 @@ function LiveTerminal({
   );
 }
 
-function Line({ line }: { line: SandboxLine }) {
+function Line({ line, ts }: { line: SandboxLine; ts: number }) {
   const color =
     line.style === "ok"
       ? "#4ade80"
@@ -969,9 +1032,20 @@ function Line({ line }: { line: SandboxLine }) {
             ? "#475569"
             : "#cbd5e1";
   return (
-    <div style={{ color, whiteSpace: "pre" }}>
-      {line.text.startsWith(" ") ? "" : "$ "}
-      {line.text}
+    <div style={{ color, whiteSpace: "pre", display: "flex", gap: 8 }}>
+      <span
+        style={{
+          color: "#475569",
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        {fmtTimestamp(ts)}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        {line.text.startsWith(" ") ? "" : "$ "}
+        {line.text}
+      </span>
     </div>
   );
 }

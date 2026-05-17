@@ -205,8 +205,8 @@ export default function DashboardPage() {
       style={{
         minHeight: "100vh",
         background: "var(--bg)",
-        paddingTop: 92,
-        paddingBottom: 80,
+        paddingTop: 68,
+        paddingBottom: 32,
       }}
     >
       <div
@@ -221,10 +221,10 @@ export default function DashboardPage() {
           style={{
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "flex-end",
+            alignItems: "center",
             flexWrap: "wrap",
             gap: 16,
-            marginBottom: 36,
+            marginBottom: 16,
           }}
         >
           <div>
@@ -244,9 +244,9 @@ export default function DashboardPage() {
               style={{
                 fontFamily: "var(--font-display)",
                 fontWeight: 700,
-                fontSize: 32,
+                fontSize: 22,
                 color: "var(--text)",
-                margin: "12px 0 0",
+                margin: "4px 0 0",
                 letterSpacing: "-0.01em",
               }}
             >
@@ -255,8 +255,8 @@ export default function DashboardPage() {
             <p
               style={{
                 color: "var(--muted)",
-                fontSize: 14.5,
-                marginTop: 6,
+                fontSize: 13,
+                marginTop: 3,
               }}
             >
               Last login 2 hours ago · Next payout in 12 days

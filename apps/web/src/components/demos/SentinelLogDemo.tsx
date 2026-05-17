@@ -39,11 +39,9 @@ const RAW_ERRORS: RawError[] = [
 ];
 
 const ANALYZE_STEPS_TPL = (n: number) => [
-  { label: `Ingesting ${n} error events`, ms: 25 },
-  { label: "Parsing stack traces", ms: 60 },
-  { label: "Deduplicating by signature", ms: 40 },
-  { label: "Grouping into issues", ms: 30 },
-  { label: "Scoring severity", ms: 20 },
+  { label: `Ingesting ${n} error events`, ms: 400 },
+  { label: "Parsing stack traces", ms: 700 },
+  { label: "Grouping and scoring issues", ms: 800 },
 ];
 
 const ALERT_STEPS = [

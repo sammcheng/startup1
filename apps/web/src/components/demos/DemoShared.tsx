@@ -153,6 +153,17 @@ export function DemoShell({
   );
 }
 
+// Demo pacing — global tuning so users can actually read each phase.
+// Each step waits at least MIN_STEP_MS, and the final phase holds for an
+// extra END_PAUSE_MS before onComplete fires.
+const MIN_STEP_MS = 1600;
+const STEP_SCALE = 2.2;
+const END_PAUSE_MS = 1000;
+
+function paceStep(ms: number): number {
+  return Math.max(MIN_STEP_MS, Math.round(ms * STEP_SCALE));
+}
+
 export function usePipelineRunner() {
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -172,12 +183,14 @@ export function usePipelineRunner() {
     onStepChange(0);
     let cumulative = 0;
     steps.forEach((s, i) => {
-      cumulative += s.ms;
+      cumulative += paceStep(s.ms);
       timersRef.current.push(
         setTimeout(() => onStepChange(i + 1), cumulative),
       );
     });
-    timersRef.current.push(setTimeout(() => onComplete?.(), cumulative + 240));
+    timersRef.current.push(
+      setTimeout(() => onComplete?.(), cumulative + END_PAUSE_MS),
+    );
   };
 
   return { run, clear };

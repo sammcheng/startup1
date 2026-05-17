@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { CATEGORIES } from "@hackmarket/shared";
@@ -736,15 +736,14 @@ function ReviewPhase({
               gap: 8,
               padding: "5px 11px",
               borderRadius: 8,
-              background: "rgba(59,130,246,0.07)",
-              border: "1px solid rgba(59,130,246,0.25)",
+              background: "var(--elevated)",
+              border: "1px solid var(--border)",
               fontSize: 12,
-              color: "var(--blue)",
+              color: "var(--muted)",
               fontFamily: "var(--font-mono)",
               minWidth: 0,
             }}
           >
-            <span style={{ flexShrink: 0 }}>✦</span>
             <span style={{ whiteSpace: "nowrap" }}>
               Auto-generated from your repo — edit anything, pick a price, ship it.
             </span>
@@ -803,7 +802,7 @@ function ReviewPhase({
             minHeight: 0,
           }}
         >
-          <FieldLabel auto>Name</FieldLabel>
+          <FieldLabel>Name</FieldLabel>
           <input
             value={listing.name}
             onChange={(e) => patch({ name: e.target.value })}
@@ -816,7 +815,7 @@ function ReviewPhase({
               padding: "9px 12px",
             }}
           />
-          <FieldLabel auto autoNote="from your README">
+          <FieldLabel>
             Description
           </FieldLabel>
           <textarea
@@ -852,56 +851,23 @@ function ReviewPhase({
         >
           {/* Category */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-            <FieldLabel auto autoNote="detected">
-              Category
-            </FieldLabel>
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 5,
-                overflowY: "auto",
-                maxHeight: 78,
-              }}
-              className="submit-textarea"
-            >
-              {CATEGORIES.map((c) => {
-                const selected = listing.category === c;
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => patch({ category: c })}
-                    style={{
-                      padding: "4px 10px",
-                      borderRadius: 99,
-                      border: `1px solid ${selected ? "var(--blue)" : "var(--border)"}`,
-                      background: selected ? "rgba(59,130,246,0.12)" : "transparent",
-                      color: selected ? "var(--blue)" : "var(--muted)",
-                      fontSize: 11.5,
-                      fontFamily: "var(--font-mono)",
-                      cursor: "pointer",
-                      transition: "all 0.15s",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {c}
-                  </button>
-                );
-              })}
-            </div>
+            <FieldLabel>Category</FieldLabel>
+            <CategoryPicker
+              selected={listing.category}
+              onChange={(c) => patch({ category: c })}
+            />
           </div>
 
           {/* Language */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-            <FieldLabel auto>Language</FieldLabel>
+            <FieldLabel>Language</FieldLabel>
             <input
               value={listing.language}
               onChange={(e) => patch({ language: e.target.value })}
               className="submit-input"
               style={{ ...inputStyle, padding: "8px 12px" }}
             />
-            <FieldLabel auto>License</FieldLabel>
+            <FieldLabel>License</FieldLabel>
             <input
               value={listing.license}
               onChange={(e) => patch({ license: e.target.value })}
@@ -920,7 +886,7 @@ function ReviewPhase({
               minWidth: 0,
             }}
           >
-            <FieldLabel auto autoNote="from package.json">
+            <FieldLabel>
               Tech stack
             </FieldLabel>
             <div
@@ -1012,7 +978,7 @@ function ReviewPhase({
             minHeight: 0,
           }}
         >
-          <FieldLabel auto>Inputs</FieldLabel>
+          <FieldLabel>Inputs</FieldLabel>
           <textarea
             value={listing.inputs}
             onChange={(e) => patch({ inputs: e.target.value })}
@@ -1042,7 +1008,7 @@ function ReviewPhase({
             minHeight: 0,
           }}
         >
-          <FieldLabel auto>Outputs</FieldLabel>
+          <FieldLabel>Outputs</FieldLabel>
           <textarea
             value={listing.outputs}
             onChange={(e) => patch({ outputs: e.target.value })}
@@ -1418,10 +1384,9 @@ function Caption({ children }: { children: React.ReactNode }) {
 
 function FieldLabel({
   children,
-  auto,
-  autoNote,
 }: {
   children: React.ReactNode;
+  /** Kept for compat — the AUTO badge was removed; pass nothing. */
   auto?: boolean;
   autoNote?: string;
 }) {
@@ -1433,32 +1398,168 @@ function FieldLabel({
         gap: 6,
         fontSize: 11,
         fontWeight: 600,
-        color: "var(--text)",
+        color: "var(--muted)",
         textTransform: "uppercase",
         letterSpacing: 0.4,
         fontFamily: "var(--font-mono)",
       }}
     >
       {children}
-      {auto && (
+    </div>
+  );
+}
+
+// ─── Category picker (single selected pill + searchable popover) ────────
+
+function CategoryPicker({
+  selected,
+  onChange,
+}: {
+  selected: string;
+  onChange: (c: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? CATEGORIES.filter((c) => c.toLowerCase().includes(q))
+    : CATEGORIES;
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 3,
-            padding: "1px 6px",
-            borderRadius: 99,
-            background: "rgba(59,130,246,0.10)",
-            border: "1px solid rgba(59,130,246,0.25)",
+            gap: 6,
+            padding: "5px 12px",
+            borderRadius: 999,
+            border: "1px solid var(--blue)",
+            background: "rgba(59,130,246,0.12)",
             color: "var(--blue)",
-            fontSize: 9.5,
+            fontSize: 12,
             fontFamily: "var(--font-mono)",
-            fontWeight: 500,
-            letterSpacing: 0.3,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
           }}
         >
-          ✦ {autoNote || "AUTO"}
+          {selected || "—"}
         </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            padding: "5px 10px",
+            borderRadius: 999,
+            border: "1px dashed var(--border)",
+            background: "transparent",
+            color: "var(--muted)",
+            fontSize: 11.5,
+            fontFamily: "var(--font-mono)",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {open ? "Close" : "+ Change"}
+        </button>
+      </div>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            zIndex: 30,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            boxShadow: "0 16px 36px rgba(0,0,0,0.10)",
+            padding: 8,
+            minWidth: 260,
+          }}
+        >
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter categories…"
+            style={{
+              width: "100%",
+              padding: "7px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--bg)",
+              color: "var(--text)",
+              fontSize: 12.5,
+              fontFamily: "var(--font-mono)",
+              marginBottom: 6,
+              outline: "none",
+            }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 220, overflowY: "auto" }}>
+            {filtered.length === 0 ? (
+              <div
+                style={{
+                  padding: "8px 10px",
+                  color: "var(--muted)",
+                  fontSize: 12,
+                  textAlign: "center",
+                }}
+              >
+                No matches
+              </div>
+            ) : (
+              filtered.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    onChange(c);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  style={{
+                    textAlign: "left",
+                    padding: "6px 10px",
+                    borderRadius: 7,
+                    border: "none",
+                    background:
+                      c === selected ? "rgba(59,130,246,0.10)" : "transparent",
+                    color: c === selected ? "var(--blue)" : "var(--text)",
+                    fontSize: 12.5,
+                    fontFamily: "var(--font-mono)",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (c !== selected)
+                      e.currentTarget.style.background = "var(--bg)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (c !== selected)
+                      e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  {c === selected ? "✓ " : "  "}
+                  {c}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

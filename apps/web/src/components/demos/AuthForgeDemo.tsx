@@ -15,18 +15,15 @@ interface AfStep {
 }
 
 const SEND_LINK_PIPELINE: AfStep[] = [
-  { label: 'Validating email format',     ms: 12 },
-  { label: 'Checking user exists',        ms: 45 },
-  { label: 'Generating magic link token', ms: 23 },
-  { label: 'Sending email via SendGrid',  ms: 180 },
-  { label: 'Session created (expires 24h)', ms: 8 },
+  { label: 'Validating request',     ms: 200 },
+  { label: 'Generating magic link',  ms: 700 },
+  { label: 'Sending email',          ms: 800 },
 ];
 
 const VERIFY_LINK_PIPELINE: AfStep[] = [
-  { label: 'Verifying magic link token', ms: 34 },
-  { label: 'Token valid, not expired',   ms: 12 },
-  { label: 'Creating JWT session',       ms: 18 },
-  { label: 'Setting refresh cookie',     ms: 4 },
+  { label: 'Verifying token',    ms: 300 },
+  { label: 'Creating session',   ms: 700 },
+  { label: 'Setting cookies',    ms: 600 },
 ];
 
 const JWT_DISPLAY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1XzhhMmYzIiwiZW1haWwiOiJ1c2VyQGV4YW1wbGUuY29tIiwic2NvcGVzIjpbInJlYWQiLCJ3cml0ZSJdfQ.s1g_4f9eX7nQ_kpXVCJ9';

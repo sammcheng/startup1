@@ -21,10 +21,9 @@ const PHASES = [
 ];
 
 const COMPILE_STEPS = [
-  { label: "Compiling field schema", ms: 20 },
-  { label: "Resolving conditions", ms: 35 },
-  { label: "Generating validation rules", ms: 25 },
-  { label: "Form ready", ms: 10 },
+  { label: "Compiling field schema", ms: 500 },
+  { label: "Resolving conditional logic", ms: 700 },
+  { label: "Generating validation rules", ms: 600 },
 ];
 
 const INITIAL_FIELDS: FormField[] = [

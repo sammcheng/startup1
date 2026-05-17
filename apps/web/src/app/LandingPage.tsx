@@ -164,7 +164,7 @@ function HeroSection() {
               className="w-1.5 h-1.5 rounded-full"
               style={{ background: "var(--blue)", animation: "pulse-glow 2s ease-in-out infinite" }}
             />
-            Now in public beta — list your tool for free
+            Now in public beta — submit your build for free
           </span>
         </div>
 
@@ -211,7 +211,7 @@ function HeroSection() {
             <span className="text-sm opacity-70">→</span>
           </Link>
           <Link
-            href="/publish"
+            href="/submit"
             className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl text-base font-medium border transition-all hover:border-[var(--border-h)] hover:text-white"
             style={{
               background: "transparent",
@@ -219,7 +219,7 @@ function HeroSection() {
               color: "var(--muted)",
             }}
           >
-            List Your Tool
+            Submit Your Build
           </Link>
         </div>
 
