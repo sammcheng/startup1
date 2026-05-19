@@ -5,7 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, buildQuery } from "@/lib/api";
 import { tokenize, matchTools, segmentsToText } from "@/lib/nlpSearch";
 import type { Segment, ScoredTool } from "@/lib/nlpSearch";
-import { kcModuleToTool, matchKcModules } from "@/lib/kcMockModules";
+import {
+  buildKcCatalogResponse,
+  KC_MODULES,
+  KC_TO_TOOL_CATEGORY,
+  kcModuleToTool,
+  matchKcModules,
+  type KcCategory,
+} from "@/lib/kcMockModules";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
 
@@ -366,6 +373,41 @@ export default function MarketplaceClient({
   const [matched, setMatched] = useState<ScoredTool[]>([]);
   const [apiReady, setApiReady] = useState(false);
 
+  // Live preview that updates as the user types — runs the kc-mock matcher
+  // synchronously on every keystroke, debounced 120ms. No thinking animation.
+  // Caps the dropdown at MAX_DROPDOWN matches; surplus rolls into a "See all"
+  // affordance that submits the query through the full thinking + results flow.
+  const MAX_DROPDOWN = 2;
+  const [livePreview, setLivePreview] = useState<ScoredTool[]>([]);
+  const [livePreviewTotal, setLivePreviewTotal] = useState(0);
+  const [liveQuery, setLiveQuery] = useState("");
+  const livePreviewRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleLiveChange = useCallback((text: string) => {
+    clearTimeout(livePreviewRef.current);
+    const q = text.trim();
+    setLiveQuery(q);
+    if (q.length < 2) {
+      setLivePreview([]);
+      setLivePreviewTotal(0);
+      return;
+    }
+    livePreviewRef.current = setTimeout(() => {
+      const matches = matchKcModules(q);
+      setLivePreviewTotal(matches.length);
+      setLivePreview(
+        matches.slice(0, MAX_DROPDOWN).map((km, i) => ({
+          tool: kcModuleToTool(km.module),
+          score: Math.max(1, 100 - i * 8),
+          hits: km.hits,
+          fit: km.fit,
+          fallback: km.fallback,
+          source: "preview",
+        })),
+      );
+    }, 120);
+  }, []);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Drive thinking animation — gate final transition on apiReady
@@ -491,26 +533,89 @@ export default function MarketplaceClient({
     setTimeout(() => submit(segs), 220);
   }
 
-  // Browse fetch
-  const fetchTools = useCallback(async (cat: ToolCategory | "all", sort: SortBy, pg: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
-      if (cat !== "all") filters.category = cat;
+  // Browse fetch — API → converter → kc catalog. Empty earlier responses
+  // are treated the same as failures so the browse view never shows
+  // "no tools" while the catalog has rows ready.
+  const fetchTools = useCallback(
+    async (cat: ToolCategory | "all", sort: SortBy, pg: number) => {
+      setLoading(true);
+      setError(null);
       try {
-        const result = await api.get<ToolListResponse>(`/tools${buildQuery(filters)}`);
-        setData(result);
+        const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
+        if (cat !== "all") filters.category = cat;
+
+        // 1) live API
+        try {
+          const apiResp = await api.get<ToolListResponse>(
+            `/tools${buildQuery(filters)}`,
+          );
+          if (apiResp.items.length > 0) {
+            setData(apiResp);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+
+        // 2) converter
+        try {
+          const conv = await fetchFromConverter(20, (pg - 1) * 20);
+          if (conv.items.length > 0) {
+            setData(conv);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+
+        // 3) kc catalog (10 modules). Apply category + sort client-side
+        // since these are pre-baked.
+        let pool = [...KC_MODULES];
+        if (cat !== "all") {
+          // The kc Module.category is the kc-shape ("AI/ML", "Auth", …)
+          // while the marketplace filter uses Hackmarket's ToolCategory
+          // enum. Map and compare.
+          pool = pool.filter(
+            (m) =>
+              KC_TO_TOOL_CATEGORY[m.category as KcCategory] === cat,
+          );
+        }
+        switch (sort) {
+          case "popular":
+            pool.sort((a, b) => b.integrations - a.integrations);
+            break;
+          case "price_low":
+            pool.sort((a, b) => a.pricing.amount - b.pricing.amount);
+            break;
+          case "price_high":
+            pool.sort((a, b) => b.pricing.amount - a.pricing.amount);
+            break;
+          case "newest":
+          default:
+            // Stable: just keep the integration order so the catalog
+            // looks "active" rather than alphabetical.
+            pool.sort((a, b) => b.integrations - a.integrations);
+        }
+        const limit = 20;
+        const start = (pg - 1) * limit;
+        const items = pool.slice(start, start + limit).map(kcModuleToTool);
+        setData({
+          items,
+          total: pool.length,
+          page: pg,
+          limit,
+          pages: Math.max(1, Math.ceil(pool.length / limit)),
+        });
       } catch {
-        const result = await fetchFromConverter(20, (pg - 1) * 20);
-        setData(result);
+        // Last-resort: use the unfiltered kc catalog so SOMETHING renders.
+        setData(buildKcCatalogResponse(pg, 20));
+        setError(null);
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      setError("Failed to load tools. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const handleCategory = (cat: ToolCategory | "all") => { setCategory(cat); setPage(1); void fetchTools(cat, sortBy, 1); };
   const handleSort = (sort: SortBy) => { setSortBy(sort); setPage(1); void fetchTools(category, sort, 1); };
@@ -530,54 +635,166 @@ export default function MarketplaceClient({
           {/* INPUT phase */}
           {phase === "input" && (
             <div className="slide-in">
-              <h1 style={{ fontSize: 52, marginTop: 24, letterSpacing: "-0.03em", lineHeight: 1.05 }}>
+              <h1 style={{ fontSize: 40, marginTop: 16, letterSpacing: "-0.03em", lineHeight: 1.05 }}>
                 What are you building?
               </h1>
-              <div style={{ marginTop: 36 }}>
-                <Composer initialSegments={seedSegments ?? undefined} onSubmit={submit} />
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--muted)" }}>
+                Search the catalog, or browse the {KC_MODULES.length} AI tools below.
+              </p>
+              <div style={{ marginTop: 16 }}>
+                <Composer
+                  initialSegments={seedSegments ?? undefined}
+                  onSubmit={submit}
+                  onChange={handleLiveChange}
+                />
               </div>
 
-              <div className="v3-examples">
-                <div className="v3-mono-label" style={{ marginBottom: 4 }}>Try one</div>
-                {EXAMPLES.map((s) => (
-                  <button key={s} className="v3-example" onClick={() => pickExample(s)}>
-                    <span className="v3-example-label">Example</span>
-                    <span>{s}</span>
-                    <span className="ex-arrow"><ArrowRight size={14} /></span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Sell CTA */}
-              <div style={{
-                marginTop: 28, display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "16px 20px", borderRadius: 14,
-                background: "var(--elevated, var(--card))", border: "1px solid var(--border)",
-                gap: 16, flexWrap: "wrap",
-              }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>
-                    Got a GitHub repo? Turn it into a sellable API.
+              {livePreview.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "12px 14px",
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 14,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.04)",
+                  }}
+                >
+                  <div
+                    className="v3-mono-label"
+                    style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}
+                  >
+                    <span>Quick matches · Preview</span>
+                    <span style={{ color: "var(--faint)" }}>press ↵ for full ranking</span>
                   </div>
-                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                    Paste a link → we detect endpoints → you earn on every call.
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {livePreview.map((row) => {
+                      const cat = row.tool.category.replace(/_/g, " ");
+                      const color = CAT_COLORS[row.tool.category] ?? "var(--blue)";
+                      return (
+                        <Link
+                          key={row.tool.id}
+                          href={`/tools/${row.tool.slug}`}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border)",
+                            textDecoration: "none",
+                            background: "transparent",
+                            transition: "all 0.12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--bg)";
+                            e.currentTarget.style.borderColor = "var(--ink-3, var(--muted))";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                            e.currentTarget.style.borderColor = "var(--border)";
+                          }}
+                        >
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: `${color}18`,
+                              color,
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 10,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.06em",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {cat}
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--text)",
+                              fontWeight: 600,
+                              fontSize: 13.5,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {row.tool.name}
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--muted)",
+                              fontSize: 12.5,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            — {row.tool.tagline}
+                          </span>
+                          <span
+                            style={{
+                              marginLeft: "auto",
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              border: "1px dashed var(--border)",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 10,
+                              color: "var(--muted)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            Preview
+                          </span>
+                        </Link>
+                      );
+                    })}
                   </div>
+                  {livePreviewTotal > MAX_DROPDOWN && (
+                    <button
+                      onClick={() => {
+                        const segs = tokenize(liveQuery);
+                        submit(segs);
+                      }}
+                      style={{
+                        marginTop: 8,
+                        width: "100%",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: "1px dashed var(--border)",
+                        background: "transparent",
+                        color: "var(--blue)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        textAlign: "center",
+                      }}
+                    >
+                      See all {livePreviewTotal} results →
+                    </button>
+                  )}
                 </div>
-                <Link href="/publish" style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "9px 18px", borderRadius: 9, background: "var(--blue)",
-                  color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none",
-                  whiteSpace: "nowrap", flexShrink: 0,
-                }}>
-                  List your tool →
-                </Link>
-              </div>
+              )}
 
-              {/* Browse band below */}
-              <div style={{ marginTop: 64, paddingTop: 40, borderTop: "1px solid var(--border)" }}>
-                <div className="between" style={{ marginBottom: 20 }}>
-                  <span className="v3-mono-label">Or browse the catalog</span>
-                  <div className="flex items-center gap-2">
+              {/* ── CATALOG — directly below the search; the user's first reach. ── */}
+              <div style={{ marginTop: 28 }}>
+                <div className="between" style={{ marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+                  <div>
+                    <div className="v3-mono-label">AI tools · catalog</div>
+                    {!loading && data && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "var(--faint)",
+                          fontFamily: "var(--font-mono)",
+                          marginTop: 2,
+                        }}
+                      >
+                        {data.total} {data.total === 1 ? "tool" : "tools"} ready to integrate
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
                     {CATEGORIES.map((cat) => {
                       const active = category === cat.value;
                       const color = cat.value === "all" ? "var(--blue)" : (CAT_COLORS[cat.value] ?? "var(--blue)");
@@ -602,11 +819,6 @@ export default function MarketplaceClient({
                   </div>
                 </div>
 
-                {!loading && data && (
-                  <p className="text-xs mb-4" style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}>
-                    {data.total} tool{data.total !== 1 ? "s" : ""}
-                  </p>
-                )}
                 {error && (
                   <div className="rounded-xl border p-6 text-center mb-6"
                     style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.2)" }}>
@@ -633,6 +845,42 @@ export default function MarketplaceClient({
                 {data && (
                   <Pagination page={data.page} pages={data.pages} total={data.total} limit={data.limit} onChange={handlePage} />
                 )}
+              </div>
+
+              {/* ── Examples + Sell CTA — moved BELOW the catalog ── */}
+              <div className="v3-examples" style={{ marginTop: 40, paddingTop: 32, borderTop: "1px solid var(--border)" }}>
+                <div className="v3-mono-label" style={{ marginBottom: 4 }}>Try a smart-search prompt</div>
+                {EXAMPLES.map((s) => (
+                  <button key={s} className="v3-example" onClick={() => pickExample(s)}>
+                    <span className="v3-example-label">Example</span>
+                    <span>{s}</span>
+                    <span className="ex-arrow"><ArrowRight size={14} /></span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{
+                marginTop: 24, display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "16px 20px", borderRadius: 14,
+                background: "var(--elevated, var(--card))", border: "1px solid var(--border)",
+                gap: 16, flexWrap: "wrap",
+              }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>
+                    Got a GitHub repo? Turn it into a sellable API.
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                    Paste a link → we detect endpoints → you earn on every call.
+                  </div>
+                </div>
+                <Link href="/submit" style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "9px 18px", borderRadius: 9, background: "var(--blue)",
+                  color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none",
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}>
+                  Submit your build →
+                </Link>
               </div>
             </div>
           )}

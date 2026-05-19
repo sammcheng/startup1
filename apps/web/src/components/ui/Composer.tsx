@@ -7,9 +7,11 @@ import type { Segment } from "@/lib/nlpSearch";
 interface Props {
   initialSegments?: Segment[];
   onSubmit: (segs: Segment[]) => void;
+  /** Fires on every keystroke (debounced upstream if needed). Receives raw text. */
+  onChange?: (text: string) => void;
 }
 
-export default function Composer({ initialSegments, onSubmit }: Props) {
+export default function Composer({ initialSegments, onSubmit, onChange }: Props) {
   const [text, setText] = useState(() => segmentsToText(initialSegments ?? []));
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -19,6 +21,14 @@ export default function Composer({ initialSegments, onSubmit }: Props) {
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [initialSegments]);
+
+  // Fire onChange whenever text changes (parent debounces).
+  useEffect(() => {
+    onChange?.(text);
+    // We deliberately don't include onChange in deps — parent's identity may
+    // change every render and we only care about text changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
 
   function addCategory(cat: string) {
     setText((prev) => {

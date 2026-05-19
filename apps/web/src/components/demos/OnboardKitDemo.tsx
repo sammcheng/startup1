@@ -17,10 +17,9 @@ const PHASES = [
 ];
 
 const COMPILE_STEPS = [
-  { label: "Compiling step definitions", ms: 30 },
-  { label: "Resolving target elements", ms: 55 },
-  { label: "Calculating tooltip positions", ms: 40 },
-  { label: "Tour ready", ms: 10 },
+  { label: "Compiling steps", ms: 300 },
+  { label: "Resolving targets", ms: 500 },
+  { label: "Building tour", ms: 600 },
 ];
 
 interface TourStep {

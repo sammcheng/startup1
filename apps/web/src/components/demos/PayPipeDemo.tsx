@@ -18,17 +18,14 @@ const PHASES = [
 ];
 
 const CREATE_STEPS = [
-  { label: "Validating plan schema", ms: 45 },
-  { label: "Creating Stripe product", ms: 180 },
-  { label: "Attaching price object", ms: 120 },
-  { label: "Configuring metering", ms: 60 },
-  { label: "Plan live", ms: 15 },
+  { label: "Validating plan", ms: 200 },
+  { label: "Creating Stripe product", ms: 700 },
+  { label: "Activating plan", ms: 600 },
 ];
 const SUB_STEPS = [
-  { label: "Creating subscription", ms: 95 },
-  { label: "Processing first invoice", ms: 220 },
-  { label: "Payment succeeded", ms: 60 },
-  { label: "Webhook delivered", ms: 40 },
+  { label: "Creating subscription", ms: 300 },
+  { label: "Processing invoice", ms: 700 },
+  { label: "Confirming payment", ms: 500 },
 ];
 const USAGE_STEPS = [
   { label: "Recording event", ms: 35 },

@@ -600,6 +600,32 @@ export function matchKcModules(query: string): KcMatch[] {
   return scored.slice(0, 8);
 }
 
+// ─── buildKcCatalogResponse: ALL 10 kc modules as a ToolListResponse ─────
+//
+// Used by the marketplace browse view when the live API + converter both
+// return empty — otherwise the page reads "No tools match your filters"
+// even though we have a catalog ready to ship.
+
+import type { ToolListResponse } from "@/types/tool";
+
+export function buildKcCatalogResponse(
+  page = 1,
+  limit = 20,
+): ToolListResponse {
+  // Stable order: most-integrated first, so the marketplace looks "popular".
+  const sorted = [...KC_MODULES].sort(
+    (a, b) => b.integrations - a.integrations,
+  );
+  const items = sorted.slice((page - 1) * limit, page * limit).map(kcModuleToTool);
+  return {
+    items,
+    total: sorted.length,
+    page,
+    limit,
+    pages: Math.max(1, Math.ceil(sorted.length / limit)),
+  };
+}
+
 // ─── kcModuleToTool: shoehorn a KcModule into Hackmarket's Tool shape ────
 
 const SELLER_STUB = {

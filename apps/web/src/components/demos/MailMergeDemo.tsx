@@ -30,11 +30,9 @@ const PHASES = [
 ];
 
 const SEND_STEPS = [
-  { label: "Rendering template", ms: 30 },
-  { label: "Validating recipient", ms: 20 },
-  { label: "Connecting to SMTP", ms: 150 },
-  { label: "Email dispatched", ms: 85 },
-  { label: "Delivery confirmed", ms: 200 },
+  { label: "Rendering template", ms: 500 },
+  { label: "Connecting to SMTP", ms: 800 },
+  { label: "Dispatching and confirming delivery", ms: 900 },
 ];
 
 const TEMPLATES: Record<string, Template> = {

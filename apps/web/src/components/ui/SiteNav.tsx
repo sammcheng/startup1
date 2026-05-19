@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
-export default function Nav() {
+export default function SiteNav() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -54,6 +54,7 @@ export default function Nav() {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Link
           href="/submit"
+          data-cta="submit-your-build"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -67,7 +68,7 @@ export default function Nav() {
             fontFamily: "var(--font-body)",
           }}
         >
-          List Your Tool
+          Submit Your Build
         </Link>
       </div>
     </nav>

@@ -233,15 +233,12 @@ const PROC_STEPS_TPL = (n: number): ProcStep[] => [
   { label: 'Chunking documents',    ms: 1500, doneText: `Split into ${n} chunks` },
   { label: 'Generating embeddings', ms: 2000, doneText: `${n} vectors generated` },
   { label: 'Indexing vectors',      ms: 800,  doneText: 'FAISS index built' },
-  { label: 'Ready for queries',     ms: 200,  doneText: 'Ready' },
 ];
 
 const QUERY_STEPS = [
-  { label: 'Parsing query',         ms: 120 },
-  { label: 'Embedding query',       ms: 85 },
-  { label: 'Searching index',       ms: 34 },
-  { label: 'Ranking top matches',   ms: 12 },
-  { label: 'Generating response',   ms: 340 },
+  { label: 'Understanding query',    ms: 300 },
+  { label: 'Searching documents',    ms: 700 },
+  { label: 'Generating answer',      ms: 800 },
 ];
 
 // ─── Phase transition variants ──────────────────────────────────────────
@@ -673,8 +670,8 @@ function QueryPhase({
         currentIdx={qStep}
         complete={Boolean(result) && !queryRunning}
         labelOverride={{
-          2: `Searching ${chunkCount} chunks`,
-          3: result ? `Top ${Math.max(1, result.sources.length || 3)} results found` : 'Ranking top matches',
+          1: `Searching ${chunkCount} chunks`,
+          2: result ? `Top ${Math.max(1, result.sources.length || 3)} results found` : 'Generating answer',
         }}
       />
 

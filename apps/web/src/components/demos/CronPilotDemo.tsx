@@ -29,10 +29,9 @@ const PHASES = [
 ];
 
 const SCHEDULE_STEPS = [
-  { label: "Parsing cron expression", ms: 15 },
-  { label: "Validating handler URL", ms: 80 },
-  { label: "Registering schedule", ms: 45 },
-  { label: "Job active", ms: 10 },
+  { label: "Parsing cron expression", ms: 400 },
+  { label: "Validating handler URL", ms: 700 },
+  { label: "Registering schedule", ms: 600 },
 ];
 
 // Tiny cron → human translator. Handles the common cases for the demo.
