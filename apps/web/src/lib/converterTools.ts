@@ -1,7 +1,6 @@
 import type { Tool, ToolListResponse } from "@/types/tool";
-
-const CONVERTER_URL =
-  process.env.NEXT_PUBLIC_CONVERTER_URL ?? "http://localhost:8080";
+import { shouldSkipBuildTimeFetch } from "@/lib/api";
+import { CONVERTER_ENABLED, CONVERTER_URL } from "@/lib/env";
 
 interface ConverterTool {
   id: string;
@@ -103,6 +102,13 @@ export async function fetchConverterTools(
   limit = 20,
   offset = 0
 ): Promise<ToolListResponse> {
+  if (!CONVERTER_ENABLED) {
+    throw new Error("Converter service is not configured.");
+  }
+  if (shouldSkipBuildTimeFetch(CONVERTER_URL)) {
+    throw new Error("Skipping local converter fetch during production build.");
+  }
+
   const res = await fetch(
     `${CONVERTER_URL}/api/tools?limit=${limit}&offset=${offset}`,
     { cache: "no-store" }
@@ -119,6 +125,13 @@ export async function fetchConverterTools(
 }
 
 export async function fetchConverterTool(slug: string): Promise<Tool | null> {
+  if (!CONVERTER_ENABLED) {
+    return null;
+  }
+  if (shouldSkipBuildTimeFetch(CONVERTER_URL)) {
+    return null;
+  }
+
   const res = await fetch(`${CONVERTER_URL}/api/tools/${slug}`, {
     cache: "no-store",
   });

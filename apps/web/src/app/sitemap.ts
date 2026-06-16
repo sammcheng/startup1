@@ -1,7 +1,6 @@
 import type { MetadataRoute } from "next";
-import { API_BASE } from "@/lib/api";
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hackmarket.io";
+import { API_BASE, shouldSkipBuildTimeFetch } from "@/lib/api";
+import { APP_URL } from "@/lib/env";
 
 interface ToolSummary {
   slug: string;
@@ -13,6 +12,8 @@ interface ToolListResponse {
 }
 
 async function fetchLiveToolSlugs(): Promise<ToolSummary[]> {
+  if (shouldSkipBuildTimeFetch(API_BASE)) return [];
+
   try {
     const res = await fetch(`${API_BASE}/tools?limit=100`, {
       next: { revalidate: 3600 },

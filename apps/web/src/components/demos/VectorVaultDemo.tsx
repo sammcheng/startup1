@@ -139,7 +139,7 @@ function chunkText(text: string, filename: string): Chunk[] {
   return chunks;
 }
 
-function fakePdfChunks(filename: string, sizeBytes: number): Chunk[] {
+function buildPdfPreviewChunks(filename: string, sizeBytes: number): Chunk[] {
   const n = Math.max(3, Math.min(20, Math.round(sizeBytes / 1024)));
   return Array.from({ length: n }, (_, i) => ({
     file: filename,
@@ -177,11 +177,11 @@ function findPresetMatch(query: string, chunks: Chunk[], usingSamples: boolean):
   for (const qa of PRESET_QA) {
     if (qa.match(query)) {
       const sources: ScoredChunk[] = [];
-      for (const key of qa.sourceKeys) {
+      for (const [index, key] of qa.sourceKeys.entries()) {
         const c = chunks.find(
           (ch) => ch.file === key.file && ch.text.toLowerCase().includes(key.find.toLowerCase())
         );
-        if (c) sources.push({ ...c, relevance: 0.88 + Math.random() * 0.09 });
+        if (c) sources.push({ ...c, relevance: 0.88 + index * 0.03 });
       }
       return { answer: qa.answer, sources: sources.slice(0, 3) };
     }
@@ -340,7 +340,7 @@ export default function VectorVaultDemo() {
     clearTimers();
 
     const allChunks = files.flatMap((f) =>
-      f.content ? chunkText(f.content, f.name) : fakePdfChunks(f.name, f.size)
+      f.content ? chunkText(f.content, f.name) : buildPdfPreviewChunks(f.name, f.size)
     );
     setChunks(allChunks);
     setProcStep(0);

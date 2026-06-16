@@ -2,13 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
-import { CATEGORIES } from "@hackmarket/shared";
-import {
-  newSubmissionFromAnalysis,
-  upsertSubmission,
-  type SubmissionRecord,
-} from "@/lib/submissions";
+import { api, ApiError } from "@/lib/api";
+import { useCurrentAccount } from "@/hooks/useAuth";
+import { toolToSubmissionRecord } from "@/lib/submission-adapter";
+import type { SubmissionRecord } from "@/lib/submissions";
+import type { Tool } from "@/types/tool";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -20,26 +18,22 @@ const SUBMIT_STEPS = [
   "Generating module listing...",
 ] as const;
 
-// kc's hard-coded fallback so the demo never dead-ends if /tools/submit
-// errors (network, OPENROUTER_API_KEY unset, etc.).
-const AUTO_LISTING: Listing = {
-  id: null,
-  name: "CacheLayer",
-  description:
-    "In-memory caching middleware with TTL management and automatic cache invalidation hooks. Drop in as an Express middleware or call directly from your service layer — supports Redis or in-process backends with the same API.",
-  category: "DevOps",
-  stack: ["Node.js", "Redis", "TypeScript"],
-  inputs: "Cache key, value (any serializable), TTL in seconds, optional invalidation tags.",
-  outputs: "Hit/miss status, cached value on hit, eviction events on TTL or tag invalidation.",
-  language: "TypeScript",
-  license: "MIT",
-};
-
 const EXAMPLE_REPOS = [
   "https://github.com/tiangolo/fastapi",
   "https://github.com/pallets/flask",
   "https://github.com/expressjs/express",
 ];
+
+const CATEGORIES = [
+  "Auth",
+  "Payments",
+  "Notifications",
+  "Analytics",
+  "AI/ML",
+  "DevOps",
+  "UI Components",
+  "Data Pipelines",
+] as const;
 
 // Page wrapper — natural height (was a constrained "min(900px, calc(100vh - 56px))"
 // with overflow:hidden, but that combination can collapse to ~0 in some
@@ -50,6 +44,7 @@ const PAGE_MIN_HEIGHT = "calc(100vh - 56px)";
 
 type Phase = "input" | "analyzing" | "review" | "done";
 type PricingModel = "buy" | "royalty";
+type CompletionMode = "owned" | "preview";
 
 interface Listing {
   id: string | null;
@@ -66,8 +61,7 @@ interface Listing {
 // Shape of /tools/submit response — kept loose so the kc-shape `analysis`
 // fields can be consumed without dragging in every nested ToolResponse field.
 interface SubmitResponse {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tool: { id: string; [key: string]: any };
+  tool: { id: string; [key: string]: unknown };
   analysis: {
     name: string;
     description: string;
@@ -110,6 +104,7 @@ function inferLanguage(stack: string[]): string {
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function SubmitPage() {
+  const account = useCurrentAccount();
   // Phase + input state
   const [phase, setPhase] = useState<Phase>("input");
   const [url, setUrl] = useState("");
@@ -127,34 +122,46 @@ export default function SubmitPage() {
   // API state (runs in parallel with the animation; transition is gated on both)
   const [apiResponse, setApiResponse] = useState<SubmitResponse | null>(null);
   const [apiReady, setApiReady] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Persisted submission record (kept across phase changes for status tracking)
   const [submissionRecord, setSubmissionRecord] = useState<SubmissionRecord | null>(null);
+  const [completionMode, setCompletionMode] = useState<CompletionMode>("preview");
 
   // ── Kick off analysis ───────────────────────────────────────────────────────
-  function analyze() {
+  async function analyze() {
     const err = validateGithubUrl(url);
     if (err) {
       setUrlError(err);
       return;
     }
     setUrlError("");
+    setAnalysisError("");
+    setSubmitError("");
     setApiResponse(null);
     setApiReady(false);
     setPhase("analyzing");
     setStep(0);
 
+    const token = account.isSignedIn ? await account.getToken() : null;
+
     api
       .post<SubmitResponse>(
         "/tools/submit",
-        { github_url: url.trim(), submitter_email: "demo@hackmarket.io" },
-        { timeoutMs: 60_000 }
+        { github_url: url.trim() },
+        { timeoutMs: 60_000, token }
       )
       .then((res) => {
         setApiResponse(res);
       })
-      .catch(() => {
-        // Swallow — the transition effect falls back to AUTO_LISTING.
+      .catch((error) => {
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : "Could not analyze this repository right now. Please try again.";
+        setAnalysisError(message);
       })
       .finally(() => setApiReady(true));
   }
@@ -173,33 +180,36 @@ export default function SubmitPage() {
     if (!apiReady) return;
     if (step < SUBMIT_STEPS.length - 1) return;
     const t = setTimeout(() => {
-      if (apiResponse) {
-        const a = apiResponse.analysis;
-        const stack = a.tech_stack.length > 0 ? a.tech_stack : [];
-        setListing({
-          id: apiResponse.tool.id,
-          name: a.name,
-          description: a.description,
-          category: a.category,
-          stack,
-          inputs: a.input_contract,
-          outputs: a.output_contract,
-          language: a.language || inferLanguage(stack),
-          license: a.license || "MIT",
-        });
-        if (a.pricing_model === "buy" || a.pricing_model === "royalty") {
-          setPricingModel(a.pricing_model);
-        }
-        if (a.suggested_price_cents > 0) {
-          setAmount(String(Math.round(a.suggested_price_cents / 100)));
-        }
-      } else {
-        setListing({ ...AUTO_LISTING });
+      if (!apiResponse) {
+        setUrlError(analysisError || "Could not analyze this repository right now. Please try again.");
+        setPhase("input");
+        setStep(-1);
+        return;
+      }
+
+      const a = apiResponse.analysis;
+      const stack = a.tech_stack.length > 0 ? a.tech_stack : [];
+      setListing({
+        id: apiResponse.tool.id,
+        name: a.name,
+        description: a.description,
+        category: a.category,
+        stack,
+        inputs: a.input_contract,
+        outputs: a.output_contract,
+        language: a.language || inferLanguage(stack),
+        license: a.license || "MIT",
+      });
+      if (a.pricing_model === "buy" || a.pricing_model === "royalty") {
+        setPricingModel(a.pricing_model);
+      }
+      if (a.suggested_price_cents > 0) {
+        setAmount(String(Math.round(a.suggested_price_cents / 100)));
       }
       setPhase("review");
     }, 320);
     return () => clearTimeout(t);
-  }, [phase, step, apiReady, apiResponse]);
+  }, [analysisError, phase, step, apiReady, apiResponse]);
 
   // ── Review form helpers ─────────────────────────────────────────────────────
   function patch(p: Partial<Listing>) {
@@ -220,52 +230,47 @@ export default function SubmitPage() {
   async function submitForReview() {
     if (!listing) return;
     if (!amount || Number(amount) <= 0) return;
+    setSubmitError("");
+    setIsSubmitting(true);
+    const token = account.isSignedIn ? await account.getToken() : null;
 
-    // PUT back any edits if this came from the API. Auth will 401 (we're not
-    // signed in as the system seller), and that's fine — the draft is already
-    // saved in the DB from the /tools/submit call. We just advance to `done`.
-    if (listing.id) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const body: any = {
-          name: listing.name,
-          description: listing.description,
-          documentation:
-            `# ${listing.name}\n\n${listing.description}\n\n` +
-            `**Tech stack:** ${listing.stack.join(", ") || "unspecified"}\n\n` +
-            `## Input\n${listing.inputs}\n\n## Output\n${listing.outputs}\n`,
-        };
-        const cents = Math.round(Number(amount)) * 100;
-        if (pricingModel === "buy") {
-          body.ownership_type = "full_sale";
-          body.one_time_price = cents / 100;
-        } else {
-          body.ownership_type = "royalty";
-          body.price_per_request = cents / 100;
-        }
-        await api.put(`/tools/${listing.id}`, body);
-      } catch {
-        // Expected: 401 (no auth) — fall through to `done` anyway.
+    try {
+      if (account.isSignedIn && (!listing.id || !token)) {
+        throw new Error("Sign in again before submitting this listing for review.");
       }
+
+      const body: Record<string, unknown> = {
+        name: listing.name,
+        description: listing.description,
+        documentation:
+          `# ${listing.name}\n\n${listing.description}\n\n` +
+          `**Tech stack:** ${listing.stack.join(", ") || "unspecified"}\n\n` +
+          `## Input\n${listing.inputs}\n\n## Output\n${listing.outputs}\n`,
+      };
+      const cents = Math.round(Number(amount)) * 100;
+      if (pricingModel === "buy") {
+        body.ownership_type = "full_sale";
+        body.one_time_price = cents / 100;
+      } else {
+        body.ownership_type = "royalty";
+        body.price_per_request = cents / 100;
+      }
+
+      if (account.isSignedIn && listing.id && token) {
+        const updatedTool = await api.put<Tool>(`/tools/${listing.id}`, body, { token });
+        setSubmissionRecord(toolToSubmissionRecord(updatedTool));
+        setCompletionMode("owned");
+      } else {
+        setSubmissionRecord(null);
+        setCompletionMode("preview");
+      }
+
+      setPhase("done");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not submit this listing for review.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const cents = Math.max(0, Math.round(Number(amount)) * 100);
-    const record = newSubmissionFromAnalysis({
-      github_url: url || "https://github.com/example/repo",
-      submitter_email: "demo@hackmarket.io",
-      name: listing.name,
-      description: listing.description,
-      category: listing.category,
-      tech_stack: listing.stack,
-      inputs: listing.inputs,
-      outputs: listing.outputs,
-      pricing_model: pricingModel,
-      price_cents: cents,
-    });
-    upsertSubmission(record);
-    setSubmissionRecord(record);
-
-    setPhase("done");
   }
 
   function reset() {
@@ -279,6 +284,11 @@ export default function SubmitPage() {
     setPricingModel("buy");
     setApiResponse(null);
     setApiReady(false);
+    setAnalysisError("");
+    setSubmitError("");
+    setIsSubmitting(false);
+    setSubmissionRecord(null);
+    setCompletionMode("preview");
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -312,6 +322,7 @@ export default function SubmitPage() {
       >
         {phase === "input" && (
           <InputPhase
+            isSignedIn={account.isSignedIn}
             url={url}
             urlError={urlError}
             setUrl={(v) => {
@@ -326,6 +337,7 @@ export default function SubmitPage() {
 
         {phase === "review" && listing && (
           <ReviewPhase
+            isSignedIn={account.isSignedIn}
             listing={listing}
             patch={patch}
             url={url}
@@ -338,6 +350,8 @@ export default function SubmitPage() {
             amount={amount}
             setAmount={setAmount}
             canSubmit={canSubmit}
+            submitError={submitError}
+            isSubmitting={isSubmitting}
             onSubmit={submitForReview}
             onReset={reset}
           />
@@ -345,6 +359,7 @@ export default function SubmitPage() {
 
         {phase === "done" && (
           <DonePhase
+            completionMode={completionMode}
             submissionRecord={submissionRecord}
             listingName={listing?.name}
             onReset={reset}
@@ -358,11 +373,13 @@ export default function SubmitPage() {
 // ─── Phase: input ────────────────────────────────────────────────────────────
 
 function InputPhase({
+  isSignedIn,
   url,
   urlError,
   setUrl,
   analyze,
 }: {
+  isSignedIn: boolean;
   url: string;
   urlError: string;
   setUrl: (v: string) => void;
@@ -461,6 +478,19 @@ function InputPhase({
           That&rsquo;s the whole submission. We&rsquo;ll read the repo, detect the stack, write
           the description, and draft your I/O contract. You just review and pick how you want to
           get paid.
+        </p>
+        <p
+          style={{
+            color: isSignedIn ? "var(--green)" : "var(--amber)",
+            fontSize: 12.5,
+            margin: "12px 0 0",
+            lineHeight: 1.5,
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {isSignedIn
+            ? "Signed in: drafts created here are saved under your account."
+            : "Guest preview: you can analyze and review, but sign in before treating this as your owned submission."}
         </p>
       </div>
 
@@ -676,6 +706,7 @@ function AnalyzingPhase({ url, step }: { url: string; step: number }) {
 // ─── Phase: review (dense grid, no scroll) ───────────────────────────────────
 
 function ReviewPhase({
+  isSignedIn,
   listing,
   patch,
   url,
@@ -688,9 +719,12 @@ function ReviewPhase({
   amount,
   setAmount,
   canSubmit,
+  submitError,
+  isSubmitting,
   onSubmit,
   onReset,
 }: {
+  isSignedIn: boolean;
   listing: Listing;
   patch: (p: Partial<Listing>) => void;
   url: string;
@@ -703,6 +737,8 @@ function ReviewPhase({
   amount: string;
   setAmount: (v: string) => void;
   canSubmit: boolean;
+  submitError: string;
+  isSubmitting: boolean;
   onSubmit: () => void;
   onReset: () => void;
 }) {
@@ -746,7 +782,9 @@ function ReviewPhase({
             }}
           >
             <span style={{ whiteSpace: "nowrap" }}>
-              Auto-generated from your repo — edit anything, pick a price, ship it.
+              {isSignedIn
+                ? "Auto-generated from your repo — edit anything, pick a price, ship it."
+                : "Preview generated from your repo — sign in before treating it as a saved owned draft."}
             </span>
           </div>
         </div>
@@ -1166,7 +1204,7 @@ function ReviewPhase({
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <button
               onClick={onSubmit}
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               style={{
                 padding: "14px 28px",
                 borderRadius: 12,
@@ -1175,17 +1213,48 @@ function ReviewPhase({
                 fontWeight: 700,
                 fontSize: 15,
                 border: "none",
-                cursor: canSubmit ? "pointer" : "not-allowed",
-                opacity: canSubmit ? 1 : 0.4,
+                cursor: canSubmit && !isSubmitting ? "pointer" : "not-allowed",
+                opacity: canSubmit && !isSubmitting ? 1 : 0.4,
                 transition: "opacity 0.15s",
                 whiteSpace: "nowrap",
                 flex: 1,
                 minHeight: 0,
-                boxShadow: canSubmit ? "0 8px 24px rgba(59,130,246,0.28)" : "none",
+                boxShadow: canSubmit && !isSubmitting ? "0 8px 24px rgba(59,130,246,0.28)" : "none",
               }}
             >
-              Submit for review →
+              {isSubmitting
+                ? "Saving…"
+                : isSignedIn
+                  ? "Submit for review →"
+                  : "Finish guest preview →"}
             </button>
+            {submitError ? (
+              <div
+                style={{
+                  color: "#ef4444",
+                  fontSize: 11.5,
+                  lineHeight: 1.4,
+                  textAlign: "center",
+                  fontFamily: "var(--font-mono)",
+                  maxWidth: 240,
+                }}
+              >
+                {submitError}
+              </div>
+            ) : null}
+            <div
+              style={{
+                color: isSignedIn ? "var(--muted)" : "var(--amber)",
+                fontSize: 11.5,
+                lineHeight: 1.4,
+                textAlign: "center",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {isSignedIn
+                ? "This draft is tied to your account."
+                : "Guest previews are not tracked as owned submissions until sign-in."}
+            </div>
             <button
               onClick={onReset}
               style={{
@@ -1211,10 +1280,12 @@ function ReviewPhase({
 // ─── Phase: done ─────────────────────────────────────────────────────────────
 
 function DonePhase({
+  completionMode,
   submissionRecord,
   listingName,
   onReset,
 }: {
+  completionMode: CompletionMode;
   submissionRecord: SubmissionRecord | null;
   listingName?: string;
   onReset: () => void;
@@ -1255,7 +1326,7 @@ function DonePhase({
           margin: "0 0 12px",
         }}
       >
-        Submitted for review.
+        {completionMode === "owned" ? "Submitted for review." : "Preview ready."}
       </h2>
       <p
         style={{
@@ -1265,8 +1336,18 @@ function DonePhase({
           margin: "0 auto",
         }}
       >
-        Manual review within 48 hours. You&rsquo;ll get an email when{" "}
-        {listingName ? <strong>{listingName}</strong> : "your listing"} goes live.
+        {completionMode === "owned" ? (
+          <>
+            Manual review within 48 hours. You&rsquo;ll get an email when{" "}
+            {listingName ? <strong>{listingName}</strong> : "your listing"} goes live.
+          </>
+        ) : (
+          <>
+            This draft was generated as a guest preview. Sign in to save{" "}
+            {listingName ? <strong>{listingName}</strong> : "this listing"} under your account and
+            track it from your dashboard.
+          </>
+        )}
       </p>
       <div
         style={{
@@ -1277,7 +1358,7 @@ function DonePhase({
           flexWrap: "wrap",
         }}
       >
-        {submissionRecord && (
+        {completionMode === "owned" && submissionRecord && (
           <Link
             href={`/submit/${submissionRecord.id}/status`}
             style={{
@@ -1294,19 +1375,19 @@ function DonePhase({
           </Link>
         )}
         <Link
-          href="/dashboard"
+          href={completionMode === "owned" ? "/dashboard" : "/sign-in"}
           style={{
             padding: "13px 22px",
             borderRadius: 11,
-            background: submissionRecord ? "transparent" : "var(--blue)",
-            color: submissionRecord ? "var(--text)" : "#fff",
-            border: submissionRecord ? "1.5px solid var(--border)" : "none",
+            background: completionMode === "owned" ? "transparent" : "var(--blue)",
+            color: completionMode === "owned" ? "var(--text)" : "#fff",
+            border: completionMode === "owned" ? "1.5px solid var(--border)" : "none",
             fontWeight: 600,
             fontSize: 14,
             textDecoration: "none",
           }}
         >
-          View dashboard
+          {completionMode === "owned" ? "View dashboard" : "Sign in to save"}
         </Link>
         <button
           onClick={onReset}

@@ -20,6 +20,18 @@ class SellerOnboardingResponse(BaseModel):
     onboarding_url: str
 
 
+class ToolPurchaseResponse(BaseModel):
+    id: str
+    tool_id: str
+    buyer_id: str
+    seller_id: str
+    status: str
+    purchase_price: Decimal
+    purchase_type: str
+    created_at: datetime
+    checkout_url: str | None = None
+
+
 class BillingInvoiceSummary(BaseModel):
     id: str
     amount_due: Decimal

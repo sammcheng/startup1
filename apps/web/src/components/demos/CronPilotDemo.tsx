@@ -69,7 +69,7 @@ export default function CronPilotDemo() {
   const { run, clear } = usePipelineRunner();
 
   function clearTimers() { timersRef.current.forEach(clearTimeout); timersRef.current = []; }
-  useEffect(() => () => { clearTimers(); clear(); }, []);
+  useEffect(() => () => { clearTimers(); clear(); }, [clear]);
 
   function schedule() {
     setScheduled(false);

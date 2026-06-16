@@ -101,6 +101,14 @@ interface ChannelProgress {
   done: boolean;
 }
 
+function stableDemoId(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36).padStart(8, "0").slice(0, 8);
+}
+
 export default function NotifyStackDemo() {
   const [phase, setPhase] = useState<string>("compose");
   const [recipient, setRecipient] = useState<string>("user-42");
@@ -176,7 +184,9 @@ export default function NotifyStackDemo() {
     setProgress({});
   }
 
-  const messageId = "msg_" + Math.random().toString(36).slice(2, 10);
+  const messageId = `msg_${stableDemoId(
+    `${recipient}:${templateId}:${selectedChannels.join(",")}`,
+  )}`;
   const totalMs =
     selectedChannels.length > 0
       ? Math.max(

@@ -110,3 +110,8 @@ class Tool(Base):
     api_key_usage: Mapped[list["UsageLog"]] = relationship("UsageLog", back_populates="tool")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="tool")
     tool_purchases: Mapped[list["ToolPurchase"]] = relationship("ToolPurchase", back_populates="tool")
+    processing_jobs: Mapped[list["ToolProcessingJob"]] = relationship(
+        "ToolProcessingJob",
+        back_populates="tool",
+        cascade="all, delete-orphan",
+    )

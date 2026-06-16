@@ -1,27 +1,17 @@
 "use client";
 
-// Stub replacement for @clerk/nextjs useAuth.
-// Returns null token in demo mode. Swap for real Clerk when auth is wired up.
+import { useAuthContext } from "@/lib/auth-context";
+
 export function useAuth() {
-  return {
-    getToken: async () => null as string | null,
-    isLoaded: true,
-    isSignedIn: false,
-    userId: null,
-  };
+  const { getToken, isLoaded, isSignedIn, userId } = useAuthContext();
+  return { getToken, isLoaded, isSignedIn, userId };
 }
 
-interface StubUser {
-  firstName: string | null;
-  lastName: string | null;
-  username: string | null;
-  emailAddresses: { emailAddress: string }[];
+export function useUser() {
+  const { isLoaded, isSignedIn, user } = useAuthContext();
+  return { user, isLoaded, isSignedIn };
 }
 
-export function useUser(): { user: StubUser | null; isLoaded: boolean; isSignedIn: boolean } {
-  return {
-    user: null,
-    isLoaded: true,
-    isSignedIn: false,
-  };
+export function useCurrentAccount() {
+  return useAuthContext();
 }

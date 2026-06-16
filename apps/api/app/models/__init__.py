@@ -5,6 +5,7 @@ from app.models.api_key import APIKey
 from app.models.usage_log import UsageLog
 from app.models.transaction import Transaction, TransactionType, TransactionStatus
 from app.models.tool_purchase import ToolPurchase, PurchaseStatus
+from app.models.tool_processing_job import ToolProcessingJob, ToolProcessingJobKind, ToolProcessingJobStatus
 
 __all__ = [
     "Base",
@@ -23,4 +24,7 @@ __all__ = [
     "TransactionStatus",
     "ToolPurchase",
     "PurchaseStatus",
+    "ToolProcessingJob",
+    "ToolProcessingJobKind",
+    "ToolProcessingJobStatus",
 ]

@@ -11,8 +11,8 @@ Hackmarket is a two-sided marketplace where sellers upload AI/API tools, buyers 
                                       |
                                       v
                          +------------+-------------+
-                         |         Nginx            |
-                         | TLS, rate limits, cache  |
+                         |       Vercel Edge        |
+                         |   TLS + Next.js web      |
                          +------+-------------+-----+
                                 |             |
                 hackmarket.io   |             | api.hackmarket.io
@@ -25,9 +25,13 @@ Hackmarket is a two-sided marketplace where sellers upload AI/API tools, buyers 
                           +--------------------+--------------------+
                           |                    |                    |
                           v                    v                    v
-                    PostgreSQL             Redis             Seller tool
-                  users/tools/usage     rate limits,       containers/runtime
-                  billing metadata      counters, ports    (Docker MVP)
+                    PostgreSQL             Redis/ARQ          Render worker
+                  users/tools/usage     rate limits,       tool processing,
+                  billing metadata      counters, jobs     retries, billing
+                          |
+                          v
+                     Seller tool services
+                    Render-hosted runtimes
                           |
                           v
                        Stripe
@@ -35,8 +39,8 @@ Hackmarket is a two-sided marketplace where sellers upload AI/API tools, buyers 
 ```
 
 **Project Overview**
-- `apps/web`: Next.js 14 app router frontend for marketplace browsing, dashboards, demos, and docs
-- `apps/api`: FastAPI backend for auth, tools, gateway, analytics, billing, and container orchestration
+- `apps/web`: Next.js 16 app router frontend for marketplace browsing, dashboards, demos, and docs
+- `apps/api`: FastAPI backend for auth, tools, gateway, analytics, billing, and queued tool orchestration
 - `packages/shared`: shared package space for future cross-app types/utilities
 - `docker/templates`: templates used for seller tool containerization
 - `nginx`: production reverse proxy configuration
@@ -61,7 +65,7 @@ hackmarket/
 **Local Development**
 
 Prerequisites:
-- Node.js 20+
+- Node.js 22+
 - Python 3.11+
 - Docker and Docker Compose
 - PostgreSQL 16+ and Redis 7+ if you are not using Docker locally
@@ -154,18 +158,35 @@ Notes:
 
 Hosted deployment split:
 - Vercel: deploy `apps/web` as the Next.js frontend
-- Render: deploy `apps/api` and `apps/seller-tools/home-accessibility-checker` with `render.yaml`, plus managed Postgres and Key Value
+- Render: deploy `apps/api`, `start-worker`, and `apps/seller-tools/home-accessibility-checker` with `render.yaml`, plus managed Postgres and Key Value
 
 Render monorepo note:
 - `render.yaml` is configured to isolate the backend with `rootDir: apps/api`
+- `render.yaml` is configured to run `start-worker` from the same API image with `dockerCommand: arq app.worker.WorkerSettings`
 - `render.yaml` is configured to isolate the seller tool with `rootDir: apps/seller-tools/home-accessibility-checker`
 - if an existing Render service was originally created from the dashboard, update that service to match the Blueprint settings or re-create it from the Blueprint so unrelated repo pushes stop redeploying both services
-- see `/Users/sammcheng/Desktop/startup/hackmarket/docs/render-monorepo-runbook.md` for the manual repair checklist
+- see `/Users/sammcheng/Desktop/startup1/docs/render-monorepo-runbook.md` for the manual repair checklist
 
 Recommended hosted env values:
 - Vercel `NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1`
 - Vercel `NEXT_PUBLIC_APP_URL=https://hackmarket.io`
 - Render custom domain `api.hackmarket.io` pointed at the `start` service
+- Render `CORS_ORIGINS=["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]`
+- Render `CORS_ORIGIN_REGEX=`
+- Render `ALLOW_VERCEL_PREVIEW_ORIGINS=false`
+- Render `CONVERTER_SECRET`: long random shared secret for converter-to-API imports
+- Render `OPENROUTER_API_KEY`: required for production repo submission analysis
+- Render `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`: required for durable source upload storage
+- Render `WORKER_QUEUE_NAME=hackmarket:jobs` on both API and worker
+- Render `RUN_BILLING_SCHEDULER_IN_API=false`; billing schedules run from the worker cron job
+- Render `RENDER_TOOL_PLAN=starter` so dynamically hosted seller tools do not launch on free instances
+
+Release verification after deploy:
+1. Confirm frontend responds on the public Vercel URL and custom domain.
+2. Confirm API `/health` and `/ready` return success from the live Render service.
+3. Confirm the Render worker health check key appears in Redis and `/ready` reports queue depth.
+4. Run a signed-in smoke test for `/dashboard`, tool purchase redirect, seller tool upload/configure, and `/submit/{id}/status`.
+5. Confirm Clerk and Stripe webhooks deliver successfully with real provider events.
 
 **CI/CD**
 
@@ -177,17 +198,10 @@ On pull requests and pushes to `main`, CI:
 - installs frontend dependencies
 - runs frontend type checking
 - runs frontend linting
+- validates the Render blueprint contract
 - builds the production Docker images
 
-On pushes to `main`, CI also:
-- pushes Docker images to GHCR
-- runs a deploy job through SSH against the configured production host
-
-Required GitHub secrets for deployment:
-- `DEPLOY_HOST`
-- `DEPLOY_USER`
-- `DEPLOY_SSH_KEY`
-- `DEPLOY_PATH`
+On pushes to `main`, CI also pushes Docker images to GHCR as build artifacts. Production deploys are handled by Vercel Git integration for `apps/web` and Render auto-deploy for the services in `render.yaml`.
 
 **Environment Variables**
 
@@ -195,6 +209,10 @@ Core application:
 - `DEBUG`: enable debug behavior locally
 - `ENVIRONMENT`: `development`, `test`, or `production`
 - `OPENAI_API_KEY`: used for AI-assisted analysis features
+- `CONVERTER_SECRET`: shared secret for internal converter import endpoints
+- `OPENROUTER_API_KEY`: required in production for repo submission analysis
+- `OPENROUTER_MODEL`: model used by repo submission analysis
+- `ALLOW_REPO_ANALYSIS_FALLBACK`: keep `false` in production unless explicitly accepting heuristic analysis
 
 Database:
 - `DATABASE_URL`: SQLAlchemy async database URL
@@ -232,6 +250,9 @@ Public web config:
 Deployment:
 - `LETSENCRYPT_EMAIL`
 - `HEALTHCHECK_URL`
+- `CORS_ORIGINS`
+- `CORS_ORIGIN_REGEX`
+- `ALLOW_VERCEL_PREVIEW_ORIGINS`
 
 **Operational Notes**
 - Seller tool source archives live in S3 and are processed into runtime containers by the API service.

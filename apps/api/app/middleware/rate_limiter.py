@@ -30,4 +30,9 @@ async def check_rate_limit(
                 "message": "Too many requests. Please slow down.",
                 "details": {"limit": limit, "window_seconds": window},
             },
+            headers={
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+                "Retry-After": str(window),
+            },
         )

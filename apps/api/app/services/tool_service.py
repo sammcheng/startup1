@@ -276,11 +276,58 @@ async def get_seller_tools(db: AsyncSession, seller_id: uuid.UUID) -> list[Tool]
     return list(result.scalars())
 
 
+async def list_admin_tools(
+    db: AsyncSession,
+    status_filter: ToolStatus | None,
+    page: int,
+    limit: int,
+) -> tuple[list[Tool], int]:
+    """Return review/admin-visible tools across sellers, newest first."""
+    base_query = select(Tool).options(selectinload(Tool.seller))
+    count_query = select(func.count()).select_from(Tool)
+
+    if status_filter is not None:
+        base_query = base_query.where(Tool.status == status_filter)
+        count_query = count_query.where(Tool.status == status_filter)
+
+    offset = (page - 1) * limit
+    base_query = base_query.order_by(Tool.created_at.desc()).offset(offset).limit(limit)
+
+    items_result = await db.execute(base_query)
+    total_result = await db.execute(count_query)
+    return list(items_result.scalars()), total_result.scalar_one()
+
+
 async def update_tool(db: AsyncSession, tool: Tool, data: ToolUpdate, redis: Redis | None = None) -> Tool:
     """Apply only the fields explicitly provided in *data*."""
     updates = data.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(tool, field, value)
+    await db.commit()
+    if redis:
+        await invalidate_tool_cache(redis, tool.slug)
+    result = await db.execute(
+        select(Tool)
+        .where(Tool.id == tool.id)
+        .options(selectinload(Tool.seller))
+    )
+    return result.scalar_one()
+
+
+async def update_tool_review_status(
+    db: AsyncSession,
+    tool: Tool,
+    *,
+    status: ToolStatus,
+    processing_error: str | None = None,
+    is_featured: bool | None = None,
+    redis: Redis | None = None,
+) -> Tool:
+    """Apply an admin review decision to a tool and invalidate public caches."""
+    tool.status = status
+    tool.processing_error = processing_error
+    if is_featured is not None:
+        tool.is_featured = is_featured
     await db.commit()
     if redis:
         await invalidate_tool_cache(redis, tool.slug)

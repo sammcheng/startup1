@@ -38,7 +38,7 @@ const TICKER_ITEMS = [
   "✦ Anomaly Detection", "✦ Document Parsing", "✦ Logo Generation",
 ];
 
-const MOCK_DEMO_OUTPUT = {
+const PREVIEW_DEMO_OUTPUT = {
   sentiment: "positive",
   confidence: 0.947,
   scores: { positive: 0.947, neutral: 0.041, negative: 0.012 },
@@ -588,7 +588,7 @@ type DemoState = "idle" | "running" | "done";
 function LandingDemo() {
   const [input, setInput] = useState("");
   const [state, setState] = useState<DemoState>("idle");
-  const [output, setOutput] = useState<typeof MOCK_DEMO_OUTPUT | null>(null);
+  const [output, setOutput] = useState<typeof PREVIEW_DEMO_OUTPUT | null>(null);
 
   const runDemo = useCallback(async () => {
     if (!input.trim() || state === "running") return;
@@ -596,7 +596,7 @@ function LandingDemo() {
     setOutput(null);
     await new Promise((r) => setTimeout(r, 900));
     setState("done");
-    setOutput(MOCK_DEMO_OUTPUT);
+    setOutput(PREVIEW_DEMO_OUTPUT);
   }, [input, state]);
 
   const colorScore = (v: number) =>

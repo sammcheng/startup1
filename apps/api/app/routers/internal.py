@@ -6,6 +6,7 @@ Used by the converter service to register analyzed GitHub repos as tools.
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -31,7 +32,7 @@ SYSTEM_SELLER_EMAIL = "converter@internal.hackmarket.io"
 def _verify_converter_secret(x_converter_secret: Annotated[str | None, Header()] = None) -> None:
     if not settings.converter_secret:
         raise HTTPException(status_code=503, detail="Internal endpoints not configured.")
-    if x_converter_secret != settings.converter_secret:
+    if not x_converter_secret or not secrets.compare_digest(x_converter_secret, settings.converter_secret):
         raise HTTPException(status_code=401, detail="Invalid converter secret.")
 
 

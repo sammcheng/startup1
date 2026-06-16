@@ -17,6 +17,15 @@ interface ToastContextValue {
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
+let toastIdCounter = 0;
+
+function createToastId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  toastIdCounter += 1;
+  return `${Date.now()}-${toastIdCounter}`;
+}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -27,7 +36,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const pushToast = useCallback(
     (toast: Omit<ToastItem, "id">) => {
-      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const id = createToastId();
       setToasts((current) => [...current, { ...toast, id }]);
       window.setTimeout(() => removeToast(id), 5000);
     },

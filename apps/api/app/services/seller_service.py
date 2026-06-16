@@ -16,6 +16,7 @@ from app.schemas.seller import (
     SellerToolSummary,
     SellerTopTool,
 )
+from app.services import job_service
 
 
 async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> SellerDashboardResponse:
@@ -103,18 +104,24 @@ async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> Seller
         .group_by(Tool.id, Tool.name, Tool.slug, Tool.status)
         .order_by(func.coalesce(func.sum(UsageLog.cost), 0).desc(), Tool.created_at.desc())
     )
-    tools = [
-        SellerToolSummary(
-            tool_id=row.id,
-            tool_name=row.name,
-            slug=row.slug,
-            status=row.status,
-            requests_this_month=int(row.requests_this_month or 0),
-            revenue_this_month=Decimal(row.revenue_this_month or 0),
-            avg_response_time_ms=float(row.avg_response_time_ms) if row.avg_response_time_ms is not None else None,
+    tool_records = list(tool_rows.all())
+    latest_jobs = await job_service.list_latest_tool_jobs(db, [row.id for row in tool_records])
+    tools = []
+    for row in tool_records:
+        latest_job = latest_jobs.get(row.id)
+        tools.append(
+            SellerToolSummary(
+                tool_id=row.id,
+                tool_name=row.name,
+                slug=row.slug,
+                status=row.status,
+                latest_job_status=latest_job.status if latest_job else None,
+                latest_job_error=latest_job.last_error if latest_job else None,
+                requests_this_month=int(row.requests_this_month or 0),
+                revenue_this_month=Decimal(row.revenue_this_month or 0),
+                avg_response_time_ms=float(row.avg_response_time_ms) if row.avg_response_time_ms is not None else None,
+            )
         )
-        for row in tool_rows.all()
-    ]
 
     return SellerDashboardResponse(
         total_tools=int(total_tools or 0),

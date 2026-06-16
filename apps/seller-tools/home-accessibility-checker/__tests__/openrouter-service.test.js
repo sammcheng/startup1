@@ -74,6 +74,11 @@ describe("OpenRouterService", () => {
     const first = service.generateDynamicAnalysis("abc123", "bathroom.jpg");
     const second = service.generateDynamicAnalysis("abc123", "bathroom.jpg");
 
+    expect(first.metadata.timestamp).toEqual(expect.any(String));
+    expect(second.metadata.timestamp).toEqual(expect.any(String));
+    delete first.metadata.timestamp;
+    delete second.metadata.timestamp;
+
     expect(first).toEqual(second);
     expect(first).toMatchObject({
       score: expect.any(Number),

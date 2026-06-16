@@ -5,18 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, buildQuery } from "@/lib/api";
 import { tokenize, matchTools, segmentsToText } from "@/lib/nlpSearch";
 import type { Segment, ScoredTool } from "@/lib/nlpSearch";
-import {
-  buildKcCatalogResponse,
-  KC_MODULES,
-  KC_TO_TOOL_CATEGORY,
-  kcModuleToTool,
-  matchKcModules,
-  type KcCategory,
-} from "@/lib/kcMockModules";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
-
-const CONVERTER_URL = process.env.NEXT_PUBLIC_CONVERTER_URL ?? "http://localhost:8080";
+import { CONVERTER_ENABLED, CONVERTER_URL } from "@/lib/env";
 
 // ── Converter adapter ──────────────────────────────────────────────────────
 
@@ -85,6 +76,9 @@ function converterToTool(c: ConverterTool): Tool {
 }
 
 async function fetchFromConverter(limit: number, offset: number): Promise<ToolListResponse> {
+  if (!CONVERTER_ENABLED) {
+    throw new Error("Converter service is not configured.");
+  }
   const res = await fetch(`${CONVERTER_URL}/api/tools?limit=${limit}&offset=${offset}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Converter unavailable");
   const data = (await res.json()) as { tools: ConverterTool[]; total: number };
@@ -244,7 +238,16 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
           </div>
           <div className="flex items-center gap-2">
             {tool.seller.avatar_url ? (
-              <img src={tool.seller.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover border" style={{ borderColor: "var(--border)" }} />
+              <span
+                aria-hidden="true"
+                className="w-5 h-5 rounded-full border flex-shrink-0"
+                style={{
+                  backgroundImage: `url(${tool.seller.avatar_url})`,
+                  backgroundPosition: "center",
+                  backgroundSize: "cover",
+                  borderColor: "var(--border)",
+                }}
+              />
             ) : (
               <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
                 style={{ background: `${color}25`, color, fontFamily: "var(--font-mono)" }}>
@@ -310,22 +313,17 @@ function Pagination({ page, pages, total, limit, onChange }: {
 // ── ResultCard (KC's exact layout, adapted for Tool data) ──────────────────
 
 function ResultCard({ row, delay, onClick }: { row: ScoredTool; delay: number; onClick: () => void }) {
-  const { tool, fit, fallback, source } = row;
-  const isPreview = source === "preview";
+  const { tool, fit } = row;
   return (
     <button className="v3-result-card" style={{ animationDelay: `${delay}ms` }} onClick={onClick}>
       <div className="v3-result-main">
         <div className="v3-result-head">
           <div className="v3-result-name">{tool.name}</div>
           <span className="pill pill-primary">{tool.category.replace(/_/g, " ")}</span>
-          {fallback
-            ? <span className="pill">Featured</span>
-            : isPreview
-              ? <span className="pill pill-preview">Preview</span>
-              : <span className="pill pill-good"><CheckIcon size={11} /> Verified</span>}
+          <span className="pill pill-good"><CheckIcon size={11} /> Verified</span>
         </div>
         <div className="v3-result-desc">{tool.tagline}</div>
-        {!fallback && fit && (
+        {fit && (
           <div className="v3-result-fit">
             <span className="icon"><SparkleIcon size={14} color="var(--kc-primary)" /></span>
             <span>{fit}</span>
@@ -367,14 +365,13 @@ export default function MarketplaceClient({
 
   // Discovery state
   const [phase, setPhase] = useState<Phase>("input");
-  const [seedSegments, setSeedSegments] = useState<Segment[] | null>(null);
+  const [composerSegments, setComposerSegments] = useState<Segment[] | null>(null);
   const [submittedSegments, setSubmittedSegments] = useState<Segment[]>([]);
   const [step, setStep] = useState(-1);
   const [matched, setMatched] = useState<ScoredTool[]>([]);
   const [apiReady, setApiReady] = useState(false);
 
-  // Live preview that updates as the user types — runs the kc-mock matcher
-  // synchronously on every keystroke, debounced 120ms. No thinking animation.
+  // Live preview that updates as the user types, backed by the live API.
   // Caps the dropdown at MAX_DROPDOWN matches; surplus rolls into a "See all"
   // affordance that submits the query through the full thinking + results flow.
   const MAX_DROPDOWN = 2;
@@ -393,18 +390,30 @@ export default function MarketplaceClient({
       return;
     }
     livePreviewRef.current = setTimeout(() => {
-      const matches = matchKcModules(q);
-      setLivePreviewTotal(matches.length);
-      setLivePreview(
-        matches.slice(0, MAX_DROPDOWN).map((km, i) => ({
-          tool: kcModuleToTool(km.module),
-          score: Math.max(1, 100 - i * 8),
-          hits: km.hits,
-          fit: km.fit,
-          fallback: km.fallback,
-          source: "preview",
-        })),
-      );
+      void (async () => {
+        try {
+          const discoverResp = await api.post<{
+            matches: Array<{
+              tool: Tool;
+              fit_line: string;
+              match_score: number;
+              matched_keywords: string[];
+            }>;
+          }>("/tools/discover", { query: q, limit: MAX_DROPDOWN });
+          setLivePreviewTotal(discoverResp.matches.length);
+          setLivePreview(
+            discoverResp.matches.map((match) => ({
+              tool: match.tool,
+              score: match.match_score,
+              hits: match.matched_keywords,
+              fit: match.fit_line,
+            })),
+          );
+        } catch {
+          setLivePreview([]);
+          setLivePreviewTotal(0);
+        }
+      })();
     }, 120);
   }, []);
 
@@ -425,25 +434,6 @@ export default function MarketplaceClient({
   async function fetchAndMatch(segs: Segment[]): Promise<void> {
     const plainText = segmentsToText(segs).trim();
 
-    // 1) ALWAYS run local kc-mock keyword matching first — this is the
-    //    catalog-feels-full guarantee. These render as dashed "Preview" pills.
-    const kcMatches = matchKcModules(plainText);
-    const kcPreview: ScoredTool[] = kcMatches.map((km, i) => ({
-      tool: kcModuleToTool(km.module),
-      score: Math.max(1, 100 - i * 8),
-      hits: km.hits,
-      fit: km.fit,
-      fallback: km.fallback,
-      source: "preview",
-    }));
-
-    // Show kc previews instantly so the results panel never appears empty.
-    setMatched(kcPreview);
-
-    // 2) In parallel: try the live API. Prefer /tools/discover, then the
-    //    legacy /tools?search= and converter fallbacks. Whatever returns
-    //    real rows gets merged AHEAD of the kc previews (verified > preview),
-    //    deduped by tool name.
     let verified: ScoredTool[] = [];
     try {
       const discoverResp = await api.post<{
@@ -463,11 +453,10 @@ export default function MarketplaceClient({
           score: Math.round((m.match_score / maxScore) * 100),
           hits: m.matched_keywords,
           fit: m.fit_line,
-          source: "verified",
         }));
       }
     } catch {
-      // discover endpoint unreachable; try the legacy paths
+      // discover endpoint unreachable; try the legacy live paths
     }
 
     if (verified.length === 0) {
@@ -487,20 +476,14 @@ export default function MarketplaceClient({
           }
         }
         if (tools.length > 0) {
-          verified = matchTools(segs, tools).map((r) => ({ ...r, source: "verified" }));
+          verified = matchTools(segs, tools);
         }
       } catch {
-        // stay on kc previews
+        // leave results empty
       }
     }
 
-    // 3) Merge — verified first, then any kc previews whose name isn't
-    //    already represented by a verified row.
-    const verifiedNames = new Set(verified.map((r) => r.tool.name.toLowerCase()));
-    const previewSurvivors = kcPreview.filter(
-      (r) => !verifiedNames.has(r.tool.name.toLowerCase()),
-    );
-    setMatched([...verified, ...previewSurvivors]);
+    setMatched(verified);
     setApiReady(true);
   }
 
@@ -514,14 +497,14 @@ export default function MarketplaceClient({
   }
 
   function refine() {
-    setSeedSegments(submittedSegments);
+    setComposerSegments(submittedSegments);
     setPhase("input");
     setStep(-1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function startFresh() {
-    setSeedSegments([]);
+    setComposerSegments([]);
     setSubmittedSegments([]);
     setPhase("input");
     setStep(-1);
@@ -529,13 +512,11 @@ export default function MarketplaceClient({
 
   function pickExample(s: string) {
     const segs = tokenize(s);
-    setSeedSegments(segs);
+    setComposerSegments(segs);
     setTimeout(() => submit(segs), 220);
   }
 
-  // Browse fetch — API → converter → kc catalog. Empty earlier responses
-  // are treated the same as failures so the browse view never shows
-  // "no tools" while the catalog has rows ready.
+  // Browse fetch — API, then converter. Empty means empty.
   const fetchTools = useCallback(
     async (cat: ToolCategory | "all", sort: SortBy, pg: number) => {
       setLoading(true);
@@ -568,48 +549,16 @@ export default function MarketplaceClient({
           // fall through
         }
 
-        // 3) kc catalog (10 modules). Apply category + sort client-side
-        // since these are pre-baked.
-        let pool = [...KC_MODULES];
-        if (cat !== "all") {
-          // The kc Module.category is the kc-shape ("AI/ML", "Auth", …)
-          // while the marketplace filter uses Hackmarket's ToolCategory
-          // enum. Map and compare.
-          pool = pool.filter(
-            (m) =>
-              KC_TO_TOOL_CATEGORY[m.category as KcCategory] === cat,
-          );
-        }
-        switch (sort) {
-          case "popular":
-            pool.sort((a, b) => b.integrations - a.integrations);
-            break;
-          case "price_low":
-            pool.sort((a, b) => a.pricing.amount - b.pricing.amount);
-            break;
-          case "price_high":
-            pool.sort((a, b) => b.pricing.amount - a.pricing.amount);
-            break;
-          case "newest":
-          default:
-            // Stable: just keep the integration order so the catalog
-            // looks "active" rather than alphabetical.
-            pool.sort((a, b) => b.integrations - a.integrations);
-        }
-        const limit = 20;
-        const start = (pg - 1) * limit;
-        const items = pool.slice(start, start + limit).map(kcModuleToTool);
         setData({
-          items,
-          total: pool.length,
+          items: [],
+          total: 0,
           page: pg,
-          limit,
-          pages: Math.max(1, Math.ceil(pool.length / limit)),
+          limit: 20,
+          pages: 1,
         });
       } catch {
-        // Last-resort: use the unfiltered kc catalog so SOMETHING renders.
-        setData(buildKcCatalogResponse(pg, 20));
-        setError(null);
+        setData(null);
+        setError("The live marketplace catalog is unavailable right now.");
       } finally {
         setLoading(false);
       }
@@ -621,7 +570,10 @@ export default function MarketplaceClient({
   const handleSort = (sort: SortBy) => { setSortBy(sort); setPage(1); void fetchTools(category, sort, 1); };
   const handlePage = (p: number) => { setPage(p); void fetchTools(category, sortBy, p); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
-  useEffect(() => { return () => clearTimeout(debounceRef.current); }, []);
+  useEffect(() => {
+    const debounceTimer = debounceRef.current;
+    return () => clearTimeout(debounceTimer);
+  }, []);
 
   const browseTools = data?.items ?? [];
 
@@ -639,11 +591,11 @@ export default function MarketplaceClient({
                 What are you building?
               </h1>
               <p style={{ marginTop: 8, fontSize: 14, color: "var(--muted)" }}>
-                Search the catalog, or browse the {KC_MODULES.length} AI tools below.
+                Search the live catalog, or browse the tools below.
               </p>
               <div style={{ marginTop: 16 }}>
                 <Composer
-                  initialSegments={seedSegments ?? undefined}
+                  initialSegments={composerSegments ?? undefined}
                   onSubmit={submit}
                   onChange={handleLiveChange}
                 />
@@ -664,7 +616,7 @@ export default function MarketplaceClient({
                     className="v3-mono-label"
                     style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}
                   >
-                    <span>Quick matches · Preview</span>
+                    <span>Quick matches</span>
                     <span style={{ color: "var(--faint)" }}>press ↵ for full ranking</span>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -743,7 +695,7 @@ export default function MarketplaceClient({
                               flexShrink: 0,
                             }}
                           >
-                            Preview
+                              Live
                           </span>
                         </Link>
                       );
@@ -951,20 +903,34 @@ export default function MarketplaceClient({
                   <div className="between" style={{ padding: "20px 4px 8px" }}>
                     <div className="v3-mono-label">
                       {matched.length} {matched.length === 1 ? "tool" : "tools"} matched
-                      {matched[0]?.fallback && " · top picks"}
                     </div>
                     <div className="v3-mono-label">Ranked by integration fit</div>
                   </div>
-                  <div className="v3-results">
-                    {matched.map((row, i) => (
-                      <ResultCard
-                        key={row.tool.id}
-                        row={row}
-                        delay={i * 110}
-                        onClick={() => window.location.href = `/tools/${row.tool.slug}`}
-                      />
-                    ))}
-                  </div>
+                  {matched.length > 0 ? (
+                    <div className="v3-results">
+                      {matched.map((row, i) => (
+                        <ResultCard
+                          key={row.tool.id}
+                          row={row}
+                          delay={i * 110}
+                          onClick={() => window.location.href = `/tools/${row.tool.slug}`}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: 28,
+                        textAlign: "center",
+                        color: "var(--muted)",
+                        background: "var(--card)",
+                      }}
+                    >
+                      No live tools matched this query yet.
+                    </div>
+                  )}
                   <div style={{
                     marginTop: 28, padding: 22, border: "1px dashed var(--line)", borderRadius: 14,
                     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20,

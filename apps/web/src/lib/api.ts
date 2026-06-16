@@ -1,12 +1,12 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/v1";
-const DEFAULT_TIMEOUT_MS = 20_000;
+import {
+  API_BASE,
+  getGatewayBaseUrl,
+  isLocalServiceUrl,
+  shouldSkipBuildTimeFetch,
+} from "@/lib/env";
 
-export function getGatewayBaseUrl(): string {
-  if (API_BASE.endsWith("/v1")) {
-    return `${API_BASE.slice(0, -3)}/api/v1`;
-  }
-  return `${API_BASE}/api/v1`;
-}
+const DEFAULT_TIMEOUT_MS = 20_000;
+export { API_BASE, getGatewayBaseUrl, isLocalServiceUrl, shouldSkipBuildTimeFetch };
 
 export class ApiError extends Error {
   constructor(
@@ -70,6 +70,10 @@ function toApiError(res: Response, data: unknown): ApiError {
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  if (shouldSkipBuildTimeFetch(input)) {
+    throw new ApiError(0, "LOCAL_SERVICE_UNAVAILABLE", "Skipping local service fetch during production build.");
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -188,6 +192,9 @@ export const api = {
   },
   put<T>(path: string, body: unknown, options?: RequestOptions): Promise<T> {
     return request<T>("PUT", path, body, options);
+  },
+  patch<T>(path: string, body: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>("PATCH", path, body, options);
   },
   delete<T>(path: string, options?: RequestOptions): Promise<T> {
     return request<T>("DELETE", path, undefined, options);

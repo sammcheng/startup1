@@ -2,10 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LogOut, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { useCurrentAccount } from "@/hooks/useAuth";
 
 export default function SiteNav() {
   const pathname = usePathname();
+  const { isLoaded, isSignedIn, signOut, user } = useCurrentAccount();
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -52,6 +56,81 @@ export default function SiteNav() {
 
       {/* Right actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {isLoaded && isSignedIn ? (
+          <>
+            <Link
+              href="/dashboard"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+                background: "var(--card)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {user?.imageUrl ? (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 999,
+                    backgroundImage: `url(${user.imageUrl})`,
+                    backgroundPosition: "center",
+                    backgroundSize: "cover",
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <UserRound size={16} />
+              )}
+              {user?.firstName ?? user?.username ?? "Account"}
+            </Link>
+            <button
+              type="button"
+              onClick={() => void signOut?.()}
+              aria-label="Sign out"
+              title="Sign out"
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--muted)",
+                display: "grid",
+                placeItems: "center",
+                cursor: "pointer",
+              }}
+            >
+              <LogOut size={16} />
+            </button>
+          </>
+        ) : (
+          <Link
+            href="/sign-in"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "7px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              background: "var(--card)",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            <UserRound size={16} />
+            Sign in
+          </Link>
+        )}
         <Link
           href="/submit"
           data-cta="submit-your-build"

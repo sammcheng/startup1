@@ -29,6 +29,7 @@ SELLER_TOOL_NODE_VERSION = (
 EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
     "start": {
         "rootDir": "apps/api",
+        "plan": "starter",
         "autoDeployTrigger": "checksPass",
         "healthCheckPath": "/health",
         "buildFilter": {"paths": ["apps/api/**"], "ignoredPaths": []},
@@ -37,8 +38,22 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
         "envVarKeys": [
             "ENVIRONMENT",
             "DEBUG",
+            "APP_BASE_URL",
+            "PUBLIC_API_BASE_URL",
+            "CORS_ORIGINS",
+            "CORS_ORIGIN_REGEX",
+            "ALLOW_VERCEL_PREVIEW_ORIGINS",
             "DATABASE_URL",
             "REDIS_URL",
+            "WORKER_QUEUE_NAME",
+            "WORKER_JOB_MAX_ATTEMPTS",
+            "WORKER_JOB_TIMEOUT_SECONDS",
+            "WORKER_JOB_KEEP_RESULT_SECONDS",
+            "WORKER_CONCURRENCY",
+            "WORKER_HEALTH_CHECK_INTERVAL_SECONDS",
+            "WORKER_HEALTH_CHECK_KEY",
+            "RUN_BILLING_SCHEDULER_IN_API",
+            "CONVERTER_SECRET",
             "STRIPE_SECRET_KEY",
             "STRIPE_WEBHOOK_SECRET",
             "CLERK_SECRET_KEY",
@@ -48,6 +63,127 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "AWS_SECRET_ACCESS_KEY",
             "AWS_REGION",
             "S3_BUCKET_NAME",
+            "OPENROUTER_API_KEY",
+            "OPENROUTER_MODEL",
+            "OPENROUTER_APP_URL",
+            "OPENROUTER_APP_NAME",
+            "ALLOW_REPO_ANALYSIS_FALLBACK",
+            "OPENAI_API_KEY",
+            "RENDER_API_KEY",
+            "RENDER_OWNER_ID",
+            "RENDER_TOOL_REGION",
+            "RENDER_TOOL_PLAN",
+            "RENDER_TOOL_AUTO_DEPLOY",
+            "RENDER_TOOL_HEALTHCHECK_PATH",
+            "RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS",
+            "PUBLIC_RATE_LIMIT_PER_MINUTE",
+            "RENDER_REGISTRY_CREDENTIAL_ID",
+            "RENDER_REGISTRY_CREDENTIAL_NAME",
+            "IMAGE_REGISTRY_NAMESPACE",
+            "GHCR_USERNAME",
+            "GHCR_TOKEN",
+        ],
+        "envVarSpecs": {
+            "ENVIRONMENT": {"value": "production"},
+            "DEBUG": {"value": "false"},
+            "APP_BASE_URL": {"value": "https://hackmarket.io"},
+            "PUBLIC_API_BASE_URL": {"value": "https://api.hackmarket.io"},
+            "CORS_ORIGINS": {
+                "value": '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+            },
+            "CORS_ORIGIN_REGEX": {"value": ""},
+            "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
+            "DATABASE_URL": {
+                "fromDatabase": {"name": "hackmarket-db", "property": "connectionString"}
+            },
+            "REDIS_URL": {
+                "fromService": {
+                    "name": "hackmarket-redis",
+                    "type": "keyvalue",
+                    "property": "connectionString",
+                }
+            },
+            "CONVERTER_SECRET": {"sync": False},
+            "STRIPE_SECRET_KEY": {"sync": False},
+            "STRIPE_WEBHOOK_SECRET": {"sync": False},
+            "CLERK_SECRET_KEY": {"sync": False},
+            "CLERK_WEBHOOK_SECRET": {"sync": False},
+            "CLERK_JWKS_URL": {"sync": False},
+            "AWS_ACCESS_KEY_ID": {"sync": False},
+            "AWS_SECRET_ACCESS_KEY": {"sync": False},
+            "AWS_REGION": {"value": "us-east-1"},
+            "S3_BUCKET_NAME": {"sync": False},
+            "OPENROUTER_API_KEY": {"sync": False},
+            "OPENROUTER_MODEL": {"value": "anthropic/claude-sonnet-4"},
+            "OPENROUTER_APP_URL": {"value": "https://hackmarket.io"},
+            "OPENROUTER_APP_NAME": {"value": "Hackmarket"},
+            "ALLOW_REPO_ANALYSIS_FALLBACK": {"value": "false"},
+            "OPENAI_API_KEY": {"sync": False},
+            "RENDER_API_KEY": {"sync": False},
+            "RENDER_OWNER_ID": {"sync": False},
+            "RENDER_TOOL_REGION": {"value": "oregon"},
+            "WORKER_QUEUE_NAME": {"value": "hackmarket:jobs"},
+            "WORKER_JOB_MAX_ATTEMPTS": {"value": "3"},
+            "WORKER_JOB_TIMEOUT_SECONDS": {"value": "900"},
+            "WORKER_JOB_KEEP_RESULT_SECONDS": {"value": "86400"},
+            "WORKER_CONCURRENCY": {"value": "4"},
+            "WORKER_HEALTH_CHECK_INTERVAL_SECONDS": {"value": "60"},
+            "WORKER_HEALTH_CHECK_KEY": {"value": "hackmarket:jobs:health"},
+            "RUN_BILLING_SCHEDULER_IN_API": {"value": "false"},
+            "RENDER_TOOL_PLAN": {"value": "starter"},
+            "RENDER_TOOL_AUTO_DEPLOY": {"value": "false"},
+            "RENDER_TOOL_HEALTHCHECK_PATH": {"value": "/health"},
+            "RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS": {"value": "900"},
+            "PUBLIC_RATE_LIMIT_PER_MINUTE": {"value": "60"},
+            "RENDER_REGISTRY_CREDENTIAL_ID": {"sync": False},
+            "RENDER_REGISTRY_CREDENTIAL_NAME": {"value": "hackmarket-ghcr"},
+            "IMAGE_REGISTRY_NAMESPACE": {"sync": False},
+            "GHCR_USERNAME": {"sync": False},
+            "GHCR_TOKEN": {"sync": False},
+        },
+    },
+    "start-worker": {
+        "rootDir": "apps/api",
+        "plan": "starter",
+        "autoDeployTrigger": "checksPass",
+        "healthCheckPath": "",
+        "buildFilter": {"paths": ["apps/api/**"], "ignoredPaths": []},
+        "dockerfilePath": "./Dockerfile",
+        "dockerContext": ".",
+        "dockerCommand": "arq app.worker.WorkerSettings",
+        "envVarKeys": [
+            "ENVIRONMENT",
+            "DEBUG",
+            "APP_BASE_URL",
+            "PUBLIC_API_BASE_URL",
+            "CORS_ORIGINS",
+            "CORS_ORIGIN_REGEX",
+            "ALLOW_VERCEL_PREVIEW_ORIGINS",
+            "DATABASE_URL",
+            "REDIS_URL",
+            "WORKER_QUEUE_NAME",
+            "WORKER_JOB_MAX_ATTEMPTS",
+            "WORKER_JOB_TIMEOUT_SECONDS",
+            "WORKER_JOB_KEEP_RESULT_SECONDS",
+            "WORKER_CONCURRENCY",
+            "WORKER_HEALTH_CHECK_INTERVAL_SECONDS",
+            "WORKER_HEALTH_CHECK_KEY",
+            "RUN_BILLING_SCHEDULER_IN_API",
+            "CONVERTER_SECRET",
+            "STRIPE_SECRET_KEY",
+            "STRIPE_WEBHOOK_SECRET",
+            "CLERK_SECRET_KEY",
+            "CLERK_WEBHOOK_SECRET",
+            "CLERK_JWKS_URL",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_REGION",
+            "S3_BUCKET_NAME",
+            "OPENROUTER_API_KEY",
+            "OPENROUTER_MODEL",
+            "OPENROUTER_APP_URL",
+            "OPENROUTER_APP_NAME",
+            "ALLOW_REPO_ANALYSIS_FALLBACK",
             "OPENAI_API_KEY",
             "RENDER_API_KEY",
             "RENDER_OWNER_ID",
@@ -65,6 +201,13 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
         "envVarSpecs": {
             "ENVIRONMENT": {"value": "production"},
             "DEBUG": {"value": "false"},
+            "APP_BASE_URL": {"value": "https://hackmarket.io"},
+            "PUBLIC_API_BASE_URL": {"value": "https://api.hackmarket.io"},
+            "CORS_ORIGINS": {
+                "value": '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+            },
+            "CORS_ORIGIN_REGEX": {"value": ""},
+            "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
             "DATABASE_URL": {
                 "fromDatabase": {"name": "hackmarket-db", "property": "connectionString"}
             },
@@ -75,6 +218,15 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
                     "property": "connectionString",
                 }
             },
+            "WORKER_QUEUE_NAME": {"value": "hackmarket:jobs"},
+            "WORKER_JOB_MAX_ATTEMPTS": {"value": "3"},
+            "WORKER_JOB_TIMEOUT_SECONDS": {"value": "900"},
+            "WORKER_JOB_KEEP_RESULT_SECONDS": {"value": "86400"},
+            "WORKER_CONCURRENCY": {"value": "4"},
+            "WORKER_HEALTH_CHECK_INTERVAL_SECONDS": {"value": "60"},
+            "WORKER_HEALTH_CHECK_KEY": {"value": "hackmarket:jobs:health"},
+            "RUN_BILLING_SCHEDULER_IN_API": {"value": "false"},
+            "CONVERTER_SECRET": {"sync": False},
             "STRIPE_SECRET_KEY": {"sync": False},
             "STRIPE_WEBHOOK_SECRET": {"sync": False},
             "CLERK_SECRET_KEY": {"sync": False},
@@ -84,11 +236,16 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "AWS_SECRET_ACCESS_KEY": {"sync": False},
             "AWS_REGION": {"value": "us-east-1"},
             "S3_BUCKET_NAME": {"sync": False},
+            "OPENROUTER_API_KEY": {"sync": False},
+            "OPENROUTER_MODEL": {"value": "anthropic/claude-sonnet-4"},
+            "OPENROUTER_APP_URL": {"value": "https://hackmarket.io"},
+            "OPENROUTER_APP_NAME": {"value": "Hackmarket"},
+            "ALLOW_REPO_ANALYSIS_FALLBACK": {"value": "false"},
             "OPENAI_API_KEY": {"sync": False},
             "RENDER_API_KEY": {"sync": False},
             "RENDER_OWNER_ID": {"sync": False},
             "RENDER_TOOL_REGION": {"value": "oregon"},
-            "RENDER_TOOL_PLAN": {"value": "free"},
+            "RENDER_TOOL_PLAN": {"value": "starter"},
             "RENDER_TOOL_AUTO_DEPLOY": {"value": "false"},
             "RENDER_TOOL_HEALTHCHECK_PATH": {"value": "/health"},
             "RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS": {"value": "900"},
@@ -101,6 +258,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
     },
     "home-accessibility-checker": {
         "rootDir": "apps/seller-tools/home-accessibility-checker",
+        "plan": "starter",
         "autoDeployTrigger": "checksPass",
         "healthCheckPath": "/health",
         "buildFilter": {
@@ -153,6 +311,7 @@ def normalize_service(service: dict[str, Any]) -> dict[str, Any]:
         "type": service.get("type"),
         "runtime": service.get("runtime"),
         "rootDir": service.get("rootDir", ""),
+        "plan": service.get("plan", ""),
         "autoDeployTrigger": service.get("autoDeployTrigger", "commit"),
         "healthCheckPath": service.get("healthCheckPath", ""),
     }
@@ -166,6 +325,7 @@ def normalize_service(service: dict[str, Any]) -> dict[str, Any]:
     if service.get("runtime") == "docker":
         summary["dockerfilePath"] = service.get("dockerfilePath", "")
         summary["dockerContext"] = service.get("dockerContext", "")
+        summary["dockerCommand"] = service.get("dockerCommand", "")
     else:
         summary["buildCommand"] = service.get("buildCommand", "")
         summary["startCommand"] = service.get("startCommand", "")
@@ -195,6 +355,7 @@ def format_text(services: list[dict[str, Any]]) -> str:
         lines.append(f"Service: {service['name']}")
         lines.append(f"  Type: {service['type']}")
         lines.append(f"  Runtime: {service['runtime']}")
+        lines.append(f"  Plan: {service['plan'] or '(unset)'}")
         lines.append(f"  Root Directory: {service['rootDir'] or '(repo root)'}")
         lines.append(f"  Auto Deploy Trigger: {service['autoDeployTrigger']}")
         lines.append(f"  Health Check Path: {service['healthCheckPath'] or '(unset)'}")
@@ -209,6 +370,8 @@ def format_text(services: list[dict[str, Any]]) -> str:
         if service["runtime"] == "docker":
             lines.append(f"  Dockerfile Path: {service['dockerfilePath']}")
             lines.append(f"  Docker Context: {service['dockerContext']}")
+            if service["dockerCommand"]:
+                lines.append(f"  Docker Command: {service['dockerCommand']}")
         else:
             lines.append(f"  Build Command: {service['buildCommand']}")
             lines.append(f"  Start Command: {service['startCommand']}")
@@ -251,7 +414,7 @@ def main() -> int:
     services = [
         normalize_service(service)
         for service in blueprint.get("services", [])
-        if service.get("type") == "web"
+        if service.get("type") in {"web", "worker"}
     ]
 
     if args.check:

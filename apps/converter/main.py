@@ -20,6 +20,7 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -86,7 +87,7 @@ def init_db() -> None:
             try:
                 conn.execute(migration)
             except Exception:
-                pass
+                log.warning("Migration skipped (likely already applied): %s", migration[:30])
         conn.commit()
 
 
@@ -323,7 +324,6 @@ async def _generate_qa_inputs(spec: dict) -> dict:
 
 async def _run_demo_once(spec: dict) -> dict:
     """Run one simulated demo call and return elapsed ms."""
-    import time
     t0 = time.perf_counter()
     try:
         await asyncio.sleep(0.18)
@@ -547,9 +547,9 @@ async def stream_analyze(job_id: str) -> StreamingResponse:
 
 
 @app.get("/api/tools")
-def list_tools(limit: int = 20, offset: int = 0, q: str = "", all: bool = False) -> dict:
+def list_tools(limit: int = 20, offset: int = 0, q: str = "", show_all: bool = False) -> dict:
     with get_conn() as conn:
-        listed_clause = "" if all else "AND listed = 1"
+        listed_clause = "" if show_all else "AND listed = 1"
         cols = "id, slug, repo_url, spec, created_at, listed, qa_inputs, qa_avg_ms, qa_certified, review_status"
         if q.strip():
             pattern = f"%{q.strip()}%"

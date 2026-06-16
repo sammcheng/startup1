@@ -22,7 +22,7 @@ pytest.importorskip("jose")
 pytest.importorskip("svix")
 pytest.importorskip("pydantic_settings")
 
-from app.dependencies import get_current_user, get_db, get_redis, require_seller, validate_api_key
+from app.dependencies import get_current_user, get_db, get_optional_current_user, get_redis, require_seller, validate_api_key
 from app.main import app
 from app.models import APIKey, Tool, User
 from app.models.tool import InputType, OutputType, OwnershipType, ToolCategory, ToolStatus
@@ -165,6 +165,11 @@ def buyer() -> User:
 
 
 @pytest.fixture
+def admin_user() -> User:
+    return make_user(role=UserRole.admin, email="admin@example.com", username="admin")
+
+
+@pytest.fixture
 def draft_tool(seller: User) -> Tool:
     return make_tool(seller=seller, status=ToolStatus.draft, name="Draft Tool", slug="draft-tool")
 
@@ -268,10 +273,12 @@ def override_api_key_auth(user: User, key: APIKey):
 def auth_overrides():
     def _apply(*, current_user: User | None = None, seller_user: User | None = None, api_key_context: tuple[User, APIKey] | None = None) -> None:
         app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_optional_current_user, None)
         app.dependency_overrides.pop(require_seller, None)
         app.dependency_overrides.pop(validate_api_key, None)
         if current_user is not None:
             app.dependency_overrides[get_current_user] = override_buyer_auth(current_user)
+            app.dependency_overrides[get_optional_current_user] = override_buyer_auth(current_user)
         if seller_user is not None:
             app.dependency_overrides[require_seller] = override_seller_auth(seller_user)
         if api_key_context is not None:

@@ -52,7 +52,12 @@ export default function ImageInput({
       >
         {value?.previewUrl ? (
           <div className="space-y-3">
-            <img src={value.previewUrl} alt="Preview" className="mx-auto max-h-64 rounded-2xl object-contain" />
+            <div
+              aria-label="Preview"
+              className="mx-auto h-64 w-full rounded-2xl bg-contain bg-center bg-no-repeat"
+              role="img"
+              style={{ backgroundImage: `url(${value.previewUrl})` }}
+            />
             <p className="text-sm text-stone-300">{value.filename}</p>
           </div>
         ) : (

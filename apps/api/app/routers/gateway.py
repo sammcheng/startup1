@@ -148,7 +148,7 @@ async def _check_rate_limit(redis: Redis, api_key_id: uuid.UUID) -> tuple[int, i
     if current == 1:
         await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS)
     if current > limit:
-        raise RateLimitExceededError(limit, 0)
+        raise RateLimitExceededError(limit, 0, RATE_LIMIT_WINDOW_SECONDS)
     return limit, limit - current
 
 

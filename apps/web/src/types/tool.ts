@@ -83,6 +83,7 @@ export interface ToolFilters {
 
 export interface ToolUploadResponse {
   tool_id: string;
+  job_id: string | null;
   status: ToolStatus;
   status_url: string;
   source_file_tree: string[] | null;

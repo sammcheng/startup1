@@ -173,10 +173,6 @@ export interface ScoredTool {
   score: number;
   fit: string;
   hits: string[];
-  fallback?: boolean;
-  /** "verified" rows come from the live API; "preview" rows come from the
-   * local kc mock catalog. The Discovery UI shows a different pill for each. */
-  source?: "verified" | "preview";
 }
 
 export function matchTools(segments: Segment[], tools: Tool[]): ScoredTool[] {
@@ -229,7 +225,6 @@ export function matchTools(segments: Segment[], tools: Tool[]): ScoredTool[] {
       score: 0,
       fit: `Available in the Hackmarket catalog.`,
       hits: [],
-      fallback: true,
     }));
   }
 

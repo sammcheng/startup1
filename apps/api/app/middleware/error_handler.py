@@ -19,7 +19,22 @@ def _error_response(
     message: str,
     request_id: str,
     details: dict | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    headers = {"X-HackMarket-Request-Id": request_id}
+    if extra_headers:
+        headers.update(extra_headers)
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS and details:
+        limit = details.get("limit")
+        remaining = details.get("remaining")
+        retry_after = details.get("retry_after_seconds")
+        if limit is not None:
+            headers["X-RateLimit-Limit"] = str(limit)
+        if remaining is not None:
+            headers["X-RateLimit-Remaining"] = str(remaining)
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
+
     return JSONResponse(
         status_code=status_code,
         content={
@@ -31,7 +46,7 @@ def _error_response(
                 "details": details or {},
             }
         },
-        headers={"X-HackMarket-Request-Id": request_id},
+        headers=headers,
     )
 
 
@@ -70,7 +85,14 @@ def setup_error_handlers(app: FastAPI) -> None:
             message = str(exc.detail)
             details = {}
 
-        return _error_response(exc.status_code, str(code).lower(), message, request_id, details)
+        return _error_response(
+            exc.status_code,
+            str(code).lower(),
+            message,
+            request_id,
+            details,
+            dict(exc.headers or {}),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(

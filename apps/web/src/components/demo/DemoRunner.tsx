@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FileInput from "./FileInput";
 import DynamicForm from "./DynamicForm";
@@ -15,10 +15,10 @@ import TableOutput from "./TableOutput";
 import TextOutput from "./TextOutput";
 import type { DemoFileValue, DemoImageValue, DemoInputSchema, DemoRunnerProps, DemoSchemaField, DemoResult } from "./types";
 import { API_BASE, getGatewayBaseUrl } from "@/lib/api";
+import { DEMO_API_KEY } from "@/lib/env";
 
 const GATEWAY_BASE = getGatewayBaseUrl();
 const DEMO_BASE = API_BASE;
-const DEMO_API_KEY = process.env.NEXT_PUBLIC_DEMO_API_KEY ?? "";
 const SESSION_LIMIT = 10;
 const STORAGE_KEY = "hackmarket-demo-calls";
 
@@ -31,7 +31,6 @@ export default function DemoRunner({
   inputType,
   inputSchema,
   outputType,
-  mockResponse,
   demoEndpoint: demoEndpointProp,
   autoRun,
 }: DemoRunnerProps) {
@@ -48,7 +47,10 @@ export default function DemoRunner({
   const [isRunning, setIsRunning] = useState(false);
   const [callsUsed, setCallsUsed] = useState(readSessionCount());
 
-  const dynamicFields = Array.isArray(schema.fields) ? schema.fields : [];
+  const dynamicFields = useMemo(
+    () => (Array.isArray(schema.fields) ? schema.fields : []),
+    [schema.fields],
+  );
   const sessionRemaining = Math.max(SESSION_LIMIT - callsUsed, 0);
   const sessionLimited = sessionRemaining <= 0;
   const supportsListingUrlAndImages = hasListingUrlAndImageInputs(dynamicFields);
@@ -80,25 +82,7 @@ export default function DemoRunner({
     return null;
   }, [dynamicFields, dynamicValue, fileValue, imageValue, inputType, jsonValue, textValue, urlValue]);
 
-  // Auto-run: pre-fill fields using QA-generated inputs if available, else smartDefault
-  useEffect(() => {
-    if (!autoRun || autoRanRef.current) return;
-    const fields = Array.isArray(schema.fields) ? schema.fields : [];
-    if (fields.length === 0) return;
-    const fills: Record<string, unknown> = {};
-    for (const field of fields) {
-      const val = schema.qa_inputs?.[field.name] ?? smartDefault(field);
-      if (val !== null) fills[field.name] = val;
-    }
-    if (Object.keys(fills).length === 0) return;
-    autoRanRef.current = true;
-    setDynamicValue(fills);
-    const t = setTimeout(() => void handleRun(fills), 700);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRun]);
-
-  async function handleRun(overrideDynamic?: Record<string, unknown>) {
+  const runDemo = useCallback(async (useDynamic: Record<string, unknown>) => {
     if (sessionLimited) {
       setError("You’ve used the 10 free demo calls for this session. Sign up to keep testing tools.");
       return;
@@ -110,7 +94,6 @@ export default function DemoRunner({
 
     const startedAt = performance.now();
     try {
-      const useDynamic = overrideDynamic ?? dynamicValue;
       const payload = buildPayload({
         inputType,
         textValue,
@@ -162,19 +145,42 @@ export default function DemoRunner({
         });
       }
     } catch (runError) {
-      if (mockResponse !== undefined) {
-        // Backend unavailable — show the example output as a simulated response
-        const responseTimeMs = Math.max(Math.round(performance.now() - startedAt), 1);
-        incrementSessionCount();
-        setCallsUsed(readSessionCount());
-        setResult({ data: mockResponse, status: 200, responseTimeMs, requestId: null });
-      } else {
-        setError(runError instanceof Error ? runError.message : "The demo request failed.");
-      }
+      setError(runError instanceof Error ? runError.message : "The demo request failed.");
     } finally {
       setIsRunning(false);
     }
-  }
+  }, [
+    demoEndpointProp,
+    dynamicFields,
+    fileValue,
+    imageValue,
+    inputType,
+    jsonValue,
+    sessionLimited,
+    textValue,
+    toolSlug,
+    urlValue,
+  ]);
+
+  const handleRun = useCallback(
+    (overrideDynamic?: Record<string, unknown>) => runDemo(overrideDynamic ?? dynamicValue),
+    [dynamicValue, runDemo],
+  );
+
+  // Auto-run: pre-fill fields using QA-generated inputs if available, else smartDefault.
+  useEffect(() => {
+    if (!autoRun || autoRanRef.current || dynamicFields.length === 0) return;
+    const fills: Record<string, unknown> = {};
+    for (const field of dynamicFields) {
+      const val = schema.qa_inputs?.[field.name] ?? smartDefault(field);
+      if (val !== null) fills[field.name] = val;
+    }
+    if (Object.keys(fills).length === 0) return;
+    autoRanRef.current = true;
+    setDynamicValue(fills);
+    const timer = setTimeout(() => void runDemo(fills), 700);
+    return () => clearTimeout(timer);
+  }, [autoRun, dynamicFields, runDemo, schema.qa_inputs]);
 
   return (
     <section className="rounded-[32px] border border-stone-800 bg-stone-950/80 p-6 shadow-2xl shadow-black/20">

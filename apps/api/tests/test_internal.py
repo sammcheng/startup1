@@ -3,10 +3,12 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_db, get_redis
 from app.main import app
+from app.routers import internal
 from app.routers.internal import _verify_converter_secret
 from tests.conftest import FakeAsyncSession, FakeRedis
 
@@ -27,6 +29,30 @@ VALID_PAYLOAD = {
     ],
     "setup_notes": "",
 }
+
+
+def test_converter_secret_dependency_rejects_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(internal.settings, "converter_secret", "")
+
+    with pytest.raises(HTTPException) as exc:
+        _verify_converter_secret("anything")
+
+    assert exc.value.status_code == 503
+
+
+def test_converter_secret_dependency_rejects_wrong_secret(monkeypatch):
+    monkeypatch.setattr(internal.settings, "converter_secret", "expected-secret")
+
+    with pytest.raises(HTTPException) as exc:
+        _verify_converter_secret("wrong-secret")
+
+    assert exc.value.status_code == 401
+
+
+def test_converter_secret_dependency_accepts_matching_secret(monkeypatch):
+    monkeypatch.setattr(internal.settings, "converter_secret", "expected-secret")
+
+    assert _verify_converter_secret("expected-secret") is None
 
 
 @pytest.fixture

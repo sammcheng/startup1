@@ -11,7 +11,7 @@ const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
-const { v4: uuidv4 } = require("uuid");
+const { randomUUID } = require("crypto");
 const { getRuntimeConfig, allowedMimeTypes } = require("./config");
 const { createLogger } = require("./logger");
 
@@ -300,7 +300,7 @@ function createApp() {
         cb(null, uploadDir);
       },
       filename: (req, file, cb) => {
-        const uniqueName = `${uuidv4()}-${file.originalname}`;
+        const uniqueName = `${randomUUID()}-${file.originalname}`;
         cb(null, uniqueName);
       },
     }),
@@ -324,7 +324,7 @@ function createApp() {
 
   app.use((req, res, next) => {
     const start = process.hrtime.bigint();
-    const requestId = req.header("X-HackMarket-Request-Id") || uuidv4();
+    const requestId = req.header("X-HackMarket-Request-Id") || randomUUID();
     req.requestId = requestId;
     res.setHeader("X-HackMarket-Request-Id", requestId);
     const originalWriteHead = res.writeHead.bind(res);

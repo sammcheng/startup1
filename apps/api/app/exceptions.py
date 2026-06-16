@@ -45,15 +45,18 @@ class InvalidAPIKeyError(AppError):
 
 
 class RateLimitExceededError(AppError):
-    def __init__(self, limit: int, remaining: int = 0) -> None:
+    def __init__(self, limit: int, remaining: int = 0, retry_after_seconds: int | None = None) -> None:
+        details: dict[str, Any] = {
+            "limit": limit,
+            "remaining": remaining,
+        }
+        if retry_after_seconds is not None:
+            details["retry_after_seconds"] = retry_after_seconds
         super().__init__(
             message="Rate limit exceeded.",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             error_code="rate_limit_exceeded",
-            details={
-                "limit": limit,
-                "remaining": remaining,
-            },
+            details=details,
         )
 
 

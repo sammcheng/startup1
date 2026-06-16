@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Props {
   endpoint: string;
@@ -14,15 +14,7 @@ export default function LiveBenchmark({ endpoint }: Props) {
   const [progress, setProgress] = useState(0);
   const hasRun = useRef(false);
 
-  useEffect(() => {
-    if (hasRun.current) return;
-    hasRun.current = true;
-    const t = setTimeout(() => void runBenchmark(), 1800);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function runBenchmark() {
+  const runBenchmark = useCallback(async () => {
     setState("running");
     const results: number[] = [];
     for (let i = 0; i < 3; i++) {
@@ -41,7 +33,14 @@ export default function LiveBenchmark({ endpoint }: Props) {
     }
     setTimes(results);
     setState("done");
-  }
+  }, [endpoint]);
+
+  useEffect(() => {
+    if (hasRun.current) return;
+    hasRun.current = true;
+    const timer = setTimeout(() => void runBenchmark(), 1800);
+    return () => clearTimeout(timer);
+  }, [runBenchmark]);
 
   const avg = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 0;
   const min = times.length ? Math.min(...times) : 0;

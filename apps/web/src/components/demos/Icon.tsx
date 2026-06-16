@@ -16,6 +16,7 @@ export type IconName =
   | "star"
   | "github"
   | "git-branch"
+  | "bolt"
   | "zap"
   | "users"
   | "inbox"
@@ -135,6 +136,7 @@ export default function Icon({
           <path d="M18 9a9 9 0 01-9 9" />
         </svg>
       );
+    case "bolt":
     case "zap":
       return (
         <svg {...props}>

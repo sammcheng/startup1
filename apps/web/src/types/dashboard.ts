@@ -16,9 +16,21 @@ export interface DashboardActivityItem {
   error_message: string | null;
 }
 
+export interface DashboardPurchasedTool {
+  tool_id: string;
+  tool_name: string;
+  slug: string;
+  category: string;
+  calls_this_month: number;
+  spend_this_month: string;
+  last_used_at: string | null;
+}
+
 export interface DashboardSummaryResponse {
   display_name: string;
   role: string;
   stats: DashboardStats;
+  active_api_keys: number;
+  purchased_tools: DashboardPurchasedTool[];
   recent_activity: DashboardActivityItem[];
 }

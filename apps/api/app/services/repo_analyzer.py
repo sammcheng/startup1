@@ -6,9 +6,10 @@ primary manifest + a 2-level file tree, sends them to OpenRouter (default
 model anthropic/claude-sonnet-4), and parses the strict-JSON spec into a
 dict that the submit router uses to create a draft Tool row.
 
-If OPENROUTER_API_KEY is unset OR the API call fails, falls back to a
-manifest-based heuristic. This mirrors kc's 3-axis graceful degradation:
-the demo never dead-ends.
+In development, the analyzer can fall back to a manifest-based heuristic when
+OpenRouter is unavailable. In production, the fallback is disabled unless
+ALLOW_REPO_ANALYSIS_FALLBACK=true is set, so real submissions do not silently
+ship guessed metadata.
 """
 
 from __future__ import annotations
@@ -78,6 +79,10 @@ _CATEGORY_TO_TOOL_CATEGORY = {
     "UI Components": "other",
     "Data Pipelines": "data_analysis",
 }
+
+
+class RepoAnalysisUnavailable(RuntimeError):
+    """Raised when live repo analysis cannot run and fallback is not allowed."""
 
 
 @dataclass
@@ -221,8 +226,18 @@ async def _call_openrouter(user_prompt: str) -> str:
     return text
 
 
-def _parse_and_validate(text: str, fallback: RepoAnalysis) -> RepoAnalysis:
+def _fallback_allowed() -> bool:
+    return settings.environment != "production" or settings.allow_repo_analysis_fallback
+
+
+def _parse_and_validate(text: str, fallback: RepoAnalysis, allow_fallback: bool) -> RepoAnalysis:
     """Parse the LLM's JSON, fall back to heuristic on any malformed field."""
+
+    def fallback_or_raise(reason: str) -> RepoAnalysis:
+        if allow_fallback:
+            return fallback
+        raise RepoAnalysisUnavailable(f"Repository analysis returned invalid output: {reason}.")
+
     stripped = text.strip()
     stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
     stripped = re.sub(r"```\s*$", "", stripped)
@@ -236,11 +251,11 @@ def _parse_and_validate(text: str, fallback: RepoAnalysis) -> RepoAnalysis:
             try:
                 parsed = json.loads(match.group(0))
             except json.JSONDecodeError:
-                return fallback
+                return fallback_or_raise("malformed JSON")
         else:
-            return fallback
+            return fallback_or_raise("missing JSON object")
     if not isinstance(parsed, dict):
-        return fallback
+        return fallback_or_raise("top-level value is not an object")
 
     category = parsed.get("category")
     if category not in _VALID_CATEGORIES:
@@ -368,7 +383,13 @@ async def analyze_repo(repo_path: Path, github_url: str) -> RepoAnalysis:
         github_url, readme[1] if readme else None, manifest
     )
 
+    allow_fallback = _fallback_allowed()
+
     if not settings.openrouter_api_key:
+        if not allow_fallback:
+            raise RepoAnalysisUnavailable(
+                "Repository analysis requires OPENROUTER_API_KEY in production."
+            )
         return fallback
 
     user_prompt = "\n".join(
@@ -389,9 +410,13 @@ async def analyze_repo(repo_path: Path, github_url: str) -> RepoAnalysis:
     try:
         text = await _call_openrouter(user_prompt)
     except Exception as exc:  # noqa: BLE001
+        if not allow_fallback:
+            raise RepoAnalysisUnavailable(
+                "Repository analysis is unavailable right now. Please try again later."
+            ) from exc
         logger.warning(
             "[repo_analyzer] OpenRouter call failed (%s); using heuristic fallback", exc
         )
         return fallback
 
-    return _parse_and_validate(text, fallback)
+    return _parse_and_validate(text, fallback, allow_fallback)

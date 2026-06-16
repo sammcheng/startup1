@@ -9,8 +9,9 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.dependencies import get_current_user, get_db, get_redis, require_seller
+from app.dependencies import get_current_user, get_db, get_optional_current_user, get_redis, require_seller
 from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
+from app.middleware.rate_limiter import check_rate_limit
 from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
 from app.schemas.docs import ToolDocumentation
@@ -64,6 +65,14 @@ def _demo_client_identifier(request: Request) -> str:
     return request.client.host if request.client else "anonymous"
 
 
+async def _check_public_rate_limit(redis: Redis, request: Request, action: str) -> None:
+    await check_rate_limit(
+        redis,
+        key=f"public:{action}:{_demo_client_identifier(request)}",
+        limit=settings.public_rate_limit_per_minute,
+    )
+
+
 async def _check_demo_rate_limit(redis: Redis, request: Request, slug: str) -> tuple[int, int]:
     limit = settings.demo_rate_limit_per_hour
     key = f"demo-ratelimit:{slug}:{_demo_client_identifier(request)}"
@@ -101,6 +110,27 @@ async def get_my_tools(
     ]
 
 
+@router.get(
+    "/me/{tool_id}",
+    response_model=ToolResponse,
+    summary="Get one current seller tool by id",
+)
+async def get_my_tool(
+    tool_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> ToolResponse:
+    """Return one authenticated user's owned tool, regardless of status."""
+    tool = await tool_service.get_tool_by_id(db, tool_id)
+    if not tool:
+        raise ToolNotFoundError(str(tool_id))
+    if tool.seller_id != current_user.id:
+        raise Forbidden("You do not own this tool.")
+    view_count = await tool_service.get_view_count(redis, tool.slug)
+    return ToolResponse.model_validate(tool).model_copy(update={"view_count": view_count})
+
+
 # ---------------------------------------------------------------------------
 # POST /tools
 # ---------------------------------------------------------------------------
@@ -135,13 +165,16 @@ async def create_tool(
 )
 async def discover_tools(
     body: ToolDiscoverRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ToolDiscoverResponse:
     """Tokenize the query, score live tools across name/tagline/description/
     category/schema, and return the top *limit* with a per-result fit line.
 
     Empty query → returns the most-requested live tools as discovery defaults.
     """
+    await _check_public_rate_limit(redis, request, "discover")
     ranked = await discovery_service.discover_tools(
         db,
         query=body.query,
@@ -177,14 +210,20 @@ async def discover_tools(
 )
 async def submit_repo(
     body: ToolSubmitRequest,
+    request: Request,
+    current_user: Annotated[User | None, Depends(get_optional_current_user)],
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ToolSubmitResponse:
-    """Clone the repo (shallow), run repo_analyzer (OpenRouter Claude Sonnet
-    with heuristic fallback), create a draft Tool owned by the system
-    submitter, and return the analyzed listing for review/edit on the frontend.
+    """Clone the repo (shallow), run repo_analyzer (OpenRouter Claude Sonnet,
+    with dev-only heuristic fallback unless explicitly enabled), create a draft
+    Tool owned by the system submitter, and return the analyzed listing for
+    review/edit on the frontend.
 
     Mirrors kc's POST /api/submit — one call returns a fully-populated draft.
     """
+    await _check_public_rate_limit(redis, request, "submit")
+
     # Lazy imports to keep the module load fast.
     import secrets
     import shutil
@@ -193,7 +232,7 @@ async def submit_repo(
     from app.routers.internal import _get_or_create_system_seller
 
     github_url = str(body.github_url)
-    seller = await _get_or_create_system_seller(db)
+    seller = current_user or await _get_or_create_system_seller(db)
 
     clone_root = Path(settings.submit_repo_clone_dir)
     clone_id = secrets.token_hex(6)
@@ -208,7 +247,14 @@ async def submit_repo(
                 status_code=status.HTTP_400_BAD_REQUEST,
             ) from exc
 
-        analysis = await repo_analyzer.analyze_repo(repo_path, github_url)
+        try:
+            analysis = await repo_analyzer.analyze_repo(repo_path, github_url)
+        except repo_analyzer.RepoAnalysisUnavailable as exc:
+            raise AppError(
+                message=str(exc),
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                error_code="repo_analysis_unavailable",
+            ) from exc
     finally:
         # Best-effort cleanup — keep the temp tree small.
         shutil.rmtree(repo_path, ignore_errors=True)
@@ -266,9 +312,17 @@ async def submit_repo(
             pricing_model=analysis.pricing_model,
         ),
         message=(
-            "Analyzed and saved as draft. Review the details and submit for listing."
-            if settings.openrouter_api_key
-            else "Saved as draft using heuristic analysis (OPENROUTER_API_KEY unset)."
+            (
+                "Analyzed and saved as draft. Review the details and submit for listing."
+                if settings.openrouter_api_key
+                else "Saved as draft using heuristic analysis (OPENROUTER_API_KEY unset)."
+            )
+            if current_user
+            else (
+                "Analyzed preview draft. Sign in to save this under your account."
+                if settings.openrouter_api_key
+                else "Built an anonymous preview draft using heuristic analysis. Sign in to save it to your account."
+            )
         ),
     )
 

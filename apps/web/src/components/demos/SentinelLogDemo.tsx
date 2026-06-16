@@ -76,7 +76,7 @@ export default function SentinelLogDemo() {
   useEffect(() => () => {
     clearTimers();
     clearAlert();
-  }, []);
+  }, [clearAlert]);
 
   function simulate() {
     clearTimers();
@@ -140,7 +140,7 @@ export default function SentinelLogDemo() {
                   Click below to simulate ~8 runtime errors firing in your app. Some will be duplicates.
                 </div>
                 <button className="btn btn-vermillion" onClick={simulate}>
-                  <Icon name={"bolt" as any} size={13} /> Simulate app errors
+                  <Icon name="bolt" size={13} /> Simulate app errors
                 </button>
               </div>
             )}
@@ -209,7 +209,7 @@ export default function SentinelLogDemo() {
 
                             <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
                               <button className="btn btn-ghost btn-sm" disabled={alertedIdx !== null} onClick={() => sendAlert(i)}>
-                                <Icon name={"bolt" as any} size={11} /> Generate alert
+                                <Icon name="bolt" size={11} /> Generate alert
                               </button>
                               {alertedIdx === i && (
                                 <div style={{ flex: 1 }}>

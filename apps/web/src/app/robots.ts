@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hackmarket.io";
+import { APP_URL } from "@/lib/env";
 
 export default function robots(): MetadataRoute.Robots {
   return {

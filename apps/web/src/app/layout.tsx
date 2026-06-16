@@ -1,9 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import AppProviders from "./AppProviders";
 import SiteNav from "@/components/ui/SiteNav";
+import { APP_URL } from "@/lib/env";
 import "./globals.css";
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://hackmarket.io";
 
 export const viewport: Viewport = {
   width: "device-width",

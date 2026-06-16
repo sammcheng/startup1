@@ -74,6 +74,9 @@ def test_rate_limit_enforced(client, auth_overrides, buyer, api_key, live_tool, 
 
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "rate_limit_exceeded"
+    assert response.headers["X-RateLimit-Limit"] == "100"
+    assert response.headers["X-RateLimit-Remaining"] == "0"
+    assert response.headers["Retry-After"] == "60"
 
 
 def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):

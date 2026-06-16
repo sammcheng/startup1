@@ -45,6 +45,13 @@ class ToolConfig:
     environment_variables: dict[str, str]
 
 
+@dataclass
+class ProcessUploadResult:
+    succeeded: bool
+    api_endpoint: str | None = None
+    error_message: str | None = None
+
+
 class ContainerBuilder:
     def __init__(self) -> None:
         self.port_manager = PortManager(_redis_client)
@@ -220,12 +227,12 @@ class ContainerBuilder:
             await self.port_manager.release(assigned_port)
             raise
 
-    async def process_upload(self, tool_id: UUID) -> None:
+    async def process_upload(self, tool_id: UUID, *, final_attempt: bool = True) -> ProcessUploadResult:
         async with AsyncSessionLocal() as db:
             tool = await tool_service.get_tool_by_id(db, tool_id)
             if not tool:
                 logger.warning("Skipping tool processing for missing tool %s", tool_id)
-                return
+                return ProcessUploadResult(succeeded=False, error_message="Tool was not found.")
 
             source_dir: Path | None = None
             deployed_port: int | None = None
@@ -269,14 +276,21 @@ class ContainerBuilder:
                     tool.docker_image_uri = image_uri
                     tool.source_file_tree = self._build_source_tree(source_dir)
                     await db.commit()
+                    return ProcessUploadResult(succeeded=True, api_endpoint=api_endpoint)
             except Exception as exc:
                 logger.exception("Tool %s processing failed", tool_id)
                 if deployed_port is not None:
                     await self._remove_existing_container(f"hm-{tool_id}")
                     await self.port_manager.release(deployed_port)
-                tool.status = ToolStatus.rejected
-                tool.processing_error = self._clean_exception_message(exc)
+                clean_message = self._clean_exception_message(exc)
+                tool.status = ToolStatus.rejected if final_attempt else ToolStatus.processing
+                tool.processing_error = (
+                    clean_message
+                    if final_attempt
+                    else f"Retrying after a transient processing failure: {clean_message}"
+                )
                 await db.commit()
+                return ProcessUploadResult(succeeded=False, error_message=clean_message)
 
     async def _prepare_source(self, tool: Tool, temp_dir: str) -> Path:
         worktree = Path(temp_dir) / "source"
@@ -574,6 +588,6 @@ class ContainerBuilder:
         raise ContainerBuildError(message)
 
 
-async def process_tool_upload(tool_id: UUID) -> None:
+async def process_tool_upload(tool_id: UUID, *, final_attempt: bool = True) -> ProcessUploadResult:
     builder = ContainerBuilder()
-    await builder.process_upload(tool_id)
+    return await builder.process_upload(tool_id, final_attempt=final_attempt)

@@ -4,21 +4,23 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "type-check": "tsc --noEmit",
+    "build": "node scripts/validate-env.mjs && next build --webpack",
+    "start": "node .next/standalone/server.js",
+    "lint": "eslint .",
+    "type-check": "next typegen && node scripts/clean-next-types.mjs && tsc --noEmit",
+    "validate:env": "node scripts/validate-env.mjs",
+    "test:env": "node --test scripts/validate-env.test.mjs",
+    "test:security": "node --test scripts/security-headers.test.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@clerk/nextjs": "^5",
-    "@hackmarket/shared": "file:../../packages/shared",
+    "@clerk/nextjs": "^6.39.5",
     "@stripe/react-stripe-js": "^3.7.0",
     "@stripe/stripe-js": "^5.4.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.460.0",
     "motion": "^12.38.0",
-    "next": "14.2.29",
+    "next": "^16.2.7",
     "react": "^18",
     "react-dom": "^18",
     "recharts": "^2.15.3"
@@ -29,7 +31,12 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
   }
 }

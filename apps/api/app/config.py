@@ -1,5 +1,12 @@
-from pydantic import BaseModel
+from pathlib import Path
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+APP_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 # ---------------------------------------------------------------------------
@@ -40,13 +47,20 @@ class ClerkSettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(
+            str(REPO_ROOT / ".env"),
+            str(APP_DIR / ".env"),
+        ),
+        extra="ignore",
+    )
 
     # App
     debug: bool = False
     environment: str = "development"
     cors_origins: list[str] = ["http://localhost:3000", "https://hackmarket.io", "https://www.hackmarket.io"]
     cors_origin_regex: str = r"^https://.*\.vercel\.app$"
+    allow_vercel_preview_origins: bool = False
     app_base_url: str = "http://localhost:3000"
     public_api_base_url: str = ""
     tool_request_timeout_seconds: int = 30
@@ -55,6 +69,7 @@ class Settings(BaseSettings):
     # Rate limiting
     gateway_rate_limit_per_minute: int = 100
     demo_rate_limit_per_hour: int = 10
+    public_rate_limit_per_minute: int = 60
 
     # Database
     database_url: str
@@ -64,6 +79,16 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
     redis_max_connections: int = 20
+
+    # Background workers
+    worker_queue_name: str = "hackmarket:jobs"
+    worker_job_max_attempts: int = 3
+    worker_job_timeout_seconds: int = 900
+    worker_job_keep_result_seconds: int = 86_400
+    worker_concurrency: int = 4
+    worker_health_check_interval_seconds: int = 60
+    worker_health_check_key: str = "hackmarket:jobs:health"
+    run_billing_scheduler_in_api: bool = False
 
     # Converter service integration
     converter_secret: str = ""
@@ -91,6 +116,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "anthropic/claude-sonnet-4"
     openrouter_app_url: str = "https://hackmarket.io"
     openrouter_app_name: str = "Hackmarket"
+    allow_repo_analysis_fallback: bool = False
 
     # Single-call submit: where to clone GitHub repos for analysis
     submit_repo_clone_dir: str = "/tmp/hackmarket-submit-repos"
@@ -98,15 +124,11 @@ class Settings(BaseSettings):
     # Storage
     local_storage_path: str = "/tmp/hackmarket-storage"
 
-    # Marketplace bootstrap
-    enable_bootstrap_tool_seed: bool = False
-    bootstrap_tool_api_endpoint: str = ""
-
     # Render-backed tool deployments
     render_api_key: str = ""
     render_owner_id: str = ""
     render_tool_region: str = "oregon"
-    render_tool_plan: str = "free"
+    render_tool_plan: str = "starter"
     render_tool_auto_deploy: bool = False
     render_tool_healthcheck_path: str = "/health"
     render_tool_deploy_timeout_seconds: int = 900
@@ -119,6 +141,86 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------------------------
     # Grouped access
     # ---------------------------------------------------------------------------
+
+    @field_validator("database_url")
+    @classmethod
+    def use_async_postgres_driver(cls, value: str) -> str:
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+asyncpg://", 1)
+        return value
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.environment != "production":
+            return self
+
+        missing = [
+            key
+            for key, value in {
+                "APP_BASE_URL": self.app_base_url,
+                "PUBLIC_API_BASE_URL": self.public_api_base_url,
+                "DATABASE_URL": self.database_url,
+                "REDIS_URL": self.redis_url,
+                "CONVERTER_SECRET": self.converter_secret,
+                "CLERK_SECRET_KEY": self.clerk_secret_key,
+                "CLERK_WEBHOOK_SECRET": self.clerk_webhook_secret,
+                "STRIPE_SECRET_KEY": self.stripe_secret_key,
+                "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret,
+                "AWS_ACCESS_KEY_ID": self.aws_access_key_id,
+                "AWS_SECRET_ACCESS_KEY": self.aws_secret_access_key,
+                "S3_BUCKET_NAME": self.s3_bucket_name,
+                "OPENROUTER_API_KEY": self.openrouter_api_key
+                if not self.allow_repo_analysis_fallback
+                else "fallback-enabled",
+            }.items()
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Missing required production settings: {', '.join(missing)}")
+
+        if self.debug:
+            raise ValueError("DEBUG must be false in production.")
+
+        if self.run_billing_scheduler_in_api:
+            raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")
+
+        insecure_urls = [
+            key
+            for key, value in {
+                "APP_BASE_URL": self.app_base_url,
+                "PUBLIC_API_BASE_URL": self.public_api_base_url,
+            }.items()
+            if not value.startswith("https://")
+        ]
+        if insecure_urls:
+            raise ValueError(f"Production public URLs must use https: {', '.join(insecure_urls)}")
+
+        local_service_urls = [
+            key
+            for key, value in {
+                "DATABASE_URL": self.database_url,
+                "REDIS_URL": self.redis_url,
+            }.items()
+            if _is_local_url(value)
+        ]
+        if local_service_urls:
+            raise ValueError(
+                "Production service URLs cannot point to localhost: "
+                + ", ".join(local_service_urls)
+            )
+
+        if (
+            self.cors_origin_regex
+            and "vercel" in self.cors_origin_regex.lower()
+            and not self.allow_vercel_preview_origins
+        ):
+            raise ValueError(
+                "Production CORS must use explicit origins unless ALLOW_VERCEL_PREVIEW_ORIGINS is enabled."
+            )
+
+        return self
 
     @property
     def database(self) -> DatabaseSettings:
@@ -151,6 +253,14 @@ class Settings(BaseSettings):
             webhook_secret=self.clerk_webhook_secret,
             jwks_url=self.clerk_jwks_url,
         )
+
+
+def _is_local_url(value: str) -> bool:
+    try:
+        hostname = urlparse(value).hostname
+    except Exception:  # noqa: BLE001
+        return False
+    return hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 settings = Settings()

@@ -20,42 +20,84 @@ import {
   type ReactNode,
 } from "react";
 import {
-  approveSubmission,
   buildLiveTestPlan,
-  completeTesting,
-  getSubmission,
   liveTestDurationMs,
-  listSubmissions,
-  revokeSubmission,
   sanitizeName,
-  updateSubmission,
   type LiveTestStage,
   type SandboxLine,
   type SubmissionRecord,
-  type SubmissionStage,
 } from "@/lib/submissions";
 import { downloadReport, reportBlobUrl } from "@/lib/pdfReport";
+import { api, ApiError } from "@/lib/api";
+import { syncCurrentUser } from "@/lib/auth-sync";
+import { useCurrentAccount } from "@/hooks/useAuth";
+import { toolToSubmissionRecord } from "@/lib/submission-adapter";
+import type { Tool, ToolListResponse, ToolStatus } from "@/types/tool";
 
-const ADMIN_TOKEN = "admin";
+type AdminReviewStatus = Extract<ToolStatus, "draft" | "processing" | "live" | "paused" | "rejected">;
 
 // ─── Auth wrapper ─────────────────────────────────────────────────────────
 
 export default function ApproverClient() {
-  const [authed, setAuthed] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
+  const account = useCurrentAccount();
+  const [access, setAccess] = useState<
+    "checking" | "ready" | "signed_out" | "forbidden" | "not_configured" | "error"
+  >("checking");
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const param = url.searchParams.get("token");
-    const stored = window.sessionStorage.getItem("hackmarket.admin.token");
-    if (param === ADMIN_TOKEN || stored === ADMIN_TOKEN) {
-      window.sessionStorage.setItem("hackmarket.admin.token", ADMIN_TOKEN);
-      setAuthed(true);
+    if (!account.isLoaded) {
+      setAccess("checking");
+      return;
     }
-    setAuthChecked(true);
-  }, []);
 
-  if (!authChecked) {
+    if (!account.isAuthConfigured) {
+      setAdminToken(null);
+      setAccess("not_configured");
+      return;
+    }
+
+    if (!account.isSignedIn || !account.user) {
+      setAdminToken(null);
+      setAccess("signed_out");
+      return;
+    }
+
+    let active = true;
+    async function verifyAdmin() {
+      setAccess("checking");
+      setAccessError(null);
+      try {
+        const token = await account.getToken();
+        if (!token) {
+          throw new Error("Your session token is missing. Sign in again and retry.");
+        }
+        const synced = await syncCurrentUser(account.user!, token);
+        if (synced?.role !== "admin") {
+          if (!active) return;
+          setAdminToken(null);
+          setAccess("forbidden");
+          return;
+        }
+        if (!active) return;
+        setAdminToken(token);
+        setAccess("ready");
+      } catch (error) {
+        if (!active) return;
+        setAdminToken(null);
+        setAccessError(error instanceof Error ? error.message : "Could not verify admin access.");
+        setAccess("error");
+      }
+    }
+
+    void verifyAdmin();
+    return () => {
+      active = false;
+    };
+  }, [account]);
+
+  if (access === "checking") {
     return (
       <PageShell>
         <Centered text="Checking access…" />
@@ -63,23 +105,80 @@ export default function ApproverClient() {
     );
   }
 
-  if (!authed) {
-    return <AuthGate onAuth={() => setAuthed(true)} />;
+  if (access === "not_configured") {
+    return (
+      <AccessGate
+        title="Admin auth is not configured"
+        body="Clerk keys are required before the approver queue can run. Production builds now fail without those keys, so this page cannot fall back to a local admin token."
+      />
+    );
   }
 
-  return <Dashboard />;
+  if (access === "signed_out") {
+    return (
+      <AccessGate
+        title="Sign in as an admin"
+        body="The approver queue is only available to signed-in accounts with the admin role."
+        action={<Link href="/sign-in" style={primaryBtnStyle as React.CSSProperties}>Sign in</Link>}
+      />
+    );
+  }
+
+  if (access === "forbidden") {
+    return (
+      <AccessGate
+        title="Admin role required"
+        body="Your account is signed in, but it is not marked as an admin in Hackmarket. Ask an existing admin to update your account role before reviewing tools."
+      />
+    );
+  }
+
+  if (access === "error" || !adminToken) {
+    return (
+      <AccessGate
+        title="Could not verify admin access"
+        body={accessError ?? "The API could not confirm your account role. Try signing in again."}
+      />
+    );
+  }
+
+  return <Dashboard token={adminToken} />;
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────
 
-function Dashboard() {
-  const [tick, setTick] = useState(0);
-  const refresh = useCallback(() => setTick((t) => t + 1), []);
+function Dashboard({ token }: { token: string }) {
+  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
+  const [queueStatus, setQueueStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
 
-  const submissions = useMemo<SubmissionRecord[]>(() => {
-    void tick;
-    return listSubmissions();
-  }, [tick]);
+  const loadQueue = useCallback(async () => {
+    setQueueStatus("loading");
+    setQueueError(null);
+    try {
+      const response = await api.get<ToolListResponse>("/admin/tools?limit=100", { token });
+      setSubmissions(response.items.map((tool) => toolToSubmissionRecord(tool)));
+      setQueueStatus("ready");
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : "Could not load the live approver queue.";
+      setQueueError(message);
+      setQueueStatus("error");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadQueue();
+  }, [loadQueue]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const requestedFocus = url.searchParams.get("focus");
+    if (requestedFocus) setFocusId(requestedFocus);
+  }, []);
 
   const testing = submissions.filter((s) => s.stage === "testing");
   const reviewQueue = submissions.filter((s) => s.stage === "manual_review");
@@ -88,25 +187,47 @@ function Dashboard() {
   // Default focus: first review-ready, then testing, then live.
   const defaultFocusId =
     reviewQueue[0]?.id ?? testing[0]?.id ?? live[0]?.id ?? null;
-  const [focusId, setFocusId] = useState<string | null>(defaultFocusId);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const f = url.searchParams.get("focus");
-    if (f) setFocusId(f);
-  }, []);
+    if (!defaultFocusId) return;
+    if (!focusId || !submissions.some((submission) => submission.id === focusId)) {
+      setFocusId(defaultFocusId);
+    }
+  }, [defaultFocusId, focusId, submissions]);
 
-  // Tick when nothing focused (re-evaluate after a list change).
-  useEffect(() => {
-    if (!focusId && defaultFocusId) setFocusId(defaultFocusId);
-  }, [focusId, defaultFocusId]);
-
-  const focused = focusId ? getSubmission(focusId) : null;
+  const focused = focusId
+    ? submissions.find((submission) => submission.id === focusId) ?? null
+    : null;
 
   const [toast, setToast] = useState<string | null>(null);
   function flash(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
+  }
+
+  async function updateToolReviewStatus(
+    submission: SubmissionRecord,
+    status: AdminReviewStatus,
+    options: { processingError?: string | null; successMessage: string },
+  ) {
+    try {
+      const body: {
+        status: AdminReviewStatus;
+        processing_error?: string | null;
+      } = { status };
+      if ("processingError" in options) {
+        body.processing_error = options.processingError ?? null;
+      }
+      await api.patch<Tool>(`/admin/tools/${submission.id}/review`, body, { token });
+      flash(options.successMessage);
+      await loadQueue();
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : "Could not update this tool. Try again.";
+      flash(message);
+    }
   }
 
   return (
@@ -128,12 +249,12 @@ function Dashboard() {
                 submission={s}
                 focused={focused?.id === s.id}
                 onClick={() => setFocusId(s.id)}
-                onCompleted={() => {
-                  refresh();
-                  // Switch focus to it now that it's review-ready.
-                  setFocusId(s.id);
-                  flash(`${s.name} automated tests complete — ready for review.`);
-                }}
+                onCompleted={() =>
+                  void updateToolReviewStatus(s, "draft", {
+                    processingError: null,
+                    successMessage: `${s.name} automated tests complete — ready for review.`,
+                  })
+                }
               />
             ))}
           </QueueGroup>
@@ -175,14 +296,49 @@ function Dashboard() {
         <section className="appr-detail">
           {focused ? (
             focused.stage === "testing" ? (
-              <TestingPanel submission={focused} onCompleted={refresh} />
+              <TestingPanel
+                submission={focused}
+                onCompleted={() =>
+                  void updateToolReviewStatus(focused, "draft", {
+                    processingError: null,
+                    successMessage: `${focused.name} moved to manual review.`,
+                  })
+                }
+              />
             ) : focused.stage === "manual_review" ? (
-              <ReviewPanel submission={focused} onAction={refresh} flash={flash} />
+              <ReviewPanel
+                submission={focused}
+                onApprove={(submission) =>
+                  updateToolReviewStatus(submission, "live", {
+                    processingError: null,
+                    successMessage: `Approved ${submission.name} — now live on the marketplace.`,
+                  })
+                }
+                onReject={(submission, reason) =>
+                  updateToolReviewStatus(submission, "rejected", {
+                    processingError: reason,
+                    successMessage: `Rejected ${submission.name}.`,
+                  })
+                }
+              />
             ) : focused.stage === "listed" ? (
-              <LivePanel submission={focused} onAction={refresh} flash={flash} />
+              <LivePanel
+                submission={focused}
+                onRevoke={(submission, reason) =>
+                  updateToolReviewStatus(submission, "paused", {
+                    processingError: reason,
+                    successMessage: `Revoked ${submission.name}.`,
+                  })
+                }
+                flash={flash}
+              />
             ) : (
               <ArchivedPanel submission={focused} />
             )
+          ) : queueStatus === "loading" ? (
+            <Centered text="Loading live review queue…" />
+          ) : queueStatus === "error" ? (
+            <QueueError message={queueError ?? "Could not load the approver queue."} onRetry={loadQueue} />
           ) : (
             <Centered text="Select a submission from the queue." />
           )}
@@ -341,9 +497,10 @@ function TestingCard({
   focused,
   onClick,
   onCompleted,
-}: CardProps & { onCompleted: () => void }) {
+}: CardProps & { onCompleted: () => void | Promise<void> }) {
   // Tick a 1s timer while the card is mounted so the elapsed display updates.
   const [, setNow] = useState(0);
+  const completedRef = useRef(false);
   const startedAt = submission.testing_started_at
     ? new Date(submission.testing_started_at).getTime()
     : new Date(submission.submitted_at).getTime();
@@ -359,16 +516,20 @@ function TestingCard({
     const elapsed = Date.now() - startedAt;
     const remaining = total - elapsed;
     if (remaining <= 0) {
-      completeTesting(submission.id);
-      onCompleted();
+      if (!completedRef.current) {
+        completedRef.current = true;
+        void onCompleted();
+      }
       return;
     }
     const t = setTimeout(() => {
-      completeTesting(submission.id);
-      onCompleted();
+      if (!completedRef.current) {
+        completedRef.current = true;
+        void onCompleted();
+      }
     }, remaining);
     return () => clearTimeout(t);
-  }, [startedAt, total, submission.id, onCompleted]);
+  }, [startedAt, total, onCompleted]);
 
   const elapsed = Math.max(0, Date.now() - startedAt);
   const pct = Math.min(99, Math.round((elapsed / total) * 100));
@@ -669,7 +830,7 @@ function TestingPanel({
   onCompleted,
 }: {
   submission: SubmissionRecord;
-  onCompleted: () => void;
+  onCompleted: () => void | Promise<void>;
 }) {
   const plan: LiveTestStage[] = useMemo(
     () => buildLiveTestPlan(submission),
@@ -681,6 +842,7 @@ function TestingPanel({
     : Date.now();
 
   const [now, setNow] = useState(Date.now());
+  const completedRef = useRef(false);
   useEffect(() => {
     const i = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(i);
@@ -707,11 +869,11 @@ function TestingPanel({
 
   // Auto-complete when finished.
   useEffect(() => {
-    if (totalElapsed >= totalDuration) {
-      completeTesting(submission.id);
-      onCompleted();
+    if (totalElapsed >= totalDuration && !completedRef.current) {
+      completedRef.current = true;
+      void onCompleted();
     }
-  }, [totalElapsed, totalDuration, submission.id, onCompleted]);
+  }, [totalElapsed, totalDuration, onCompleted]);
 
   return (
     <DetailFrame
@@ -849,8 +1011,10 @@ function TestingPanel({
           <div style={{ flex: 1 }} />
           <button
             onClick={() => {
-              completeTesting(submission.id);
-              onCompleted();
+              if (!completedRef.current) {
+                completedRef.current = true;
+                void onCompleted();
+              }
             }}
             style={ghostBtnStyle}
           >
@@ -1054,36 +1218,40 @@ function Line({ line, ts }: { line: SandboxLine; ts: number }) {
 
 function ReviewPanel({
   submission,
-  onAction,
-  flash,
+  onApprove,
+  onReject,
 }: {
   submission: SubmissionRecord;
-  onAction: () => void;
-  flash: (msg: string) => void;
+  onApprove: (submission: SubmissionRecord) => Promise<void>;
+  onReject: (submission: SubmissionRecord, reason: string) => Promise<void>;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [confirming, setConfirming] = useState<null | "approve">(null);
+  const [pendingAction, setPendingAction] = useState<null | "approve" | "reject">(null);
   const m = submission.metrics;
   const color = scoreColor(m.confidence);
 
-  function doApprove() {
-    approveSubmission(submission.id);
-    setConfirming(null);
-    flash(`Approved ${submission.name} — now live on the marketplace.`);
-    onAction();
+  async function doApprove() {
+    setPendingAction("approve");
+    try {
+      await onApprove(submission);
+      setConfirming(null);
+    } finally {
+      setPendingAction(null);
+    }
   }
 
-  function doReject() {
+  async function doReject() {
     if (!rejectReason.trim()) return;
-    updateSubmission(submission.id, {
-      stage: "rejected",
-      rejection_reason: rejectReason.trim(),
-    });
-    setRejecting(false);
-    setRejectReason("");
-    flash(`Rejected ${submission.name}.`);
-    onAction();
+    setPendingAction("reject");
+    try {
+      await onReject(submission, rejectReason.trim());
+      setRejecting(false);
+      setRejectReason("");
+    } finally {
+      setPendingAction(null);
+    }
   }
 
   return (
@@ -1317,10 +1485,10 @@ function ReviewPanel({
                 </button>
                 <button
                   onClick={doReject}
-                  disabled={!rejectReason.trim()}
-                  style={{ ...dangerBtnStyle, opacity: rejectReason.trim() ? 1 : 0.5 }}
+                  disabled={!rejectReason.trim() || pendingAction === "reject"}
+                  style={{ ...dangerBtnStyle, opacity: rejectReason.trim() && pendingAction !== "reject" ? 1 : 0.5 }}
                 >
-                  Send rejection
+                  {pendingAction === "reject" ? "Sending…" : "Send rejection"}
                 </button>
               </div>
             </div>
@@ -1345,8 +1513,12 @@ function ReviewPanel({
                 <button onClick={() => setConfirming(null)} style={ghostBtnStyle}>
                   Cancel
                 </button>
-                <button onClick={doApprove} style={approveBtnStyle}>
-                  Yes, approve
+                <button
+                  onClick={() => void doApprove()}
+                  disabled={pendingAction === "approve"}
+                  style={{ ...approveBtnStyle, opacity: pendingAction === "approve" ? 0.6 : 1 }}
+                >
+                  {pendingAction === "approve" ? "Approving…" : "Yes, approve"}
                 </button>
               </div>
             </div>
@@ -1377,7 +1549,11 @@ function ReviewPanel({
           >
             ✗ Reject
           </button>
-          <button onClick={() => setConfirming("approve")} style={approveBtnStyle}>
+          <button
+            onClick={() => setConfirming("approve")}
+            disabled={pendingAction !== null}
+            style={{ ...approveBtnStyle, opacity: pendingAction ? 0.6 : 1 }}
+          >
             ✓ Approve
           </button>
         </>
@@ -1390,25 +1566,43 @@ function ReviewPanel({
 
 function LivePanel({
   submission,
-  onAction,
+  onRevoke,
   flash,
 }: {
   submission: SubmissionRecord;
-  onAction: () => void;
+  onRevoke: (submission: SubmissionRecord, reason: string) => Promise<void>;
   flash: (msg: string) => void;
 }) {
-  const live = submission.live!;
+  const live = submission.live;
   const [revoking, setRevoking] = useState(false);
   const [revokeReason, setRevokeReason] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [revokePending, setRevokePending] = useState(false);
 
-  function doRevoke() {
+  async function doRevoke() {
     if (!revokeReason.trim()) return;
-    revokeSubmission(submission.id, revokeReason.trim());
-    setRevoking(false);
-    setRevokeReason("");
-    flash(`Revoked ${submission.name}.`);
-    onAction();
+    setRevokePending(true);
+    try {
+      await onRevoke(submission, revokeReason.trim());
+      setRevoking(false);
+      setRevokeReason("");
+    } finally {
+      setRevokePending(false);
+    }
+  }
+
+  if (!live) {
+    return (
+      <DetailFrame
+        header={<DetailHeader submission={submission} />}
+        body={
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            This submission is marked live, but its live metrics are missing. Refresh the local
+            submission data or relist the tool before managing access.
+          </div>
+        }
+      />
+    );
   }
 
   return (
@@ -1623,10 +1817,10 @@ function LivePanel({
                 </button>
                 <button
                   onClick={doRevoke}
-                  disabled={!revokeReason.trim()}
-                  style={{ ...dangerBtnStyle, opacity: revokeReason.trim() ? 1 : 0.5 }}
+                  disabled={!revokeReason.trim() || revokePending}
+                  style={{ ...dangerBtnStyle, opacity: revokeReason.trim() && !revokePending ? 1 : 0.5 }}
                 >
-                  Confirm revoke
+                  {revokePending ? "Revoking…" : "Confirm revoke"}
                 </button>
               </div>
             </div>
@@ -1669,9 +1863,14 @@ function ComposeAlert({
   onSent: () => void;
   onCancel: () => void;
 }) {
-  const live = submission.live!;
-  const requests = live.reviews.filter((r) => r.is_feature_request);
+  const live = submission.live;
+  const requests = useMemo(
+    () => live?.reviews.filter((r) => r.is_feature_request) ?? [],
+    [live?.reviews],
+  );
   const defaultBody = useMemo(() => {
+    if (!live) return "";
+
     const lines: string[] = [];
     lines.push(`Hi,`);
     lines.push("");
@@ -1699,9 +1898,10 @@ function ComposeAlert({
     lines.push("Reach out if you'd like to talk through any of this.");
     lines.push("— Hackmarket Review Team");
     return lines.join("\n");
-  }, [submission.name, live, requests]);
+	  }, [submission.name, live, requests]);
 
   const [body, setBody] = useState(defaultBody);
+  if (!live) return null;
 
   return (
     <div
@@ -2066,11 +2266,17 @@ function Td({
   );
 }
 
-// ─── Auth gate ───────────────────────────────────────────────────────────
+// ─── Auth and queue states ───────────────────────────────────────────────
 
-function AuthGate({ onAuth }: { onAuth: () => void }) {
-  const [tokenInput, setTokenInput] = useState("");
-  const [authError, setAuthError] = useState("");
+function AccessGate({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: ReactNode;
+}) {
   return (
     <PageShell>
       <div
@@ -2092,70 +2298,41 @@ function AuthGate({ onAuth }: { onAuth: () => void }) {
             margin: "10px 0 6px",
           }}
         >
-          Reviewer login
+          {title}
         </h1>
         <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 18 }}>
-          Enter the admin token to access the approver queue. (Demo token:{" "}
-          <code>admin</code>)
+          {body}
         </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (tokenInput === ADMIN_TOKEN) {
-              window.sessionStorage.setItem(
-                "hackmarket.admin.token",
-                ADMIN_TOKEN,
-              );
-              onAuth();
-            } else {
-              setAuthError("Invalid token.");
-            }
-          }}
-        >
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={(e) => {
-              setTokenInput(e.target.value);
-              setAuthError("");
-            }}
-            placeholder="Token"
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: `1px solid ${authError ? "#dc2626" : "var(--border)"}`,
-              background: "var(--bg)",
-              color: "var(--text)",
-              fontSize: 14,
-              fontFamily: "var(--font-mono)",
-            }}
-          />
-          {authError && (
-            <div style={{ color: "#dc2626", fontSize: 12, marginTop: 6 }}>
-              {authError}
-            </div>
-          )}
-          <button
-            type="submit"
-            style={{
-              marginTop: 14,
-              width: "100%",
-              padding: "10px",
-              borderRadius: 8,
-              background: "var(--blue)",
-              color: "#fff",
-              fontWeight: 600,
-              fontSize: 14,
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            Sign in
-          </button>
-        </form>
+        {action ? <div style={{ display: "flex" }}>{action}</div> : null}
       </div>
     </PageShell>
+  );
+}
+
+function QueueError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      style={{
+        padding: 28,
+        color: "var(--muted)",
+      }}
+    >
+      <Eyebrow style={{ color: "#dc2626" }}>Queue unavailable</Eyebrow>
+      <h2
+        style={{
+          fontFamily: "var(--font-display)",
+          fontSize: 20,
+          color: "var(--text)",
+          margin: "8px 0 6px",
+        }}
+      >
+        Could not load the live review queue
+      </h2>
+      <p style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 14 }}>{message}</p>
+      <button onClick={onRetry} style={primaryBtnStyle}>
+        Retry
+      </button>
+    </div>
   );
 }
 

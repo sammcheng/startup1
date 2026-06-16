@@ -54,7 +54,13 @@ logger = logging.getLogger(__name__)
 
 async def _close_app_resources() -> None:
     from app.dependencies import _redis_client, engine
+    from app.services.queue_service import close_arq_pool
     from app.services.proxy_service import close_http_client
+
+    try:
+        await close_arq_pool()
+    except Exception:  # pragma: no cover - best-effort cleanup
+        logger.warning("Failed to close ARQ pool cleanly.", exc_info=True)
 
     try:
         await close_http_client()
@@ -78,7 +84,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("Starting Hackmarket API (env=%s)", settings.environment)
     scheduler_stop: asyncio.Event | None = None
     scheduler_task: asyncio.Task | None = None
-    if settings.environment != "test":
+    if settings.environment != "test" and settings.run_billing_scheduler_in_api:
         scheduler_stop = asyncio.Event()
         scheduler_task = asyncio.create_task(billing_service.run_scheduler_loop(scheduler_stop))
     yield
@@ -181,9 +187,10 @@ setup_error_handlers(app)
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-from app.routers import api_keys, auth, billing, dashboard, gateway, internal, seller, tools, upload, usage  # noqa: E402
+from app.routers import admin, api_keys, auth, billing, dashboard, gateway, internal, seller, tools, upload, usage  # noqa: E402
 
 app.include_router(auth.router, prefix="/v1")
+app.include_router(admin.router, prefix="/v1")
 app.include_router(tools.router, prefix="/v1")
 app.include_router(upload.router, prefix="/v1")
 app.include_router(api_keys.router, prefix="/v1")
@@ -207,6 +214,7 @@ async def health():
 async def ready():
     from fastapi.responses import JSONResponse
     from app.dependencies import AsyncSessionLocal, _redis_client
+    from app.services import queue_service
 
     checks: dict = {"database": "ok", "redis": "ok"}
     try:
@@ -219,7 +227,16 @@ async def ready():
     except Exception as exc:
         checks["redis"] = f"error: {type(exc).__name__}"
 
-    all_ok = all(v == "ok" for v in checks.values())
+    if settings.environment == "production" and checks["redis"] == "ok":
+        try:
+            depth = await queue_service.queue_depth(_redis_client)
+            worker_health = await _redis_client.get(settings.worker_health_check_key)
+            checks["queue"] = f"ok depth={depth}"
+            checks["worker"] = "ok" if worker_health else "missing_heartbeat"
+        except Exception as exc:
+            checks["queue"] = f"error: {type(exc).__name__}"
+
+    all_ok = checks.get("database") == "ok" and checks.get("redis") == "ok" and checks.get("queue", "ok").startswith("ok")
     payload = {
         "status": "ready" if all_ok else "degraded",
         "environment": settings.environment,

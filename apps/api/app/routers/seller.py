@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, require_seller
 from app.exceptions import Forbidden, ToolNotFoundError
 from app.models.user import User
-from app.schemas.seller import SellerAnalyticsResponse, SellerDashboardResponse
-from app.services import seller_service, tool_service
+from app.schemas.seller import SellerAnalyticsResponse, SellerDashboardResponse, SellerSubmissionStatusResponse
+from app.services import job_service, seller_service, tool_service
 
 router = APIRouter(prefix="/seller", tags=["seller"])
 
@@ -35,3 +35,19 @@ async def get_tool_analytics(
         raise Forbidden("You do not own this tool.")
 
     return await seller_service.get_tool_analytics(db, tool_id, period)
+
+
+@router.get("/submissions/{tool_id}/status", response_model=SellerSubmissionStatusResponse)
+async def get_submission_status(
+    tool_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_seller)],
+    db: AsyncSession = Depends(get_db),
+) -> SellerSubmissionStatusResponse:
+    tool = await tool_service.get_tool_by_id(db, tool_id)
+    if not tool:
+        raise ToolNotFoundError(str(tool_id))
+    if tool.seller_id != current_user.id:
+        raise Forbidden("You do not own this tool.")
+
+    job = await job_service.get_latest_tool_job(db, tool_id)
+    return SellerSubmissionStatusResponse(tool=tool, job=job)

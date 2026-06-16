@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: apps/web/package-lock.json
 
@@ -173,21 +173,3 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs:
-      - docker-build
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-    steps:
-      - name: Deploy to production host
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd ${{ secrets.DEPLOY_PATH }}
-            ./scripts/deploy.sh main

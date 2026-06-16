@@ -51,6 +51,14 @@ interface Subscription {
   nextInvoiceAmount: string;
 }
 
+function stableDemoId(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36).padStart(6, "0").slice(0, 6);
+}
+
 export default function PayPipeDemo() {
   const [phase, setPhase] = useState<string>("configure");
   const [plan, setPlan] = useState<Plan>({
@@ -91,7 +99,7 @@ export default function PayPipeDemo() {
       const periodEnd = new Date(now);
       periodEnd.setMonth(periodEnd.getMonth() + 1);
       setSubscription({
-        id: "sub_" + Math.random().toString(36).slice(2, 8),
+        id: `sub_${stableDemoId(`${CUSTOMER.id}:${plan.name}:${plan.price}:${plan.cycle}`)}`,
         status: "active",
         currentPeriodStart: now.toISOString(),
         currentPeriodEnd: periodEnd.toISOString(),

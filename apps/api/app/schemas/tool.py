@@ -62,6 +62,12 @@ class ToolUpdate(BaseModel):
     documentation: str | None = None
 
 
+class AdminToolReviewUpdate(BaseModel):
+    status: Literal["draft", "processing", "live", "paused", "rejected"]
+    processing_error: str | None = Field(default=None, max_length=5000)
+    is_featured: bool | None = None
+
+
 class EnvironmentVariable(BaseModel):
     key: str = Field(min_length=1, max_length=100)
     value: str = Field(min_length=1, max_length=5000)
@@ -96,6 +102,7 @@ class ToolConfigureRequest(BaseModel):
 
 class ToolUploadResponse(BaseModel):
     tool_id: uuid.UUID
+    job_id: uuid.UUID | None = None
     status: ToolStatus
     status_url: str
     source_file_tree: list[str] | None = None

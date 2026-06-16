@@ -23,7 +23,14 @@ def _use_s3() -> bool:
 
 def _local_path_for_key(key: str) -> Path:
     normalized = key.strip().lstrip("/")
-    return LOCAL_STORAGE_ROOT / normalized
+    if not normalized:
+        raise UploadFailedError("Storage key cannot be empty.")
+
+    root = LOCAL_STORAGE_ROOT.resolve()
+    path = (root / normalized).resolve()
+    if path == root or root not in path.parents:
+        raise UploadFailedError("Storage key cannot escape the storage root.")
+    return path
 
 
 async def _write_local_bytes(key: str, data: bytes) -> None:

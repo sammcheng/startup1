@@ -54,10 +54,15 @@ export default function ImageArrayInput({
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               {value.map((image) => (
-                <div key={image.filename} className="rounded-2xl border border-stone-800 bg-stone-950/80 p-3">
-                  <img src={image.previewUrl} alt={image.filename} className="h-32 w-full rounded-xl object-cover" />
-                  <p className="mt-2 truncate text-xs text-stone-300">{image.filename}</p>
-                </div>
+	                <div key={image.filename} className="rounded-2xl border border-stone-800 bg-stone-950/80 p-3">
+	                  <div
+	                    aria-label={image.filename}
+	                    className="h-32 w-full rounded-xl bg-cover bg-center"
+	                    role="img"
+	                    style={{ backgroundImage: `url(${image.previewUrl})` }}
+	                  />
+	                  <p className="mt-2 truncate text-xs text-stone-300">{image.filename}</p>
+	                </div>
               ))}
             </div>
             <p className="text-sm text-stone-400">{value.length} image{value.length === 1 ? "" : "s"} ready for analysis.</p>

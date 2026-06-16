@@ -1,43 +1,279 @@
 services:
   - type: web
-    name: hackmarket-web
+    name: start
     runtime: docker
-    plan: free
+    plan: starter
     region: oregon
-    rootDir: apps/web
+    rootDir: apps/api
     buildFilter:
       paths:
-        - apps/web/**
-    dockerfilePath: ./Dockerfile.prod
-    dockerContext: .
-    healthCheckPath: /
-    autoDeployTrigger: checksPass
-    envVars:
-      - key: NEXT_PUBLIC_CONVERTER_URL
-        fromService:
-          name: hackmarket-converter
-          type: web
-          property: host
-      - key: NEXT_PUBLIC_API_URL
-        value: ""
-
-  - type: web
-    name: hackmarket-converter
-    runtime: docker
-    plan: free
-    region: oregon
-    rootDir: apps/converter
-    buildFilter:
-      paths:
-        - apps/converter/**
+        - apps/api/**
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     autoDeployTrigger: checksPass
     envVars:
-      - key: GROQ_API_KEY
-        sync: false
-      - key: DB_PATH
-        value: /data/tools.db
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: APP_BASE_URL
+        value: https://hackmarket.io
+      - key: PUBLIC_API_BASE_URL
+        value: https://api.hackmarket.io
+      - key: CORS_ORIGINS
+        value: '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+      - key: CORS_ORIGIN_REGEX
+        value: ""
+      - key: ALLOW_VERCEL_PREVIEW_ORIGINS
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hackmarket-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: hackmarket-redis
+          type: keyvalue
+          property: connectionString
+      - key: WORKER_QUEUE_NAME
+        value: hackmarket:jobs
+      - key: WORKER_JOB_MAX_ATTEMPTS
+        value: "3"
+      - key: WORKER_JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: WORKER_JOB_KEEP_RESULT_SECONDS
+        value: "86400"
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      - key: WORKER_HEALTH_CHECK_INTERVAL_SECONDS
+        value: "60"
+      - key: WORKER_HEALTH_CHECK_KEY
+        value: hackmarket:jobs:health
+      - key: RUN_BILLING_SCHEDULER_IN_API
+        value: "false"
       - key: CONVERTER_SECRET
         sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: anthropic/claude-sonnet-4
+      - key: OPENROUTER_APP_URL
+        value: https://hackmarket.io
+      - key: OPENROUTER_APP_NAME
+        value: Hackmarket
+      - key: ALLOW_REPO_ANALYSIS_FALLBACK
+        value: "false"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_OWNER_ID
+        sync: false
+      - key: RENDER_TOOL_REGION
+        value: oregon
+      - key: RENDER_TOOL_PLAN
+        value: starter
+      - key: RENDER_TOOL_AUTO_DEPLOY
+        value: "false"
+      - key: RENDER_TOOL_HEALTHCHECK_PATH
+        value: /health
+      - key: RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS
+        value: "900"
+      - key: PUBLIC_RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: RENDER_REGISTRY_CREDENTIAL_ID
+        sync: false
+      - key: RENDER_REGISTRY_CREDENTIAL_NAME
+        value: hackmarket-ghcr
+      - key: IMAGE_REGISTRY_NAMESPACE
+        sync: false
+      - key: GHCR_USERNAME
+        sync: false
+      - key: GHCR_TOKEN
+        sync: false
+
+  - type: worker
+    name: start-worker
+    runtime: docker
+    plan: starter
+    region: oregon
+    rootDir: apps/api
+    buildFilter:
+      paths:
+        - apps/api/**
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: arq app.worker.WorkerSettings
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: APP_BASE_URL
+        value: https://hackmarket.io
+      - key: PUBLIC_API_BASE_URL
+        value: https://api.hackmarket.io
+      - key: CORS_ORIGINS
+        value: '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+      - key: CORS_ORIGIN_REGEX
+        value: ""
+      - key: ALLOW_VERCEL_PREVIEW_ORIGINS
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hackmarket-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: hackmarket-redis
+          type: keyvalue
+          property: connectionString
+      - key: WORKER_QUEUE_NAME
+        value: hackmarket:jobs
+      - key: WORKER_JOB_MAX_ATTEMPTS
+        value: "3"
+      - key: WORKER_JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: WORKER_JOB_KEEP_RESULT_SECONDS
+        value: "86400"
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      - key: WORKER_HEALTH_CHECK_INTERVAL_SECONDS
+        value: "60"
+      - key: WORKER_HEALTH_CHECK_KEY
+        value: hackmarket:jobs:health
+      - key: RUN_BILLING_SCHEDULER_IN_API
+        value: "false"
+      - key: CONVERTER_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: anthropic/claude-sonnet-4
+      - key: OPENROUTER_APP_URL
+        value: https://hackmarket.io
+      - key: OPENROUTER_APP_NAME
+        value: Hackmarket
+      - key: ALLOW_REPO_ANALYSIS_FALLBACK
+        value: "false"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_OWNER_ID
+        sync: false
+      - key: RENDER_TOOL_REGION
+        value: oregon
+      - key: RENDER_TOOL_PLAN
+        value: starter
+      - key: RENDER_TOOL_AUTO_DEPLOY
+        value: "false"
+      - key: RENDER_TOOL_HEALTHCHECK_PATH
+        value: /health
+      - key: RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS
+        value: "900"
+      - key: RENDER_REGISTRY_CREDENTIAL_ID
+        sync: false
+      - key: RENDER_REGISTRY_CREDENTIAL_NAME
+        value: hackmarket-ghcr
+      - key: IMAGE_REGISTRY_NAMESPACE
+        sync: false
+      - key: GHCR_USERNAME
+        sync: false
+      - key: GHCR_TOKEN
+        sync: false
+
+  - type: keyvalue
+    name: hackmarket-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: home-accessibility-checker
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: apps/seller-tools/home-accessibility-checker
+    buildFilter:
+      paths:
+        - apps/seller-tools/home-accessibility-checker/**
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PUBLIC_APP_URL
+        value: https://hackmarket.io
+      - key: LOG_LEVEL
+        value: info
+      - key: OPENROUTER_TIMEOUT_MS
+        value: "20000"
+      - key: ANALYSIS_TIMEOUT_MS
+        value: "45000"
+      - key: MAX_FILE_SIZE
+        value: "10485760"
+      - key: MAX_FILES
+        value: "5"
+      - key: MAX_INLINE_IMAGES
+        value: "5"
+      - key: LISTING_FETCH_TIMEOUT_MS
+        value: "10000"
+      - key: REMOTE_IMAGE_FETCH_TIMEOUT_MS
+        value: "10000"
+      - key: MAX_REMOTE_IMAGE_BYTES
+        value: "12582912"
+
+databases:
+  - name: hackmarket-db
+    databaseName: hackmarket
+    user: hackmarket
+    plan: basic-256mb
+    region: oregon
+    ipAllowList: []

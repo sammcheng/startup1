@@ -1,10 +1,11 @@
 "use client";
 
-// Builder Dashboard — derived from the local submissions store so the page
-// is always populated. recharts powers the interactive charts.
+// Builder Dashboard — uses live account/tool data for signed-in users and
+// keeps a local preview path only for unsigned-in submission drafts.
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { KeyRound, ShoppingBag, Store, UserRound } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -25,6 +26,13 @@ import {
   listSubmissions,
   type SubmissionRecord,
 } from "@/lib/submissions";
+import { api, ApiError } from "@/lib/api";
+import { syncCurrentUser } from "@/lib/auth-sync";
+import { useCurrentAccount } from "@/hooks/useAuth";
+import { toolToSubmissionRecord } from "@/lib/submission-adapter";
+import type { DashboardSummaryResponse } from "@/types/dashboard";
+import type { SellerDashboardResponse } from "@/types/seller";
+import type { Tool } from "@/types/tool";
 
 // Inline name sanitizer — avoids an extra import that webpack tree-shaking
 // or stale cached chunks have been confused by. Strips HTML tags + entities.
@@ -38,6 +46,7 @@ function sanitizeName(raw: string | null | undefined): string {
 }
 
 type RangeKey = "7d" | "30d" | "90d";
+type DashboardMode = "buyer" | "seller";
 const RANGE_DAYS: Record<RangeKey, number> = { "7d": 7, "30d": 30, "90d": 90 };
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -55,28 +64,27 @@ function num(n: number): string {
   return n.toLocaleString();
 }
 
-function pct(n: number, dp = 1): string {
-  return `${n.toFixed(dp)}%`;
-}
-
 function dayLabel(d: Date, range: RangeKey): string {
   if (range === "7d")
     return d.toLocaleDateString("en-US", { weekday: "short" });
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-// Deterministic-ish wave generator for synthetic time series.
-function seededWave(seed: number, length: number, base: number, amp: number): number[] {
-  const out: number[] = [];
-  let s = seed;
-  for (let i = 0; i < length; i++) {
-    s = (s * 9301 + 49297) % 233280;
-    const r = s / 233280;
-    const drift = (i / length) * 0.4; // slight upward trend
-    const noise = (r - 0.5) * 0.5;
-    out.push(Math.max(0, Math.round(base * (1 + drift) + amp * noise)));
-  }
-  return out;
+function flatSpark(value: number, length = 24): number[] {
+  return Array.from({ length }, () => Math.max(0, Math.round(value)));
+}
+
+function centsFromDecimal(value: string | number | null | undefined): number {
+  return Math.round(Number(value ?? 0) * 100);
+}
+
+function isoDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function percentDelta(current: number, previous: number): number | null {
+  if (previous === 0) return current > 0 ? 100 : null;
+  return ((current - previous) / previous) * 100;
 }
 
 const COLORS = [
@@ -165,33 +173,29 @@ function aggregate(submissions: SubmissionRecord[]): Aggregate {
   };
 }
 
-// ─── time series builders (synthetic, but keyed off real aggregates) ────
+// ─── time series builders ───────────────────────────────────────────────
 
 interface RevPoint {
   day: string;
   revenue: number;
-  calls: number;
 }
 
-function buildRevenueSeries(
-  agg: Aggregate,
-  range: RangeKey,
-): RevPoint[] {
+function buildRevenueSeries(range: RangeKey, sellerSummary: SellerDashboardResponse | null): RevPoint[] {
   const days = RANGE_DAYS[range];
-  // Scale daily revenue so the visible total matches the live "7d" number
-  // proportionally.
-  const baseDaily = (agg.totalEarnings7d / 7) || 4500;
-  const callDaily = (agg.totalCalls7d / 7) || 9500;
-  const revWave = seededWave(42 + days, days, baseDaily, baseDaily * 0.35);
-  const callWave = seededWave(99 + days, days, callDaily, callDaily * 0.35);
+  const revenueByDay = new Map(
+    (sellerSummary?.revenue_chart_data ?? []).map((point) => [
+      point.date,
+      centsFromDecimal(point.amount),
+    ]),
+  );
   const today = new Date();
   return Array.from({ length: days }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() - (days - 1 - i));
+    const key = isoDateKey(d);
     return {
       day: dayLabel(d, range),
-      revenue: revWave[i],
-      calls: callWave[i],
+      revenue: revenueByDay.get(key) ?? 0,
     };
   });
 }
@@ -202,7 +206,17 @@ interface MixSlice {
   slug: string;
 }
 
-function buildRevenueMix(agg: Aggregate): MixSlice[] {
+function buildRevenueMix(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): MixSlice[] {
+  if (sellerSummary) {
+    return sellerSummary.tools
+      .map((tool) => ({
+        name: sanitizeName(tool.tool_name),
+        slug: tool.slug,
+        value: centsFromDecimal(tool.revenue_this_month),
+      }))
+      .sort((a, b) => b.value - a.value);
+  }
+
   return agg.liveTools
     .map((t) => ({
       name: t.name,
@@ -220,9 +234,30 @@ interface LeaderRow {
   earnings_7d: number;
   uptime: number;
   health: string;
+  statusLabel: string;
+  statusColor: string;
 }
 
-function buildLeaderboard(agg: Aggregate): LeaderRow[] {
+function buildLeaderboard(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): LeaderRow[] {
+  if (sellerSummary) {
+    return sellerSummary.tools
+      .map((tool) => {
+        const status = sellerToolStatusLabel(tool.status, tool.latest_job_status);
+        return {
+          name: sanitizeName(tool.tool_name),
+          slug: tool.slug,
+          installs: 0,
+          calls_7d: tool.requests_this_month,
+          earnings_7d: centsFromDecimal(tool.revenue_this_month),
+          uptime: tool.status === "live" ? 100 : 0,
+          health: tool.status === "live" ? "healthy" : "degraded",
+          statusLabel: status.label,
+          statusColor: status.color,
+        };
+      })
+      .sort((a, b) => b.earnings_7d - a.earnings_7d);
+  }
+
   return agg.liveTools
     .map((t) => ({
       name: sanitizeName(t.name),
@@ -232,8 +267,25 @@ function buildLeaderboard(agg: Aggregate): LeaderRow[] {
       earnings_7d: t.live?.earnings_cents_7d ?? 0,
       uptime: t.live?.uptime_pct ?? 0,
       health: t.live?.health ?? "healthy",
+      statusLabel: t.stage,
+      statusColor: "#16a34a",
     }))
     .sort((a, b) => b.earnings_7d - a.earnings_7d);
+}
+
+function sellerToolStatusLabel(
+  toolStatus: string,
+  jobStatus: string | null,
+): { label: string; color: string } {
+  if (jobStatus === "queued") return { label: "queued", color: "var(--muted)" };
+  if (jobStatus === "running") return { label: "running", color: "var(--blue)" };
+  if (jobStatus === "retrying") return { label: "retrying", color: "#d97706" };
+  if (jobStatus === "failed") return { label: "failed", color: "#dc2626" };
+  if (toolStatus === "live") return { label: "live", color: "#16a34a" };
+  if (toolStatus === "processing") return { label: "processing", color: "var(--blue)" };
+  if (toolStatus === "rejected") return { label: "rejected", color: "#dc2626" };
+  if (toolStatus === "paused") return { label: "paused", color: "#d97706" };
+  return { label: "review", color: "#d97706" };
 }
 
 interface LatencyRow {
@@ -244,12 +296,14 @@ interface LatencyRow {
 }
 
 function buildLatency(agg: Aggregate): LatencyRow[] {
-  return agg.liveTools.map((t) => ({
-    name: t.name,
-    p50: t.metrics.p50_response_ms,
-    p95: t.metrics.p95_response_ms,
-    p99: t.metrics.p99_response_ms,
-  }));
+  return agg.liveTools
+    .map((t) => ({
+      name: t.name,
+      p50: t.metrics.p50_response_ms,
+      p95: t.metrics.p95_response_ms,
+      p99: t.metrics.p99_response_ms,
+    }))
+    .filter((row) => row.p50 > 0 || row.p95 > 0 || row.p99 > 0);
 }
 
 interface ActivityItem {
@@ -261,7 +315,9 @@ interface ActivityItem {
 function buildActivity(agg: Aggregate): ActivityItem[] {
   const items: ActivityItem[] = [];
   agg.liveTools.forEach((t) => {
-    const live = t.live!;
+    const live = t.live;
+    if (!live) return;
+
     items.push({
       kind: "earning",
       text: `${dollars(live.earnings_cents_7d)} earned from ${t.name} this week`,
@@ -318,61 +374,195 @@ interface Milestone {
   format: (n: number) => string;
 }
 
-function buildMilestones(agg: Aggregate): Milestone[] {
-  const mrrCents = agg.totalEarnings7d * 4; // rough monthly
+function buildMilestones(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): Milestone[] {
+  const monthlyRevenueCents = sellerSummary
+    ? centsFromDecimal(sellerSummary.total_revenue_this_month)
+    : agg.totalEarnings7d;
+  const activeTools = sellerSummary?.active_tools ?? agg.liveTools.length;
+  const monthlyRequests = sellerSummary?.total_requests_this_month ?? agg.totalCalls7d;
   return [
     {
-      label: "MRR — next tier",
-      current: mrrCents,
+      label: "Monthly revenue",
+      current: monthlyRevenueCents,
       target: 50_000_00, // $50k
       unit: "cents",
       format: (n) => dollars(n),
     },
     {
-      label: "Active installs",
-      current: agg.totalInstalls,
-      target: 1000,
-      unit: "installs",
+      label: "Live tools",
+      current: activeTools,
+      target: 10,
+      unit: "tools",
       format: (n) => num(n),
     },
     {
-      label: "API calls / week",
-      current: agg.totalCalls7d,
-      target: 100_000,
+      label: "API calls / month",
+      current: monthlyRequests,
+      target: 250_000,
       unit: "calls",
       format: (n) => num(n),
     },
   ];
 }
 
+interface BuyerSnapshot {
+  spendCents: number;
+  callsThisMonth: number;
+  savedTools: number;
+  apiKeys: number;
+  purchasedTools: {
+    name: string;
+    slug: string;
+    category: string;
+    calls: number;
+    spendCents: number;
+    lastUsed: string;
+  }[];
+  activity: {
+    tool: string;
+    status: number;
+    costCents: number;
+    latencyMs: number;
+    when: string;
+  }[];
+}
+
+function buildBuyerSnapshot(
+  summary: DashboardSummaryResponse | null,
+): BuyerSnapshot {
+  const callsThisMonth = summary?.stats.total_api_calls_this_month ?? 0;
+  const spendCents = summary ? centsFromDecimal(summary.stats.total_spend_this_month) : 0;
+
+  const purchasedTools = summary
+    ? summary.purchased_tools.map((tool) => ({
+        name: sanitizeName(tool.tool_name),
+        slug: tool.slug,
+        category: tool.category,
+        calls: tool.calls_this_month,
+        spendCents: centsFromDecimal(tool.spend_this_month),
+        lastUsed: tool.last_used_at ?? "",
+      }))
+    : [];
+
+  const activity = summary?.recent_activity.length
+    ? summary.recent_activity.map((item) => ({
+        tool: item.tool_name,
+        status: item.status_code,
+        costCents: centsFromDecimal(item.cost),
+        latencyMs: item.response_time_ms,
+        when: item.request_timestamp,
+      }))
+    : [];
+
+  return {
+    spendCents,
+    callsThisMonth,
+    savedTools: purchasedTools.length,
+    apiKeys: summary?.active_api_keys ?? 0,
+    purchasedTools,
+    activity,
+  };
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const account = useCurrentAccount();
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [range, setRange] = useState<RangeKey>("30d");
+  const [mode, setMode] = useState<DashboardMode>("buyer");
   const [mounted, setMounted] = useState(false);
+  const [accountSummary, setAccountSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [sellerSummary, setSellerSummary] = useState<SellerDashboardResponse | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState<"idle" | "loading" | "ready" | "guest" | "error">("idle");
 
   useEffect(() => {
-    setSubmissions(listSubmissions());
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!account.isLoaded) return;
+    if (!account.isSignedIn) {
+      setRemoteStatus("guest");
+      setAccountSummary(null);
+      setSellerSummary(null);
+      setSubmissions(listSubmissions());
+      return;
+    }
+
+    let active = true;
+    async function loadAccountDashboards() {
+      setRemoteStatus("loading");
+      try {
+        const token = await account.getToken();
+        if (account.user) {
+          await syncCurrentUser(account.user, token);
+        }
+        const [dashboard, seller] = await Promise.all([
+          api.get<DashboardSummaryResponse>("/dashboard/summary", { token }),
+          api.get<SellerDashboardResponse>("/seller/dashboard", { token }).catch((error) => {
+            if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+              return null;
+            }
+            throw error;
+          }),
+        ]);
+        const sellerTools = seller
+          ? await api.get<Tool[]>("/tools/me", { token }).catch((error) => {
+              if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+                return [];
+              }
+              throw error;
+            })
+          : [];
+        if (!active) return;
+        setAccountSummary(dashboard);
+        setSellerSummary(seller);
+        setSubmissions(sellerTools.map((tool) => toolToSubmissionRecord(tool)));
+        setRemoteStatus("ready");
+      } catch {
+        if (!active) return;
+        setAccountSummary(null);
+        setSellerSummary(null);
+        setSubmissions([]);
+        setRemoteStatus("error");
+      }
+    }
+
+    void loadAccountDashboards();
+    return () => {
+      active = false;
+    };
+  }, [account]);
+
   const agg = useMemo(() => aggregate(submissions), [submissions]);
-  const revSeries = useMemo(() => buildRevenueSeries(agg, range), [agg, range]);
-  const mix = useMemo(() => buildRevenueMix(agg), [agg]);
-  const leaderboard = useMemo(() => buildLeaderboard(agg), [agg]);
+  const revSeries = useMemo(() => buildRevenueSeries(range, sellerSummary), [range, sellerSummary]);
+  const mix = useMemo(() => buildRevenueMix(agg, sellerSummary), [agg, sellerSummary]);
+  const leaderboard = useMemo(() => buildLeaderboard(agg, sellerSummary), [agg, sellerSummary]);
   const latency = useMemo(() => buildLatency(agg), [agg]);
   const activity = useMemo(() => buildActivity(agg), [agg]);
-  const milestones = useMemo(() => buildMilestones(agg), [agg]);
+  const milestones = useMemo(() => buildMilestones(agg, sellerSummary), [agg, sellerSummary]);
 
-  // Deltas — period N vs previous period
-  const half = Math.floor(revSeries.length / 2);
-  const recent = revSeries.slice(half).reduce((s, p) => s + p.revenue, 0);
-  const prior = revSeries.slice(0, half).reduce((s, p) => s + p.revenue, 0) || 1;
-  const revDelta = ((recent - prior) / prior) * 100;
-  const callsRecent = revSeries.slice(half).reduce((s, p) => s + p.calls, 0);
-  const callsPrior = revSeries.slice(0, half).reduce((s, p) => s + p.calls, 0) || 1;
-  const callsDelta = ((callsRecent - callsPrior) / callsPrior) * 100;
+  const sellerRevenueCents = sellerSummary
+    ? centsFromDecimal(sellerSummary.total_revenue_this_month)
+    : agg.totalEarnings7d;
+  const sellerPreviousRevenueCents = sellerSummary
+    ? centsFromDecimal(sellerSummary.previous_month_revenue)
+    : 0;
+  const sellerRequests = sellerSummary?.total_requests_this_month ?? agg.totalCalls7d;
+  const sellerActiveTools = sellerSummary?.active_tools ?? agg.liveTools.length;
+  const sellerAvgLatency = sellerSummary?.avg_response_time_ms ?? agg.avgLatencyMs;
+  const revDelta = percentDelta(sellerRevenueCents, sellerPreviousRevenueCents);
+  const accountName =
+    accountSummary?.display_name ||
+    account.user?.fullName ||
+    account.user?.username ||
+    account.user?.emailAddresses[0]?.emailAddress ||
+    "Guest account";
+  const buyerSnapshot = useMemo(
+    () => buildBuyerSnapshot(accountSummary),
+    [accountSummary],
+  );
 
   if (!mounted) {
     return (
@@ -413,7 +603,7 @@ export default function DashboardPage() {
           }}
         >
           <div>
-            <Eyebrow style={{ color: "var(--blue)" }}>Builder dashboard</Eyebrow>
+            <Eyebrow style={{ color: "var(--blue)" }}>{mode === "buyer" ? "Buyer dashboard" : "Seller dashboard"}</Eyebrow>
             <h1
               style={{
                 fontFamily: "var(--font-display)",
@@ -424,22 +614,51 @@ export default function DashboardPage() {
                 letterSpacing: "-0.01em",
               }}
             >
-              {agg.liveTools.length === 0
-                ? "Submit a build to get started."
-                : `You're earning across ${agg.liveTools.length} live tool${agg.liveTools.length === 1 ? "" : "s"}.`}
+              {mode === "buyer"
+                ? `${accountName}'s tools, keys, and usage.`
+                : agg.liveTools.length === 0
+                  ? "Submit a build to get started."
+                  : `You're earning across ${agg.liveTools.length} live tool${agg.liveTools.length === 1 ? "" : "s"}.`}
             </h1>
             <p style={{ color: "var(--muted)", fontSize: 13 }}>
-              {num(agg.totalCalls7d)} API calls · {dollars(agg.totalEarnings7d)} earned · last 7 days
+              {mode === "seller"
+                ? sellerSummary
+                  ? `${num(sellerSummary.total_requests_this_month)} requests · ${dollars(centsFromDecimal(sellerSummary.total_revenue_this_month))} earned · this month`
+                  : "Connect your seller account to load live revenue and request metrics"
+                : remoteStatus === "ready"
+                  ? "Live account data connected"
+                  : remoteStatus === "loading"
+                    ? "Loading account data"
+                    : account.isSignedIn
+                      ? "Signed in account"
+                      : "Guest preview until sign-in is configured"}
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <RangeToggle range={range} onChange={setRange} />
-            <Link href="/submit" style={primaryBtn}>
-              + Submit a build
-            </Link>
+            <ModeSwitch mode={mode} onChange={setMode} />
+            {mode === "seller" ? (
+              <>
+                <RangeToggle range={range} onChange={setRange} />
+                <Link href="/submit" style={primaryBtn}>
+                  + Submit a build
+                </Link>
+              </>
+            ) : (
+              <Link href="/marketplace" style={primaryBtn}>
+                Browse marketplace
+              </Link>
+            )}
           </div>
         </header>
 
+        {mode === "buyer" ? (
+          <BuyerDashboard
+            accountName={accountName}
+            isSignedIn={account.isSignedIn}
+            snapshot={buyerSnapshot}
+          />
+        ) : (
+          <>
         {/* ── KPI strip — 4 cards with sparklines + deltas */}
         <section
           style={{
@@ -450,32 +669,32 @@ export default function DashboardPage() {
           }}
         >
           <KpiCard
-            label="Revenue · 7d"
-            value={dollars(agg.totalEarnings7d)}
+            label="Revenue · month"
+            value={dollars(sellerRevenueCents)}
             delta={revDelta}
             spark={revSeries.map((p) => p.revenue)}
             color="#16a34a"
           />
           <KpiCard
-            label="API calls · 7d"
-            value={num(agg.totalCalls7d)}
-            delta={callsDelta}
-            spark={revSeries.map((p) => p.calls)}
+            label="API calls · month"
+            value={num(sellerRequests)}
+            delta={null}
+            spark={flatSpark(sellerRequests / 24)}
             color="#2563eb"
           />
           <KpiCard
-            label="Active installs"
-            value={num(agg.totalInstalls)}
+            label="Live tools"
+            value={num(sellerActiveTools)}
             delta={null}
-            spark={seededWave(7, 24, agg.totalInstalls / 24, 0.6)}
+            spark={flatSpark(sellerActiveTools)}
             color="#6366f1"
           />
           <KpiCard
-            label="Avg uptime"
-            value={pct(agg.avgUptime)}
+            label="Avg latency"
+            value={`${Math.round(sellerAvgLatency)}ms`}
             delta={null}
-            spark={seededWave(11, 24, 99.5, 0.3).map((n) => Math.min(100, n))}
-            color={agg.avgUptime >= 99.9 ? "#16a34a" : "#d97706"}
+            spark={flatSpark(sellerAvgLatency)}
+            color={sellerAvgLatency <= 500 ? "#16a34a" : "#d97706"}
           />
         </section>
 
@@ -491,12 +710,11 @@ export default function DashboardPage() {
           {/* Revenue area chart */}
           <Card>
             <CardHead
-              title="Revenue & calls"
-              sub={`${revSeries.length}-day trend`}
+              title="Revenue trend"
+              sub={`${revSeries.length}-day backend series`}
               right={
                 <Legend>
                   <LegendDot color="#16a34a" label="Revenue ($)" />
-                  <LegendDot color="#2563eb" label="Calls" />
                 </Legend>
               }
             />
@@ -508,10 +726,6 @@ export default function DashboardPage() {
                       <stop offset="5%" stopColor="#16a34a" stopOpacity={0.32} />
                       <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="grCalls" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                    </linearGradient>
                   </defs>
                   <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
                   <XAxis
@@ -521,36 +735,18 @@ export default function DashboardPage() {
                     tickLine={false}
                   />
                   <YAxis
-                    yAxisId="left"
                     tick={{ fontSize: 10, fill: "var(--muted)", fontFamily: "var(--font-mono)" }}
                     axisLine={false}
                     tickLine={false}
                     tickFormatter={(v) => dollars(v as number)}
                   />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: 10, fill: "var(--muted)", fontFamily: "var(--font-mono)" }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => num(v as number)}
-                  />
                   <Tooltip content={<RevTooltip />} />
                   <Area
-                    yAxisId="left"
                     type="monotone"
                     dataKey="revenue"
                     stroke="#16a34a"
                     strokeWidth={2}
                     fill="url(#grRev)"
-                  />
-                  <Area
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="calls"
-                    stroke="#2563eb"
-                    strokeWidth={2}
-                    fill="url(#grCalls)"
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -561,7 +757,7 @@ export default function DashboardPage() {
           <Card>
             <CardHead
               title="Revenue mix"
-              sub={`Past 7 days · ${mix.length} tools`}
+              sub={`This month · ${mix.length} tools`}
             />
             {mix.length === 0 ? (
               <EmptyChart text="No live tools yet." />
@@ -680,8 +876,8 @@ export default function DashboardPage() {
           {/* Top tools leaderboard */}
           <Card>
             <CardHead
-              title="Top tools · last 7d"
-              sub="Sorted by earnings"
+              title="Top tools · this month"
+              sub="Sorted by backend revenue"
             />
             {leaderboard.length === 0 ? (
               <EmptyChart text="No tools listed yet." />
@@ -739,10 +935,18 @@ export default function DashboardPage() {
                         >
                           {row.name}
                         </span>
-                        <HealthDot health={row.health} uptime={row.uptime} />
-                        <Stat tiny label="installs" value={num(row.installs)} />
-                        <Stat tiny label="calls" value={num(row.calls_7d)} />
-                        <Stat tiny label="earnings" value={dollars(row.earnings_7d)} color="#16a34a" />
+                        {sellerSummary ? (
+                          <ToolStatusPill label={row.statusLabel} color={row.statusColor} />
+                        ) : (
+                          <HealthDot health={row.health} uptime={row.uptime} />
+                        )}
+                        {sellerSummary ? (
+                          <Stat tiny label="status" value={row.statusLabel} color={row.statusColor} />
+                        ) : (
+                          <Stat tiny label="installs" value={num(row.installs)} />
+                        )}
+                        <Stat tiny label={sellerSummary ? "requests" : "calls"} value={num(row.calls_7d)} />
+                        <Stat tiny label="revenue" value={dollars(row.earnings_7d)} color="#16a34a" />
                       </div>
                     </Link>
                   );
@@ -937,14 +1141,14 @@ export default function DashboardPage() {
             label="Testing"
             count={agg.testing}
             color="#6366f1"
-            href="/approver?token=admin"
+            href="/approver"
             hint={agg.testing === 0 ? "Inbox zero" : "Auto-completes within 18s"}
           />
           <PipelineCard
             label="Pending review"
             count={agg.inReview}
             color="#d97706"
-            href="/approver?token=admin"
+            href="/approver"
             hint={agg.inReview === 0 ? "Inbox zero" : "Waiting on approver"}
           />
           <PipelineCard
@@ -952,15 +1156,287 @@ export default function DashboardPage() {
             count={agg.liveTools.length}
             color="#16a34a"
             href="/marketplace"
-            hint={`${dollars(agg.totalEarnings7d)} earned this week`}
+            hint={`${dollars(sellerRevenueCents)} earned this month`}
           />
         </section>
+          </>
+        )}
       </div>
     </main>
   );
 }
 
 // ─── small components ──────────────────────────────────────────────────
+
+function ModeSwitch({
+  mode,
+  onChange,
+}: {
+  mode: DashboardMode;
+  onChange: (mode: DashboardMode) => void;
+}) {
+  const options: { mode: DashboardMode; label: string; icon: React.ReactNode }[] = [
+    { mode: "buyer", label: "Buyer", icon: <ShoppingBag size={15} /> },
+    { mode: "seller", label: "Seller", icon: <Store size={15} /> },
+  ];
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Dashboard mode"
+      style={{
+        display: "inline-flex",
+        padding: 3,
+        borderRadius: 9,
+        border: "1px solid var(--border)",
+        background: "var(--card)",
+      }}
+    >
+      {options.map((option) => {
+        const active = option.mode === mode;
+        return (
+          <button
+            key={option.mode}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(option.mode)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              border: 0,
+              borderRadius: 7,
+              padding: "7px 10px",
+              background: active ? "var(--blue)" : "transparent",
+              color: active ? "#fff" : "var(--muted)",
+              fontSize: 12.5,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {option.icon}
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function BuyerDashboard({
+  accountName,
+  isSignedIn,
+  snapshot,
+}: {
+  accountName: string;
+  isSignedIn: boolean;
+  snapshot: BuyerSnapshot;
+}) {
+  return (
+    <>
+      {!isSignedIn && (
+        <section
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            background: "var(--card)",
+            padding: 16,
+            marginBottom: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 9,
+                background: "var(--blue-dim)",
+                color: "var(--blue)",
+                display: "grid",
+                placeItems: "center",
+              }}
+            >
+              <UserRound size={18} />
+            </span>
+            <div>
+              <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 14 }}>
+                Sign in to make this dashboard yours.
+              </div>
+              <div style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 2 }}>
+                GitHub or email accounts get private usage, keys, purchases, and seller tools.
+              </div>
+            </div>
+          </div>
+          <Link href="/sign-up" style={primaryBtn}>
+            Create account
+          </Link>
+        </section>
+      )}
+
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <KpiCard
+          label="Spend · month"
+          value={dollars(snapshot.spendCents)}
+          delta={null}
+          spark={flatSpark(snapshot.spendCents / 24)}
+          color="#2563eb"
+        />
+        <KpiCard
+          label="API calls · month"
+          value={num(snapshot.callsThisMonth)}
+          delta={null}
+          spark={flatSpark(snapshot.callsThisMonth / 24)}
+          color="#16a34a"
+        />
+        <KpiCard
+          label="Saved tools"
+          value={num(snapshot.savedTools)}
+          delta={null}
+          spark={flatSpark(snapshot.savedTools)}
+          color="#d97706"
+        />
+        <KpiCard
+          label="API keys"
+          value={num(snapshot.apiKeys)}
+          delta={null}
+          spark={flatSpark(snapshot.apiKeys)}
+          color="#6366f1"
+        />
+      </section>
+
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.35fr 1fr",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <Card>
+          <CardHead
+            title="Your tools"
+            sub={`${accountName} · purchased or recently used`}
+            right={
+              <Link href="/marketplace" style={smallLinkStyle}>
+                Add tool
+              </Link>
+            }
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {snapshot.purchasedTools.length === 0 ? (
+              <EmptyChart text="No tools used yet." />
+            ) : (
+              snapshot.purchasedTools.map((tool) => (
+                <Link
+                  key={tool.slug}
+                  href={`/tools/${tool.slug}`}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto auto",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "11px 12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                    textDecoration: "none",
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {tool.name}
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 2 }}>
+                      {tool.category} · used {timeAgo(tool.lastUsed)}
+                    </div>
+                  </div>
+                  <Stat tiny label="calls" value={num(tool.calls)} />
+                  <Stat tiny label="spend" value={dollars(tool.spendCents)} color="#2563eb" />
+                </Link>
+              ))
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHead
+            title="Account access"
+            sub="Keys and request identity"
+            right={<KeyRound size={17} color="var(--blue)" />}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={accountRowStyle}>
+              <span style={{ color: "var(--muted)" }}>Primary account</span>
+              <span style={{ color: "var(--text)", fontWeight: 700 }}>{accountName}</span>
+            </div>
+            <div style={accountRowStyle}>
+              <span style={{ color: "var(--muted)" }}>API keys</span>
+              <span style={{ color: "var(--text)", fontWeight: 700 }}>{snapshot.apiKeys} active</span>
+            </div>
+            <div style={accountRowStyle}>
+              <span style={{ color: "var(--muted)" }}>Dashboard mode</span>
+              <span style={{ color: "var(--text)", fontWeight: 700 }}>Buyer</span>
+            </div>
+            <Link href="/docs" style={{ ...primaryBtn, justifyContent: "center", marginTop: 4 }}>
+              View API docs
+            </Link>
+          </div>
+        </Card>
+      </section>
+
+      <Card>
+        <CardHead title="Recent buyer activity" sub="Requests made from this account" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {snapshot.activity.length === 0 ? (
+            <EmptyChart text="No requests yet." />
+          ) : (
+            snapshot.activity.map((item, index) => (
+              <div
+                key={`${item.tool}-${item.when}-${index}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto auto auto",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: "var(--text)", fontWeight: 700, fontSize: 13 }}>
+                    {item.tool}
+                  </div>
+                  <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 2 }}>
+                    {timeAgo(item.when)}
+                  </div>
+                </div>
+                <Stat tiny label="status" value={String(item.status)} color={item.status >= 400 ? "#dc2626" : "#16a34a"} />
+                <Stat tiny label="latency" value={`${item.latencyMs}ms`} />
+                <Stat tiny label="cost" value={dollars(item.costCents)} color="#2563eb" />
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+    </>
+  );
+}
 
 function Eyebrow({
   children,
@@ -1296,6 +1772,31 @@ function HealthDot({ health, uptime }: { health: string; uptime: number }) {
   );
 }
 
+function ToolStatusPill({ label, color }: { label: string; color: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontFamily: "var(--font-mono)",
+        fontSize: 10.5,
+        color,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: color,
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
 function Stat({
   label,
   value,
@@ -1439,8 +1940,8 @@ function RevTooltip({ active, payload, label }: {
           }}
         >
           <span style={{ width: 8, height: 8, borderRadius: 999, background: p.color }} />
-          <span style={{ color: "var(--muted)" }}>{p.dataKey === "revenue" ? "Revenue" : "Calls"}:</span>
-          <strong>{p.dataKey === "revenue" ? dollars(p.value) : num(p.value)}</strong>
+          <span style={{ color: "var(--muted)" }}>Revenue:</span>
+          <strong>{dollars(p.value)}</strong>
         </div>
       ))}
     </TooltipShell>
@@ -1456,7 +1957,7 @@ function MixTooltip({ active, payload }: { active?: boolean; payload?: TooltipPa
         {String(p.payload.name)}
       </div>
       <div style={{ color: "var(--muted)", fontSize: 11, fontFamily: "var(--font-mono)", marginTop: 2 }}>
-        {dollars(p.value)} this week
+        {dollars(p.value)} this month
       </div>
     </TooltipShell>
   );
@@ -1509,6 +2010,8 @@ function TooltipShell({ children }: { children: React.ReactNode }) {
 }
 
 const primaryBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
   padding: "8px 14px",
   borderRadius: 8,
   background: "var(--blue)",
@@ -1517,4 +2020,20 @@ const primaryBtn: React.CSSProperties = {
   fontSize: 13,
   fontFamily: "var(--font-body)",
   textDecoration: "none",
+};
+
+const smallLinkStyle: React.CSSProperties = {
+  color: "var(--blue)",
+  fontSize: 12,
+  fontWeight: 700,
+  textDecoration: "none",
+};
+
+const accountRowStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  borderBottom: "1px solid var(--border)",
+  paddingBottom: 10,
+  fontSize: 13,
 };

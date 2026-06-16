@@ -1,16 +1,18 @@
 "use client";
 
-// Client-side submission store backed by localStorage.
-// Both the creator-facing status tracker (/submit/[id]/status) and the
-// approver dashboard (/approver) read from this store.
+// Client-side guest preview store backed by localStorage.
+// Signed-in submission and approver flows use the API; this store exists only
+// so unsigned-in preview status links can render during the current browser
+// session.
 //
 // Three lifecycle stages drive the approver UI:
 //   STAGE A — testing      (automated testing live; no score yet)
 //   STAGE B — manual_review (testing complete, awaiting human sign-off)
 //   STAGE C — listed       (approved, live on the marketplace + monitored)
 //
-// Pre-seeded with 2 in each stage so the approver dashboard is populated
-// out of the box.
+// This store only contains records created in the current browser by real
+// user actions or explicit preview flows. It should not auto-seed fake
+// submissions into the UI.
 
 const STORAGE_KEY = "hackmarket.submissions.v2";
 const LEGACY_STORAGE_KEYS = ["hackmarket.submissions.v1"];
@@ -108,547 +110,27 @@ export interface SubmissionRecord {
   live?: LiveMonitoring;
   /** When testing was kicked off, drives the auto-completion timer. */
   testing_started_at?: string;
-}
-
-// ─── Pre-seeded demo data ────────────────────────────────────────────────
-
-function nowMinus(minutes: number): string {
-  return new Date(Date.now() - minutes * 60_000).toISOString();
-}
-
-function nowPlus(minutes: number): string {
-  return new Date(Date.now() + minutes * 60_000).toISOString();
-}
-
-function buildEndpointResults(
-  category: string,
-  passing: number,
-  total: number,
-  baseLatency: number,
-): EndpointTestResult[] {
-  const scenario = ENDPOINT_SCENARIOS[category] ?? ENDPOINT_SCENARIOS.Auth;
-  return scenario.slice(0, total).map((s, i) => {
-    const ok = i < passing;
-    const latency = baseLatency + Math.round(Math.random() * 60 - 30);
-    return {
-      method: s.method,
-      path: s.path,
-      status: ok ? s.successStatus : 500,
-      latency_ms: Math.max(20, latency),
-      passed: ok,
-      expected_keys: s.expectedKeys,
-      actual_sample: ok ? s.successSample : { error: "internal_server_error" },
-      failure_reason: ok ? undefined : "Response missing required keys or 5xx returned",
-    };
-  });
-}
-
-interface EndpointScenarioRow {
-  method: string;
-  path: string;
-  successStatus: number;
-  expectedKeys: string[];
-  successSample: Record<string, unknown>;
-}
-
-const ENDPOINT_SCENARIOS: Record<string, EndpointScenarioRow[]> = {
-  Auth: [
-    {
-      method: "POST",
-      path: "/login",
-      successStatus: 200,
-      expectedKeys: ["token", "user", "refresh_token"],
-      successSample: {
-        token: "eyJhbGciOiJIUzI1NiJ9...",
-        user: { id: "u_42", email: "test@example.com" },
-        refresh_token: "rt_8sd92x...",
-      },
-    },
-    {
-      method: "POST",
-      path: "/register",
-      successStatus: 201,
-      expectedKeys: ["user", "token"],
-      successSample: { user: { id: "u_99", email: "new@user.com" }, token: "eyJ..." },
-    },
-    {
-      method: "GET",
-      path: "/me",
-      successStatus: 200,
-      expectedKeys: ["id", "email", "scopes"],
-      successSample: { id: "u_42", email: "test@example.com", scopes: ["read", "write"] },
-    },
-    {
-      method: "POST",
-      path: "/logout",
-      successStatus: 204,
-      expectedKeys: [],
-      successSample: {},
-    },
-  ],
-  Payments: [
-    {
-      method: "POST",
-      path: "/subscribe",
-      successStatus: 200,
-      expectedKeys: ["subscription_id", "status", "invoice_url"],
-      successSample: { subscription_id: "sub_8a2f", status: "active", invoice_url: "https://stripe.com/i/inv_x" },
-    },
-    {
-      method: "POST",
-      path: "/charge",
-      successStatus: 200,
-      expectedKeys: ["charge_id", "amount", "currency"],
-      successSample: { charge_id: "ch_9d2", amount: 4900, currency: "usd" },
-    },
-    {
-      method: "GET",
-      path: "/invoices",
-      successStatus: 200,
-      expectedKeys: ["invoices"],
-      successSample: { invoices: [{ id: "inv_x", amount_due: 4900, status: "paid" }] },
-    },
-  ],
-  Notifications: [
-    {
-      method: "POST",
-      path: "/send",
-      successStatus: 200,
-      expectedKeys: ["message_id", "channels"],
-      successSample: { message_id: "msg_a8x", channels: { email: "queued", push: "queued" } },
-    },
-    {
-      method: "GET",
-      path: "/status/:id",
-      successStatus: 200,
-      expectedKeys: ["status", "delivered_at"],
-      successSample: { status: "delivered", delivered_at: "2026-05-17T12:00:00Z" },
-    },
-  ],
-  Analytics: [
-    {
-      method: "POST",
-      path: "/events",
-      successStatus: 202,
-      expectedKeys: ["accepted"],
-      successSample: { accepted: 1 },
-    },
-    {
-      method: "GET",
-      path: "/rollup",
-      successStatus: 200,
-      expectedKeys: ["buckets"],
-      successSample: { buckets: [{ ts: "2026-05-17T00:00:00Z", count: 1241, p95_ms: 120 }] },
-    },
-    {
-      method: "POST",
-      path: "/query",
-      successStatus: 200,
-      expectedKeys: ["rows", "schema"],
-      successSample: { rows: [], schema: ["ts", "count"] },
-    },
-  ],
-  "AI/ML": [
-    {
-      method: "POST",
-      path: "/embed",
-      successStatus: 200,
-      expectedKeys: ["embeddings", "dimensions"],
-      successSample: { embeddings: [[0.13, -0.04]], dimensions: 1536 },
-    },
-    {
-      method: "POST",
-      path: "/search",
-      successStatus: 200,
-      expectedKeys: ["matches"],
-      successSample: { matches: [{ id: "doc_1", score: 0.92 }] },
-    },
-  ],
-  DevOps: [
-    {
-      method: "POST",
-      path: "/capture",
-      successStatus: 201,
-      expectedKeys: ["issue_id", "deduped"],
-      successSample: { issue_id: "iss_x", deduped: false },
-    },
-    {
-      method: "GET",
-      path: "/issues",
-      successStatus: 200,
-      expectedKeys: ["issues"],
-      successSample: { issues: [] },
-    },
-  ],
-  "UI Components": [
-    {
-      method: "POST",
-      path: "/submit",
-      successStatus: 200,
-      expectedKeys: ["valid", "errors"],
-      successSample: { valid: true, errors: {} },
-    },
-    {
-      method: "GET",
-      path: "/schema",
-      successStatus: 200,
-      expectedKeys: ["fields"],
-      successSample: { fields: [{ name: "email", type: "email" }] },
-    },
-  ],
-  "Data Pipelines": [
-    {
-      method: "POST",
-      path: "/ingest",
-      successStatus: 202,
-      expectedKeys: ["job_id", "queued"],
-      successSample: { job_id: "job_1", queued: 1024 },
-    },
-    {
-      method: "POST",
-      path: "/validate",
-      successStatus: 200,
-      expectedKeys: ["rows_ok", "rows_rejected"],
-      successSample: { rows_ok: 998, rows_rejected: 26 },
-    },
-    {
-      method: "GET",
-      path: "/report",
-      successStatus: 200,
-      expectedKeys: ["report"],
-      successSample: { report: { ok: 998, rejected: 26 } },
-    },
-  ],
-};
-
-// ─── Pre-seeded MOCKS — 2 testing, 2 review-ready, 2 listed ─────────────
-
-const MOCK_SUBMISSIONS: SubmissionRecord[] = [
-  // ─ Stage A: testing in progress ─────────────────────────────────────
-  {
-    id: "demo-test-1",
-    name: "PromptHive",
-    slug: "prompthive",
-    github_url: "https://github.com/hackmarket-demo/prompt-hive",
-    submitter_email: "marina@labs.dev",
-    language: "Python",
-    category: "AI/ML",
-    tech_stack: ["Python", "FastAPI", "OpenAI"],
-    description:
-      "Centralized prompt-library service with versioning, A/B testing, and rollback. Drop-in client SDKs for Python and Node.",
-    inputs: "Template name, variables, model preferences, optional A/B variant.",
-    outputs: "Rendered prompt, version metadata, evaluation hooks.",
-    pricing_model: "royalty",
-    price_cents: 30,
-    submitted_at: nowMinus(4),
-    stage: "testing",
-    testing_started_at: nowMinus(0.2),
-    metrics: zeroMetrics(),
-  },
-  {
-    id: "demo-test-2",
-    name: "EdgeCache",
-    slug: "edgecache",
-    github_url: "https://github.com/hackmarket-demo/edge-cache",
-    submitter_email: "soto@stratus.app",
-    language: "Go",
-    category: "DevOps",
-    tech_stack: ["Go", "Redis"],
-    description:
-      "Edge caching middleware with origin-shielded fan-out and stale-while-revalidate semantics.",
-    inputs: "Cache key, TTL, optional vary headers, origin URL.",
-    outputs: "Hit/miss status, cached payload, ETag.",
-    pricing_model: "buy",
-    price_cents: 850,
-    submitted_at: nowMinus(2),
-    stage: "testing",
-    testing_started_at: nowMinus(0.1),
-    metrics: zeroMetrics(),
-  },
-
-  // ─ Stage B: review-ready ────────────────────────────────────────────
-  {
-    id: "demo-review-1",
-    name: "AuthForge",
-    slug: "authforge",
-    github_url: "https://github.com/hackmarket-demo/auth-module",
-    submitter_email: "ada@hackmarket.io",
-    language: "Python",
-    category: "Auth",
-    tech_stack: ["Python", "FastAPI", "Pydantic"],
-    description:
-      "Drop-in OAuth2 + magic link authentication with session management and JWT issuance.",
-    inputs:
-      "User credentials (email/password or OAuth token), redirect URI, requested scopes.",
-    outputs: "JWT session token, user profile object, refresh token.",
-    pricing_model: "buy",
-    price_cents: 1200,
-    submitted_at: nowMinus(140),
-    stage: "manual_review",
-    metrics: {
-      confidence: 87,
-      endpoints_total: 3,
-      endpoints_passing: 3,
-      avg_response_ms: 89,
-      p50_response_ms: 78,
-      p95_response_ms: 142,
-      p99_response_ms: 198,
-      io_match_pct: 100,
-      security: { critical: 0, medium: 1, low: 2 },
-      docs_quality: "Good",
-      test_coverage_pct: 72,
-      deps_total: 18,
-      deps_outdated: 2,
-      deps_vulnerable: 1,
-      rate_limiting: false,
-      consistent_errors: true,
-      rest_conventions: true,
-      loc: 1842,
-      files: 24,
-      license: "MIT",
-      last_commit: nowMinus(60 * 6),
-    },
-    endpoint_results: buildEndpointResults("Auth", 3, 3, 89),
-  },
-  {
-    id: "demo-review-2",
-    name: "QuickStats",
-    slug: "quickstats",
-    github_url: "https://github.com/hackmarket-demo/quick-stats",
-    submitter_email: "dev@startup.co",
-    language: "Node.js",
-    category: "Analytics",
-    tech_stack: ["Node.js", "Express"],
-    description:
-      "Lightweight analytics aggregation service. Takes raw event streams and emits rollups.",
-    inputs: "Event stream (JSON), aggregation window, dimensions.",
-    outputs: "Rollup buckets with counts, sums, p50/p95.",
-    pricing_model: "royalty",
-    price_cents: 35,
-    submitted_at: nowMinus(28),
-    stage: "manual_review",
-    metrics: {
-      confidence: 45,
-      endpoints_total: 3,
-      endpoints_passing: 1,
-      avg_response_ms: 612,
-      p50_response_ms: 410,
-      p95_response_ms: 1240,
-      p99_response_ms: 2180,
-      io_match_pct: 52,
-      security: { critical: 2, medium: 5, low: 8 },
-      docs_quality: "Poor",
-      test_coverage_pct: 12,
-      deps_total: 47,
-      deps_outdated: 19,
-      deps_vulnerable: 6,
-      rate_limiting: false,
-      consistent_errors: false,
-      rest_conventions: false,
-      loc: 891,
-      files: 12,
-      license: null,
-      last_commit: nowMinus(60 * 48),
-    },
-    endpoint_results: buildEndpointResults("Analytics", 1, 3, 612),
-  },
-
-  // ─ Stage C: listed (with live monitoring) ───────────────────────────
-  {
-    id: "demo-live-1",
-    name: "VectorVault",
-    slug: "vectorvault",
-    github_url: "https://github.com/hackmarket-demo/vector-vault",
-    submitter_email: "rk@vault.dev",
-    language: "Python",
-    category: "AI/ML",
-    tech_stack: ["Python", "FAISS"],
-    description:
-      "Embeddings storage and similarity search with hybrid sparse-dense retrieval.",
-    inputs: "Text or vectors, collection name, top-k.",
-    outputs: "Ranked matches with cosine similarity scores.",
-    pricing_model: "royalty",
-    price_cents: 12,
-    submitted_at: nowMinus(60 * 24 * 5),
-    stage: "listed",
-    metrics: {
-      confidence: 91,
-      endpoints_total: 4,
-      endpoints_passing: 4,
-      avg_response_ms: 64,
-      p50_response_ms: 58,
-      p95_response_ms: 112,
-      p99_response_ms: 184,
-      io_match_pct: 100,
-      security: { critical: 0, medium: 0, low: 1 },
-      docs_quality: "Good",
-      test_coverage_pct: 84,
-      deps_total: 22,
-      deps_outdated: 1,
-      deps_vulnerable: 0,
-      rate_limiting: true,
-      consistent_errors: true,
-      rest_conventions: true,
-      loc: 2147,
-      files: 31,
-      license: "MIT",
-      last_commit: nowMinus(60 * 30),
-    },
-    endpoint_results: buildEndpointResults("AI/ML", 4, 4, 64),
-    live: {
-      uptime_pct: 99.94,
-      uptime_window_days: 30,
-      installs: 187,
-      api_calls_total: 482113,
-      api_calls_7d: 41208,
-      earnings_cents_7d: 4945,
-      health: "healthy",
-      listed_at: nowMinus(60 * 24 * 5),
-      feedback_summary:
-        "Users praise the latency and dual-index retrieval. Two recurring requests: streaming responses for large queries, and a managed metadata filter DSL.",
-      reviews: [
-        {
-          user: "Priya at Stitchroom",
-          rating: 5,
-          comment:
-            "Switched from Pinecone for our RAG layer. 60ms p95 is wild — kept the same recall@10.",
-          posted_at: nowMinus(60 * 16),
-        },
-        {
-          user: "Marco @ replyforge.io",
-          rating: 5,
-          comment:
-            "Would pay 3x what we currently do if you shipped a streaming search response.",
-          posted_at: nowMinus(60 * 41),
-          is_feature_request: true,
-        },
-        {
-          user: "Lin (ZenoteAI)",
-          rating: 4,
-          comment:
-            "Metadata filtering works but the syntax is awkward — pls support proper boolean ops.",
-          posted_at: nowMinus(60 * 73),
-          is_feature_request: true,
-        },
-        {
-          user: "Devon @ Helio",
-          rating: 5,
-          comment: "Drop-in for our search service. Zero downtime over the last month.",
-          posted_at: nowMinus(60 * 96),
-        },
-      ],
-    },
-  },
-  {
-    id: "demo-live-2",
-    name: "PayPipe",
-    slug: "paypipe",
-    github_url: "https://github.com/hackmarket-demo/pay-pipe",
-    submitter_email: "ana@paymints.co",
-    language: "Node.js",
-    category: "Payments",
-    tech_stack: ["Node.js", "Express", "Stripe"],
-    description:
-      "Stripe subscription wrapper with usage-based metering, trial automation, and webhook fanout.",
-    inputs: "Customer ID, plan, metered events, webhook destinations.",
-    outputs: "Subscription state, invoice URLs, usage rollups.",
-    pricing_model: "royalty",
-    price_cents: 45,
-    submitted_at: nowMinus(60 * 24 * 9),
-    stage: "listed",
-    metrics: {
-      confidence: 88,
-      endpoints_total: 3,
-      endpoints_passing: 3,
-      avg_response_ms: 162,
-      p50_response_ms: 138,
-      p95_response_ms: 312,
-      p99_response_ms: 480,
-      io_match_pct: 96,
-      security: { critical: 0, medium: 1, low: 1 },
-      docs_quality: "Good",
-      test_coverage_pct: 68,
-      deps_total: 26,
-      deps_outdated: 3,
-      deps_vulnerable: 0,
-      rate_limiting: true,
-      consistent_errors: true,
-      rest_conventions: true,
-      loc: 2740,
-      files: 38,
-      license: "MIT",
-      last_commit: nowMinus(60 * 84),
-    },
-    endpoint_results: buildEndpointResults("Payments", 3, 3, 162),
-    live: {
-      uptime_pct: 99.81,
-      uptime_window_days: 30,
-      installs: 124,
-      api_calls_total: 318422,
-      api_calls_7d: 28612,
-      earnings_cents_7d: 12876,
-      health: "healthy",
-      listed_at: nowMinus(60 * 24 * 9),
-      feedback_summary:
-        "Strong adoption from B2B SaaS teams. The most-requested upgrade is native support for proration-on-quantity-change.",
-      reviews: [
-        {
-          user: "Rohan @ Plaiform",
-          rating: 5,
-          comment: "Replaced 800 lines of glue code. Webhook fanout alone is worth the price.",
-          posted_at: nowMinus(60 * 12),
-        },
-        {
-          user: "Stitch (NestNote)",
-          rating: 4,
-          comment:
-            "Solid. Wish there was proration on quantity changes mid-cycle — would be perfect.",
-          posted_at: nowMinus(60 * 56),
-          is_feature_request: true,
-        },
-        {
-          user: "Ade @ bandeau.dev",
-          rating: 4,
-          comment: "Onboarding docs are great. The trial-end webhook is the one I wired first.",
-          posted_at: nowMinus(60 * 110),
-        },
-      ],
-    },
-  },
-];
-
-function zeroMetrics(): SubmissionMetrics {
-  return {
-    confidence: 0,
-    endpoints_total: 0,
-    endpoints_passing: 0,
-    avg_response_ms: 0,
-    p50_response_ms: 0,
-    p95_response_ms: 0,
-    p99_response_ms: 0,
-    io_match_pct: 0,
-    security: { critical: 0, medium: 0, low: 0 },
-    docs_quality: "Good",
-    test_coverage_pct: 0,
-    deps_total: 0,
-    deps_outdated: 0,
-    deps_vulnerable: 0,
-    rate_limiting: false,
-    consistent_errors: false,
-    rest_conventions: false,
-    loc: 0,
-    files: 0,
-    license: null,
-    last_commit: new Date().toISOString(),
+  processing_job?: {
+    id: string;
+    status: "queued" | "running" | "retrying" | "succeeded" | "failed";
+    attempts: number;
+    max_attempts: number;
+    trigger: string;
+    last_error: string | null;
+    enqueued_at: string | null;
+    started_at: string | null;
+    finished_at: string | null;
   };
 }
+
+const DEFAULT_SUBMISSIONS: SubmissionRecord[] = [];
 
 // ─── Storage helpers ─────────────────────────────────────────────────────
 
 function loadAll(): SubmissionRecord[] {
-  if (typeof window === "undefined") return MOCK_SUBMISSIONS;
+  if (typeof window === "undefined") return DEFAULT_SUBMISSIONS;
   try {
-    // Drop legacy v1 store so the new pre-seeded layout always wins.
+    // Drop legacy v1 store so only current-session preview data remains.
     for (const legacy of LEGACY_STORAGE_KEYS) {
       if (window.localStorage.getItem(legacy)) {
         window.localStorage.removeItem(legacy);
@@ -656,13 +138,13 @@ function loadAll(): SubmissionRecord[] {
     }
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(MOCK_SUBMISSIONS));
-      return MOCK_SUBMISSIONS;
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SUBMISSIONS));
+      return DEFAULT_SUBMISSIONS;
     }
     const parsed = JSON.parse(raw) as SubmissionRecord[];
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(MOCK_SUBMISSIONS));
-      return MOCK_SUBMISSIONS;
+    if (!Array.isArray(parsed)) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SUBMISSIONS));
+      return DEFAULT_SUBMISSIONS;
     }
 
     // Defensive scrubs on every load:
@@ -694,16 +176,7 @@ function loadAll(): SubmissionRecord[] {
     if (mutated) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
     return cleaned;
   } catch {
-    return MOCK_SUBMISSIONS;
-  }
-}
-
-function saveAll(records: SubmissionRecord[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  } catch {
-    // localStorage full or disabled — ignore
+    return DEFAULT_SUBMISSIONS;
   }
 }
 
@@ -718,40 +191,6 @@ export function getSubmission(id: string): SubmissionRecord | null {
   return loadAll().find((s) => s.id === id) ?? null;
 }
 
-export function upsertSubmission(record: SubmissionRecord): void {
-  const all = loadAll();
-  const idx = all.findIndex((s) => s.id === record.id);
-  if (idx >= 0) {
-    all[idx] = record;
-  } else {
-    all.unshift(record);
-  }
-  saveAll(all);
-}
-
-export function updateSubmission(
-  id: string,
-  patch: Partial<SubmissionRecord>,
-): SubmissionRecord | null {
-  const all = loadAll();
-  const idx = all.findIndex((s) => s.id === id);
-  if (idx < 0) return null;
-  all[idx] = { ...all[idx], ...patch };
-  saveAll(all);
-  return all[idx];
-}
-
-export function resetSubmissions(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(MOCK_SUBMISSIONS));
-}
-
-// ─── ID + metrics generators for live submits ──────────────────────────
-
-export function newSubmissionId(): string {
-  return `sub_${Math.random().toString(36).slice(2, 10)}`;
-}
-
 /** Strip HTML tags + collapse whitespace. Defends against tool names that
  *  came from a README's first line, which can contain `<p align="center">`,
  *  `<br>`, image tags, etc. Used both at ingest and as a defensive render-
@@ -763,98 +202,6 @@ export function sanitizeName(raw: string | null | undefined): string {
     .replace(/&[a-z0-9#]+;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-export function generateMetricsForCategory(category: string): SubmissionMetrics {
-  const r = (min: number, max: number) =>
-    Math.round(min + Math.random() * (max - min));
-  const p50 = r(50, 220);
-  const p95 = p50 + r(40, 160);
-  const p99 = p95 + r(40, 220);
-  return {
-    confidence: r(74, 92),
-    endpoints_total: r(2, 5),
-    endpoints_passing: 0, // caller fills
-    avg_response_ms: Math.round((p50 + p95) / 2),
-    p50_response_ms: p50,
-    p95_response_ms: p95,
-    p99_response_ms: p99,
-    io_match_pct: r(85, 100),
-    security: { critical: 0, medium: r(0, 2), low: r(0, 3) },
-    docs_quality: r(1, 100) > 30 ? "Good" : "Fair",
-    test_coverage_pct: r(35, 80),
-    deps_total: r(14, 35),
-    deps_outdated: r(0, 5),
-    deps_vulnerable: r(0, 2),
-    rate_limiting: Math.random() > 0.55,
-    consistent_errors: true,
-    rest_conventions: true,
-    loc: r(800, 4200),
-    files: r(12, 48),
-    license: ["MIT", "Apache-2.0", "BSD-3-Clause"][r(0, 2)],
-    last_commit: nowMinus(r(60, 60 * 72)),
-  };
-}
-
-/** Promote a fresh submission from `testing` → `manual_review` with metrics. */
-export function completeTesting(
-  id: string,
-): SubmissionRecord | null {
-  const all = loadAll();
-  const idx = all.findIndex((s) => s.id === id);
-  if (idx < 0) return null;
-  const record = all[idx];
-  if (record.stage !== "testing") return record;
-  const metrics = generateMetricsForCategory(record.category);
-  metrics.endpoints_passing = metrics.endpoints_total;
-  const endpoint_results = buildEndpointResults(
-    record.category,
-    metrics.endpoints_passing,
-    metrics.endpoints_total,
-    metrics.avg_response_ms,
-  );
-  all[idx] = {
-    ...record,
-    stage: "manual_review",
-    metrics,
-    endpoint_results,
-  };
-  saveAll(all);
-  return all[idx];
-}
-
-/** Approve → listed; auto-populates LiveMonitoring stub. */
-export function approveSubmission(id: string): SubmissionRecord | null {
-  const all = loadAll();
-  const idx = all.findIndex((s) => s.id === id);
-  if (idx < 0) return null;
-  const record = all[idx];
-  const live: LiveMonitoring = record.live ?? {
-    uptime_pct: 100,
-    uptime_window_days: 1,
-    installs: 0,
-    api_calls_total: 0,
-    api_calls_7d: 0,
-    earnings_cents_7d: 0,
-    health: "healthy",
-    listed_at: new Date().toISOString(),
-    reviews: [],
-  };
-  all[idx] = { ...record, stage: "listed", live };
-  saveAll(all);
-  return all[idx];
-}
-
-export function revokeSubmission(
-  id: string,
-  reason: string,
-): SubmissionRecord | null {
-  const all = loadAll();
-  const idx = all.findIndex((s) => s.id === id);
-  if (idx < 0) return null;
-  all[idx] = { ...all[idx], stage: "revoked", rejection_reason: reason };
-  saveAll(all);
-  return all[idx];
 }
 
 // ─── Sandbox scenarios (animated terminal lines per category) ────────────
@@ -957,9 +304,7 @@ export function buildSandboxScript(record: SubmissionRecord): SandboxLine[] {
   });
 
   scenario.endpoints.forEach((ep, i) => {
-    const latency =
-      ENDPOINT_LATENCIES[i % ENDPOINT_LATENCIES.length] +
-      Math.round(Math.random() * 20 - 10);
+    const latency = ENDPOINT_LATENCIES[i % ENDPOINT_LATENCIES.length];
     const ok = i < passing;
     lines.push({ text: `Testing ${ep}`, style: "neutral", delay: 600 });
     lines.push({
@@ -1156,46 +501,3 @@ export function buildLiveTestPlan(record: SubmissionRecord): LiveTestStage[] {
 export function liveTestDurationMs(record: SubmissionRecord): number {
   return buildLiveTestPlan(record).reduce((sum, s) => sum + s.ms, 0);
 }
-
-// ─── Static "kc-style" SubmissionRecord generator for fresh submits ──────
-
-export function newSubmissionFromAnalysis(args: {
-  github_url: string;
-  submitter_email: string;
-  name: string;
-  description: string;
-  category: string;
-  tech_stack: string[];
-  inputs: string;
-  outputs: string;
-  pricing_model: "buy" | "royalty";
-  price_cents: number;
-}): SubmissionRecord {
-  const id = newSubmissionId();
-  const cleanName = sanitizeName(args.name) || "Untitled submission";
-  const slug = cleanName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-  return {
-    id,
-    name: cleanName,
-    slug,
-    github_url: args.github_url,
-    submitter_email: args.submitter_email,
-    language: args.tech_stack[0] ?? "Unknown",
-    category: args.category,
-    tech_stack: args.tech_stack,
-    description: args.description,
-    inputs: args.inputs,
-    outputs: args.outputs,
-    pricing_model: args.pricing_model,
-    price_cents: args.price_cents,
-    submitted_at: new Date().toISOString(),
-    stage: "testing",
-    testing_started_at: new Date().toISOString(),
-    metrics: zeroMetrics(),
-  };
-}
-
-export { nowPlus };

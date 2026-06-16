@@ -4,8 +4,14 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Tool, ToolStatus, Transaction, TransactionStatus, UsageLog, User
-from app.schemas.dashboard import DashboardActivityItem, DashboardStatSummary, DashboardSummaryResponse
+from app.models import APIKey, Tool, ToolPurchase, ToolStatus, Transaction, TransactionStatus, UsageLog, User
+from app.models.tool_purchase import PurchaseStatus
+from app.schemas.dashboard import (
+    DashboardActivityItem,
+    DashboardPurchasedTool,
+    DashboardStatSummary,
+    DashboardSummaryResponse,
+)
 
 
 async def get_dashboard_summary(db: AsyncSession, user: User) -> DashboardSummaryResponse:
@@ -15,6 +21,8 @@ async def get_dashboard_summary(db: AsyncSession, user: User) -> DashboardSummar
     total_spend = await _sum_transaction_amount(db, Transaction.buyer_id == user.id, month_start, "amount")
     total_earned = await _sum_transaction_amount(db, Transaction.seller_id == user.id, month_start, "seller_payout")
     active_tools = await _count_active_tools(db, user.id)
+    active_api_keys = await _count_active_api_keys(db, user.id)
+    purchased_tools = await _purchased_tools(db, user.id, month_start)
     recent_activity = await _recent_activity(db, user.id)
 
     return DashboardSummaryResponse(
@@ -26,6 +34,8 @@ async def get_dashboard_summary(db: AsyncSession, user: User) -> DashboardSummar
             total_earned_this_month=total_earned,
             active_tools=active_tools,
         ),
+        active_api_keys=active_api_keys,
+        purchased_tools=purchased_tools,
         recent_activity=recent_activity,
     )
 
@@ -64,6 +74,62 @@ async def _count_active_tools(db: AsyncSession, seller_id) -> int:
         )
     )
     return int(result.scalar() or 0)
+
+
+async def _count_active_api_keys(db: AsyncSession, user_id) -> int:
+    result = await db.execute(
+        select(func.count(APIKey.id)).where(
+            APIKey.user_id == user_id,
+            APIKey.is_active.is_(True),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def _purchased_tools(db: AsyncSession, user_id, month_start: datetime) -> list[DashboardPurchasedTool]:
+    active_purchases = (
+        select(ToolPurchase.tool_id)
+        .where(
+            ToolPurchase.buyer_id == user_id,
+            ToolPurchase.status == PurchaseStatus.active,
+        )
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(
+            Tool.id,
+            Tool.name,
+            Tool.slug,
+            Tool.category,
+            func.count(UsageLog.id).label("calls_this_month"),
+            func.coalesce(func.sum(UsageLog.cost), 0).label("spend_this_month"),
+            func.max(UsageLog.request_timestamp).label("last_used_at"),
+        )
+        .join(active_purchases, active_purchases.c.tool_id == Tool.id)
+        .outerjoin(
+            UsageLog,
+            (UsageLog.tool_id == Tool.id)
+            & (UsageLog.user_id == user_id)
+            & (UsageLog.request_timestamp >= month_start),
+        )
+        .group_by(Tool.id, Tool.name, Tool.slug, Tool.category)
+        .order_by(func.max(UsageLog.request_timestamp).desc().nullslast(), Tool.name.asc())
+        .limit(20)
+    )
+
+    return [
+        DashboardPurchasedTool(
+            tool_id=row.id,
+            tool_name=row.name,
+            slug=row.slug,
+            category=row.category.value if hasattr(row.category, "value") else str(row.category),
+            calls_this_month=int(row.calls_this_month or 0),
+            spend_this_month=Decimal(row.spend_this_month or 0),
+            last_used_at=row.last_used_at,
+        )
+        for row in result.all()
+    ]
 
 
 async def _recent_activity(db: AsyncSession, user_id) -> list[DashboardActivityItem]:

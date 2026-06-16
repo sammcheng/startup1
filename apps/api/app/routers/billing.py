@@ -1,11 +1,20 @@
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
+from app.exceptions import AppError
 from app.models.user import User
-from app.schemas.billing import BillingInvoiceSummary, PaymentMethodSummary, SellerBalanceResponse, SellerOnboardingResponse, SetupPaymentResponse
+from app.schemas.billing import (
+    BillingInvoiceSummary,
+    PaymentMethodSummary,
+    SellerBalanceResponse,
+    SellerOnboardingResponse,
+    SetupPaymentResponse,
+    ToolPurchaseResponse,
+)
 from app.services import billing_service
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -51,6 +60,26 @@ async def get_invoices(
     return await billing_service.list_invoices(current_user)
 
 
+@router.post("/tools/{tool_id}/purchase", response_model=ToolPurchaseResponse, status_code=status.HTTP_201_CREATED)
+async def purchase_tool(
+    tool_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ToolPurchaseResponse:
+    purchase, checkout_url = await billing_service.purchase_tool(db, current_user, tool_id)
+    return ToolPurchaseResponse(
+        id=str(purchase.id),
+        tool_id=str(purchase.tool_id),
+        buyer_id=str(purchase.buyer_id),
+        seller_id=str(purchase.seller_id),
+        status=purchase.status.value,
+        purchase_price=purchase.purchase_price,
+        purchase_type=purchase.purchase_type.value,
+        created_at=purchase.created_at,
+        checkout_url=checkout_url,
+    )
+
+
 @router.post("/webhook", status_code=status.HTTP_204_NO_CONTENT)
 async def stripe_webhook(
     request: Request,
@@ -58,18 +87,20 @@ async def stripe_webhook(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     if not stripe_signature:
-        raise HTTPException(
+        raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "MISSING_SIGNATURE", "message": "Stripe signature is required."},
+            error_code="missing_signature",
+            message="Stripe signature is required.",
         )
 
     payload = await request.body()
     try:
         event = billing_service.verify_webhook(payload, stripe_signature)
     except Exception as exc:
-        raise HTTPException(
+        raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_SIGNATURE", "message": "Invalid Stripe webhook signature."},
+            error_code="invalid_signature",
+            message="Invalid Stripe webhook signature.",
         ) from exc
 
     await billing_service.handle_webhook_event(db, event)

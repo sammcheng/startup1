@@ -8,7 +8,7 @@
 // Styling lives in apps/web/src/app/globals.css under the `vv-*` and `dx-*`
 // prefixes (added in this phase).
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import Icon, { type IconName } from "./Icon";
 
@@ -167,14 +167,14 @@ function paceStep(ms: number): number {
 export function usePipelineRunner() {
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  const clear = () => {
+  const clear = useCallback(() => {
     timersRef.current.forEach(clearTimeout);
     timersRef.current = [];
-  };
+  }, []);
 
-  useEffect(() => () => clear(), []);
+  useEffect(() => () => clear(), [clear]);
 
-  const run = (
+  const run = useCallback((
     steps: PipelineStep[],
     onStepChange: (idx: number) => void,
     onComplete?: () => void,
@@ -191,7 +191,7 @@ export function usePipelineRunner() {
     timersRef.current.push(
       setTimeout(() => onComplete?.(), cumulative + END_PAUSE_MS),
     );
-  };
+  }, [clear]);
 
   return { run, clear };
 }

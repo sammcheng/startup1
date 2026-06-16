@@ -15,7 +15,7 @@ from app.config import settings
 from app.exceptions import Forbidden, InvalidAPIKeyError, Unauthorized
 from app.models import APIKey, User
 from app.models.user import UserRole
-from app.services.auth_service import AuthIdentity
+from app.services.auth_service import AuthIdentity, sync_user_from_identity
 from app.utils.hashing import hash_api_key
 
 logger = logging.getLogger(__name__)
@@ -203,8 +203,20 @@ async def get_current_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise Unauthorized("No active account found. Please complete registration.")
+        try:
+            user = await sync_user_from_identity(db, identity)
+        except ValueError as exc:
+            raise Unauthorized("No active account found. Please complete registration.") from exc
     return user
+
+
+async def get_optional_current_user(
+    authorization: Annotated[str | None, Header()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    if not authorization:
+        return None
+    return await get_current_user(authorization=authorization, db=db)
 
 
 async def get_current_identity(
@@ -220,6 +232,15 @@ async def require_seller(
     """Return the current user only if they have seller capability."""
     if current_user.role not in (UserRole.seller, UserRole.both, UserRole.admin):
         raise Forbidden("A seller account is required for this action.")
+    return current_user
+
+
+async def require_admin(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Return the current user only if they have admin capability."""
+    if current_user.role != UserRole.admin:
+        raise Forbidden("An admin account is required for this action.")
     return current_user
 
 

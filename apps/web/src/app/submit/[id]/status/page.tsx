@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useCurrentAccount } from "@/hooks/useAuth";
+import { api, ApiError } from "@/lib/api";
+import { toolToSubmissionRecord } from "@/lib/submission-adapter";
 import {
   buildSandboxScript,
   getSubmission,
@@ -9,6 +12,7 @@ import {
   type SubmissionRecord,
   type SubmissionStage,
 } from "@/lib/submissions";
+import type { SellerSubmissionStatusResponse } from "@/types/seller";
 
 interface StageDef {
   id: SubmissionStage;
@@ -65,17 +69,62 @@ function scoreColor(n: number): string {
 export default function SubmissionStatusPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = params;
+  const { id } = use(params);
+  const account = useCurrentAccount();
   const [submission, setSubmission] = useState<SubmissionRecord | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const found = getSubmission(id);
-    setSubmission(found);
-    setLoaded(true);
-  }, [id]);
+    let active = true;
+
+    async function loadSubmission() {
+      if (!account.isLoaded) return;
+      setLoadError(null);
+
+      if (account.isSignedIn) {
+        try {
+          const token = await account.getToken();
+          const status = await api.get<SellerSubmissionStatusResponse>(
+            `/seller/submissions/${id}/status`,
+            token ? { token } : undefined,
+          );
+          if (!active) return;
+          setSubmission(toolToSubmissionRecord(status.tool, status.job));
+          setLoaded(true);
+          return;
+        } catch (error) {
+          if (!active) return;
+          setSubmission(null);
+          setLoadError(
+            error instanceof ApiError
+              ? error.message
+              : "Could not load this owned submission from the API.",
+          );
+          setLoaded(true);
+          return;
+        }
+      }
+
+      const found = getSubmission(id);
+      if (!active) return;
+      setSubmission(found);
+      setLoaded(true);
+    }
+
+    void loadSubmission();
+    const timer = account.isSignedIn
+      ? setInterval(() => {
+          void loadSubmission();
+        }, 5000)
+      : null;
+    return () => {
+      active = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [account, id]);
 
   if (!loaded) {
     return (
@@ -129,37 +178,11 @@ export default function SubmissionStatusPage({
             We can't find submission <code>{id}</code>.
           </h1>
           <p style={{ color: "var(--muted)", marginTop: 12 }}>
-            It may have been pruned from local storage. Try one of the demo
-            submissions below.
+            {loadError ??
+              (account.isSignedIn
+                ? "We couldn't find a matching owned submission for this account."
+                : "This preview status may have been pruned from browser storage.")}
           </p>
-          <div
-            style={{
-              marginTop: 24,
-              display: "flex",
-              justifyContent: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <Link
-              href="/submit/demo-1/status"
-              style={demoChipStyle}
-            >
-              demo-1 (AuthForge)
-            </Link>
-            <Link
-              href="/submit/demo-2/status"
-              style={demoChipStyle}
-            >
-              demo-2 (DataPour)
-            </Link>
-            <Link
-              href="/submit/demo-3/status"
-              style={demoChipStyle}
-            >
-              demo-3 (QuickStats)
-            </Link>
-          </div>
           <p style={{ marginTop: 32 }}>
             <Link
               href="/submit"
@@ -175,17 +198,6 @@ export default function SubmissionStatusPage({
 
   return <StatusView submission={submission} />;
 }
-
-const demoChipStyle: React.CSSProperties = {
-  padding: "8px 14px",
-  borderRadius: 999,
-  border: "1px solid var(--border)",
-  background: "var(--card)",
-  fontFamily: "var(--font-mono)",
-  fontSize: 12.5,
-  color: "var(--text)",
-  textDecoration: "none",
-};
 
 // ─── Status view ─────────────────────────────────────────────────────────
 
@@ -291,6 +303,10 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
           })}
         </section>
 
+        {submission.processing_job && (
+          <ProcessingJobCard submission={submission} />
+        )}
+
         {/* Bottom row: confidence summary + next step CTAs */}
         <section
           style={{
@@ -304,6 +320,99 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
         </section>
       </div>
     </main>
+  );
+}
+
+function ProcessingJobCard({ submission }: { submission: SubmissionRecord }) {
+  const job = submission.processing_job;
+  if (!job) return null;
+
+  const labels = {
+    queued: "Queued",
+    running: "Running",
+    retrying: "Retrying",
+    succeeded: "Succeeded",
+    failed: "Failed",
+  };
+  const colors = {
+    queued: "var(--muted)",
+    running: "var(--blue)",
+    retrying: "#d97706",
+    succeeded: "#16a34a",
+    failed: "#dc2626",
+  };
+  const backgrounds = {
+    queued: "rgba(107,104,96,0.12)",
+    running: "rgba(37,99,235,0.12)",
+    retrying: "rgba(217,119,6,0.12)",
+    succeeded: "rgba(22,163,74,0.12)",
+    failed: "rgba(220,38,38,0.12)",
+  };
+  const timestamp = job.started_at ?? job.enqueued_at ?? submission.submitted_at;
+
+  return (
+    <section
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: 16,
+        padding: "18px 22px",
+        marginBottom: 28,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+      }}
+    >
+      <div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
+          Worker job
+        </div>
+        <div style={{ color: "var(--text)", fontWeight: 600, marginTop: 6 }}>
+          {labels[job.status]} · attempt {Math.max(job.attempts, job.status === "queued" ? 0 : 1)}
+          /{job.max_attempts}
+        </div>
+        <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
+          Triggered by {job.trigger.replace(/_/g, " ")} · {timeAgo(timestamp)}
+        </div>
+        {job.last_error && (
+          <div
+            style={{
+              marginTop: 10,
+              color: "#dc2626",
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            {job.last_error}
+          </div>
+        )}
+      </div>
+      <span
+        style={{
+          background: backgrounds[job.status],
+          color: colors[job.status],
+          border: "1px solid var(--border)",
+          borderRadius: 999,
+          padding: "6px 12px",
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+        }}
+      >
+        {labels[job.status]}
+      </span>
+    </section>
   );
 }
 

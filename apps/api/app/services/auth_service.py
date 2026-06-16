@@ -22,7 +22,9 @@ async def sync_user_from_identity(
     identity: AuthIdentity,
     profile: AuthSyncRequest | None = None,
 ) -> User:
-    email = (profile.email if profile else identity.email) or ""
+    # Email ownership comes from the verified Clerk token/webhook payload. The
+    # client sync body is only a fallback for Clerk JWT templates that omit it.
+    email = identity.email or (profile.email if profile else "") or ""
     if not email:
         raise ValueError("An email address is required to synchronize the user.")
 

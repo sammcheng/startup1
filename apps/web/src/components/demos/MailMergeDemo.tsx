@@ -99,6 +99,14 @@ function renderTemplate(text: string, vars: Record<string, string>): RenderPart[
   return parts;
 }
 
+function stableDemoId(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36).padStart(8, "0").slice(0, 8);
+}
+
 export default function MailMergeDemo() {
   const [phase, setPhase] = useState<string>("compose");
   const [templateId, setTemplateId] = useState<string>("invoice");
@@ -113,8 +121,12 @@ export default function MailMergeDemo() {
   const { run, clear } = usePipelineRunner();
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  useEffect(() => { setVars(tpl.vars); }, [templateId]);
-  useEffect(() => () => { timersRef.current.forEach(clearTimeout); clear(); }, []);
+  useEffect(() => { setVars(tpl.vars); }, [tpl.vars]);
+  useEffect(() => () => {
+    const timers = timersRef.current;
+    timers.forEach(clearTimeout);
+    clear();
+  }, [clear]);
 
   function send() {
     setDelivered(false); setEvents([]);
@@ -139,7 +151,7 @@ export default function MailMergeDemo() {
 
   const subjectParts = renderTemplate(tpl.subject, vars);
   const bodyParts = renderTemplate(tpl.body, vars);
-  const messageId = "msg_" + Math.random().toString(36).slice(2, 10);
+  const messageId = `msg_${stableDemoId(`${templateId}:${recipient}:${tpl.subject}`)}`;
 
   return (
     <div className="kc-demo-scope">

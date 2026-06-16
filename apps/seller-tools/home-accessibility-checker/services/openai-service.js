@@ -3,33 +3,31 @@
  * Uses GPT-4 Vision API for image analysis
  */
 
-const OpenAI = require('openai');
-const winston = require('winston');
+const OpenAI = require("openai");
+const winston = require("winston");
 
 class OpenAIService {
   constructor() {
     this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
+      apiKey: process.env.OPENAI_API_KEY,
     });
-    
+
     this.logger = winston.createLogger({
-      level: 'info',
+      level: "info",
       format: winston.format.combine(
         winston.format.timestamp(),
-        winston.format.json()
+        winston.format.json(),
       ),
-      transports: [
-        new winston.transports.Console()
-      ]
+      transports: [new winston.transports.Console()],
     });
   }
 
   async analyzeAccessibility(base64Image, filename) {
     try {
-      this.logger.info('Starting accessibility analysis', { filename });
+      this.logger.info("Starting accessibility analysis", { filename });
 
       const prompt = this.createAccessibilityPrompt();
-      
+
       const response = await this.openai.chat.completions.create({
         model: "gpt-4-vision-preview",
         messages: [
@@ -38,36 +36,38 @@ class OpenAIService {
             content: [
               {
                 type: "text",
-                text: prompt
+                text: prompt,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: `data:image/jpeg;base64,${base64Image}`,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
         max_tokens: 2000,
-        temperature: 0.3
+        temperature: 0.3,
       });
 
       const analysisText = response.choices[0].message.content;
-      const structuredResult = this.parseAnalysisResponse(analysisText, filename);
+      const structuredResult = this.parseAnalysisResponse(
+        analysisText,
+        filename,
+      );
 
-      this.logger.info('Analysis completed', { 
-        filename, 
-        score: structuredResult.score 
+      this.logger.info("Analysis completed", {
+        filename,
+        score: structuredResult.score,
       });
 
       return structuredResult;
-
     } catch (error) {
-      this.logger.error('OpenAI analysis failed', { 
-        filename, 
-        error: error.message 
+      this.logger.error("OpenAI analysis failed", {
+        filename,
+        error: error.message,
       });
       throw new Error(`Analysis failed: ${error.message}`);
     }
@@ -143,7 +143,7 @@ Provide specific, actionable recommendations. Focus on universal design principl
       if (jsonMatch) {
         const jsonStr = jsonMatch[0];
         const parsed = JSON.parse(jsonStr);
-        
+
         return {
           filename,
           score: parsed.score || 0,
@@ -151,18 +151,18 @@ Provide specific, actionable recommendations. Focus on universal design principl
           barriers: parsed.barriers || [],
           safety_concerns: parsed.safety_concerns || [],
           recommendations: parsed.recommendations || [],
-          accessibility_rating: parsed.accessibility_rating || 'Unknown',
+          accessibility_rating: parsed.accessibility_rating || "Unknown",
           priority_improvements: parsed.priority_improvements || [],
-          raw_analysis: analysisText
+          raw_analysis: analysisText,
         };
       } else {
         // Fallback parsing if JSON extraction fails
         return this.fallbackParsing(analysisText, filename);
       }
     } catch (error) {
-      this.logger.warn('JSON parsing failed, using fallback', { 
-        filename, 
-        error: error.message 
+      this.logger.warn("JSON parsing failed, using fallback", {
+        filename,
+        error: error.message,
       });
       return this.fallbackParsing(analysisText, filename);
     }
@@ -175,17 +175,35 @@ Provide specific, actionable recommendations. Focus on universal design principl
 
     // Extract features and barriers using keyword matching
     const positiveFeatures = this.extractItems(analysisText, [
-      'ramp', 'wide', 'accessible', 'grab bar', 'handrail', 'good lighting',
-      'clear pathway', 'accessible bathroom', 'accessible kitchen'
+      "ramp",
+      "wide",
+      "accessible",
+      "grab bar",
+      "handrail",
+      "good lighting",
+      "clear pathway",
+      "accessible bathroom",
+      "accessible kitchen",
     ]);
 
     const barriers = this.extractItems(analysisText, [
-      'step', 'narrow', 'threshold', 'poor lighting', 'cluttered',
-      'inaccessible', 'trip hazard', 'slippery'
+      "step",
+      "narrow",
+      "threshold",
+      "poor lighting",
+      "cluttered",
+      "inaccessible",
+      "trip hazard",
+      "slippery",
     ]);
 
     const recommendations = this.extractItems(analysisText, [
-      'install', 'add', 'improve', 'widen', 'remove', 'fix'
+      "install",
+      "add",
+      "improve",
+      "widen",
+      "remove",
+      "fix",
     ]);
 
     return {
@@ -197,35 +215,35 @@ Provide specific, actionable recommendations. Focus on universal design principl
       recommendations: recommendations,
       accessibility_rating: this.getRatingFromScore(score),
       priority_improvements: recommendations.slice(0, 3),
-      raw_analysis: analysisText
+      raw_analysis: analysisText,
     };
   }
 
   extractItems(text, keywords) {
     const items = [];
-    const lines = text.split('\n');
-    
+    const lines = text.split("\n");
+
     for (const line of lines) {
       const lowerLine = line.toLowerCase();
       for (const keyword of keywords) {
         if (lowerLine.includes(keyword.toLowerCase())) {
-          const cleanLine = line.replace(/^[-•*]\s*/, '').trim();
+          const cleanLine = line.replace(/^[-•*]\s*/, "").trim();
           if (cleanLine && !items.includes(cleanLine)) {
             items.push(cleanLine);
           }
         }
       }
     }
-    
+
     return items.slice(0, 5); // Limit to 5 items
   }
 
   getRatingFromScore(score) {
-    if (score >= 90) return 'Excellent';
-    if (score >= 80) return 'Good';
-    if (score >= 70) return 'Fair';
-    if (score >= 60) return 'Poor';
-    return 'Very Poor';
+    if (score >= 90) return "Excellent";
+    if (score >= 80) return "Good";
+    if (score >= 70) return "Fair";
+    if (score >= 60) return "Poor";
+    return "Very Poor";
   }
 
   async getDetailedRecommendations(base64Image, specificArea) {
@@ -240,30 +258,31 @@ Provide specific, actionable recommendations. Focus on universal design principl
             content: [
               {
                 type: "text",
-                text: prompt
+                text: prompt,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: `data:image/jpeg;base64,${base64Image}`,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
         max_tokens: 1500,
-        temperature: 0.3
+        temperature: 0.3,
       });
 
       return response.choices[0].message.content;
-
     } catch (error) {
-      this.logger.error('Detailed recommendations failed', { 
-        area: specificArea, 
-        error: error.message 
+      this.logger.error("Detailed recommendations failed", {
+        area: specificArea,
+        error: error.message,
       });
-      throw new Error(`Failed to get detailed recommendations: ${error.message}`);
+      throw new Error(
+        `Failed to get detailed recommendations: ${error.message}`,
+      );
     }
   }
 }

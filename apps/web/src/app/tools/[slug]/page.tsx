@@ -3,14 +3,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { fetchConverterTool } from "@/lib/converterTools";
-import { LOCAL_FALLBACK_TOOLS } from "@/lib/localFallbackTools";
-import { KC_MODULES, kcModuleToTool } from "@/lib/kcMockModules";
 import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
 import DemoRunner from "@/components/demo/DemoRunner";
 import LiveBenchmark from "@/components/demo/LiveBenchmark";
 import DemoTabs from "@/components/demos/DemoTabs";
+import PurchaseToolButton from "@/components/billing/PurchaseToolButton";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +31,7 @@ async function fetchTool(slug: string): Promise<Tool | null> {
     // fall through
   }
 
-  // 3) The 10 kc Rotshop modules — same source the discovery page uses,
-  //    so any slug a user clicks from search results resolves to a tool.
-  const kc = KC_MODULES.find((m) => m.id === slug.toLowerCase());
-  if (kc) return kcModuleToTool(kc);
-
-  // 4) Hackmarket's curated fallback set
-  return LOCAL_FALLBACK_TOOLS.find((t) => t.slug === slug) ?? null;
+  return null;
 }
 
 async function fetchToolDocs(slug: string): Promise<ToolDocumentation | null> {
@@ -257,10 +250,14 @@ export default async function ToolPage({
           <div className="flex items-center gap-2.5 mt-4 animate-fade-up delay-150">
             <span className="text-sm" style={{ color: "var(--faint)" }}>by</span>
             {tool.seller.avatar_url ? (
-              <img
-                src={tool.seller.avatar_url}
-                alt=""
-                className="w-6 h-6 rounded-full object-cover"
+              <span
+                aria-hidden="true"
+                className="w-6 h-6 rounded-full flex-shrink-0"
+                style={{
+                  backgroundImage: `url(${tool.seller.avatar_url})`,
+                  backgroundPosition: "center",
+                  backgroundSize: "cover",
+                }}
               />
             ) : (
               <div
@@ -353,11 +350,12 @@ export default async function ToolPage({
                 </div>
               )}
               <div className="space-y-2 mt-4">
+                <PurchaseToolButton toolId={tool.id} />
                 {(tool.input_type || tool.input_schema) && tool.output_type && (
                   <a
                     href="#demo"
                     className="flex items-center justify-center gap-2 w-full rounded-lg py-2.5 text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
-                    style={{ background: "var(--blue)", color: "#fff" }}
+                    style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text)" }}
                   >
                     Try Demo
                     <span>↓</span>
@@ -453,10 +451,6 @@ export default async function ToolPage({
                 outputType={tool.output_type}
                 demoEndpoint={tool.api_endpoint ?? undefined}
                 autoRun={isConverterTool}
-                mockResponse={
-                  (tool.output_schema as Record<string, unknown> | null)
-                    ?.example_output ?? undefined
-                }
               />
             }
           />

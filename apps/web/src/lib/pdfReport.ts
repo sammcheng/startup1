@@ -409,19 +409,19 @@ function buildSecurityBullets(s: SubmissionRecord): Array<{
   if (sec.critical > 0) {
     bullets.push({
       marker: "err",
-      text: `${sec.critical} critical finding${sec.critical === 1 ? "" : "s"} — hardcoded API secret found in config.py (line 12); env variables not loaded from a managed store.`,
+      text: `${sec.critical} critical security finding${sec.critical === 1 ? "" : "s"} detected during automated review. Review the generated scan output, rotate any exposed credentials, and redeploy only after the finding is cleared.`,
     });
   }
   if (sec.medium > 0) {
     bullets.push({
       marker: "warn",
-      text: `${sec.medium} medium finding${sec.medium === 1 ? "" : "s"} — transitive dependency \`lodash@4.17.20\` has known prototype-pollution CVE; upgrade to 4.17.21.`,
+      text: `${sec.medium} medium security finding${sec.medium === 1 ? "" : "s"} detected. Patch affected dependencies or handlers, then rerun validation before approval.`,
     });
   }
   if (sec.low > 0) {
     bullets.push({
       marker: "warn",
-      text: `${sec.low} low finding${sec.low === 1 ? "" : "s"} — missing security headers (CSP, X-Frame-Options) on health endpoint; informational only.`,
+      text: `${sec.low} low security finding${sec.low === 1 ? "" : "s"} detected. Treat these as hardening items and track them before moving the tool to long-term production use.`,
     });
   }
   return bullets;
@@ -434,7 +434,7 @@ function buildRecommendations(s: SubmissionRecord): string[] {
 
   if (m.security.critical > 0) {
     recs.push(
-      `Remove hardcoded secrets — move credentials to environment variables and rotate any keys that were committed to git history.`,
+      `Resolve critical security findings — review the automated scan output, rotate any exposed credentials, and rerun validation before listing.`,
     );
   }
   if (m.endpoints_passing < m.endpoints_total) {

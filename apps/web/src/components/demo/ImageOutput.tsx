@@ -18,7 +18,12 @@ export default function ImageOutput({ value }: { value: string | null }) {
         </a>
       </div>
       <div className="rounded-2xl border border-stone-800 bg-black/30 p-4">
-        <img src={value} alt="Tool output" className="max-h-[420px] w-full rounded-2xl object-contain" />
+        <div
+          aria-label="Tool output"
+          className="h-[420px] w-full rounded-2xl bg-contain bg-center bg-no-repeat"
+          role="img"
+          style={{ backgroundImage: `url(${value})` }}
+        />
       </div>
     </div>
   );

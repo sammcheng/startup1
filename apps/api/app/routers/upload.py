@@ -4,7 +4,7 @@ import zipfile
 from typing import Annotated
 
 from pydantic import ValidationError
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, require_seller
@@ -19,7 +19,7 @@ from app.schemas.tool import (
     ToolUploadResponse,
     ToolUpdate,
 )
-from app.services import container_service, endpoint_service, storage_service, tool_service
+from app.services import endpoint_service, job_service, storage_service, tool_service
 
 router = APIRouter(prefix="/tools", tags=["tool-upload"])
 
@@ -45,7 +45,6 @@ async def _get_owned_tool(
 )
 async def upload_tool_source(
     tool_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     request: Request,
     source_zip: UploadFile | None = File(default=None),
     tool: Tool = Depends(_get_owned_tool),
@@ -108,11 +107,14 @@ async def upload_tool_source(
         )
 
     updated = await tool_service.update_tool(db, tool, updates)
+    job_id: uuid.UUID | None = None
     if should_start_processing:
-        background_tasks.add_task(container_service.process_tool_upload, tool_id)
+        job = await _enqueue_processing_job(db, updated, trigger="source_upload")
+        job_id = job.id
 
     return ToolUploadResponse(
         tool_id=updated.id,
+        job_id=job_id,
         status=updated.status,
         status_url=f"/v1/tools/{tool_id}/status",
         source_file_tree=updated.source_file_tree,
@@ -126,7 +128,6 @@ async def upload_tool_source(
 )
 async def configure_tool(
     tool_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     body: ToolConfigureRequest,
     tool: Tool = Depends(_get_owned_tool),
     db: AsyncSession = Depends(get_db),
@@ -170,7 +171,7 @@ async def configure_tool(
             updated,
             ToolUpdate(status=ToolStatus.processing, processing_error=None),
         )
-        background_tasks.add_task(container_service.process_tool_upload, tool_id)
+        await _enqueue_processing_job(db, updated, trigger="runtime_configuration")
     return ToolResponse.model_validate(updated)
 
 
@@ -208,3 +209,22 @@ def _list_zip_entries(file_bytes: bytes) -> list[str]:
 def _github_preview_label(github_url: str | object) -> str:
     repo_name = str(github_url).rstrip("/").split("/")[-1] or "repository"
     return f"{repo_name}/"
+
+
+async def _enqueue_processing_job(db: AsyncSession, tool: Tool, *, trigger: str):
+    try:
+        return await job_service.enqueue_tool_processing(
+            db,
+            tool,
+            trigger=trigger,
+            payload={"tool_id": str(tool.id), "trigger": trigger},
+        )
+    except Exception as exc:
+        tool.status = ToolStatus.rejected
+        tool.processing_error = "The processing queue is unavailable. Please retry the upload or configuration step."
+        await db.commit()
+        raise AppError(
+            message="We saved your source, but could not queue it for processing. Please try again in a moment.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="submission_queue_unavailable",
+        ) from exc

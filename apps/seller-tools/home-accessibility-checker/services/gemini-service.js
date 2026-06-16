@@ -3,38 +3,38 @@
  * Uses OpenRouter API with various AI models for image analysis
  */
 
-const OpenAI = require('openai');
-const winston = require('winston');
+const OpenAI = require("openai");
+const winston = require("winston");
 
 class OpenRouterService {
   constructor() {
-        this.openaiClient = new OpenAI({
-            apiKey: process.env.OPENROUTER_API_KEY || '',
-            baseURL: 'https://openrouter.ai/api/v1',
-            defaultHeaders: {
-                'HTTP-Referer': 'http://localhost:3000',
-                'X-Title': 'Accessibility Checker'
-            }
-        });
-    
+    this.openaiClient = new OpenAI({
+      apiKey: process.env.OPENROUTER_API_KEY || "",
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "Accessibility Checker",
+      },
+    });
+
     this.logger = winston.createLogger({
-      level: 'info',
+      level: "info",
       format: winston.format.combine(
         winston.format.timestamp(),
-        winston.format.json()
+        winston.format.json(),
       ),
-      transports: [
-        new winston.transports.Console()
-      ]
+      transports: [new winston.transports.Console()],
     });
   }
 
   async analyzeAccessibility(base64Image, filename) {
     try {
-      this.logger.info('Starting accessibility analysis with OpenRouter', { filename });
+      this.logger.info("Starting accessibility analysis with OpenRouter", {
+        filename,
+      });
 
       const prompt = this.createAccessibilityPrompt();
-      
+
       // Use OpenRouter with a vision-capable model
       const response = await this.openaiClient.chat.completions.create({
         model: "openai/gpt-4o", // GPT-4 with vision capabilities
@@ -44,38 +44,40 @@ class OpenRouterService {
             content: [
               {
                 type: "text",
-                text: prompt
+                text: prompt,
               },
               {
                 type: "image_url",
                 image_url: {
-                  url: `data:image/jpeg;base64,${base64Image}`
-                }
-              }
-            ]
-          }
+                  url: `data:image/jpeg;base64,${base64Image}`,
+                },
+              },
+            ],
+          },
         ],
         max_tokens: 2000,
-        temperature: 0.3
+        temperature: 0.3,
       });
-      
-      const analysisText = response.choices[0].message.content;
-      
-      const structuredResult = this.parseAnalysisResponse(analysisText, filename);
 
-      this.logger.info('OpenRouter analysis completed', { 
-        filename, 
-        score: structuredResult.score 
+      const analysisText = response.choices[0].message.content;
+
+      const structuredResult = this.parseAnalysisResponse(
+        analysisText,
+        filename,
+      );
+
+      this.logger.info("OpenRouter analysis completed", {
+        filename,
+        score: structuredResult.score,
       });
 
       return structuredResult;
-
     } catch (error) {
-      this.logger.error('OpenRouter analysis failed, using mock analysis', { 
-        filename, 
-        error: error.message 
+      this.logger.error("OpenRouter analysis failed, using mock analysis", {
+        filename,
+        error: error.message,
       });
-      
+
       // Fallback to mock analysis when OpenRouter fails
       return this.generateMockAnalysis(filename);
     }
@@ -83,14 +85,14 @@ class OpenRouterService {
 
   generateMockAnalysis(filename) {
     // Generate realistic mock analysis based on filename
-    const hash = filename.split('').reduce((a, b) => {
-      a = ((a << 5) - a) + b.charCodeAt(0);
+    const hash = filename.split("").reduce((a, b) => {
+      a = (a << 5) - a + b.charCodeAt(0);
       return a & a;
     }, 0);
 
     // Generate score between 40-85 based on filename hash
     const baseScore = 40 + (Math.abs(hash) % 45);
-    
+
     // Generate realistic recommendations
     const allRecommendations = [
       "Install handrails on both sides of stairs for better support",
@@ -102,16 +104,21 @@ class OpenRouterService {
       "Ensure clear pathways of at least 36 inches width",
       "Add ramps with proper slope (1:12 ratio) for accessibility",
       "Install lever-style door handles instead of knobs",
-      "Add contrasting colors to help with visual navigation"
+      "Add contrasting colors to help with visual navigation",
     ];
 
     // Select 3-5 random recommendations
     const numRecs = 3 + (Math.abs(hash + 5) % 3);
     const recommendations = [];
     for (let i = 0; i < numRecs; i++) {
-      const rec = allRecommendations[Math.abs(hash + i * 7) % allRecommendations.length];
+      const rec =
+        allRecommendations[Math.abs(hash + i * 7) % allRecommendations.length];
       if (!recommendations.includes(rec)) {
-        recommendations.push(allRecommendations[Math.abs(hash + i * 11) % allRecommendations.length]);
+        recommendations.push(
+          allRecommendations[
+            Math.abs(hash + i * 11) % allRecommendations.length
+          ],
+        );
       } else {
         recommendations.push(rec);
       }
@@ -119,10 +126,18 @@ class OpenRouterService {
 
     // Generate positive features and barriers
     const positiveFeatures = [
-      "Wide doorways", "Good lighting", "Clear pathways", "Handrails", "Non-slip surfaces"
+      "Wide doorways",
+      "Good lighting",
+      "Clear pathways",
+      "Handrails",
+      "Non-slip surfaces",
     ];
     const barriers = [
-      "Narrow doorways", "Poor lighting", "Cluttered spaces", "High thresholds", "Steep stairs"
+      "Narrow doorways",
+      "Poor lighting",
+      "Cluttered spaces",
+      "High thresholds",
+      "Steep stairs",
     ];
 
     const detectedFeatures = [];
@@ -131,7 +146,8 @@ class OpenRouterService {
     // Add 2-3 positive features
     const numFeatures = 2 + (Math.abs(hash + 10) % 2);
     for (let i = 0; i < numFeatures; i++) {
-      const feature = positiveFeatures[Math.abs(hash + i * 3) % positiveFeatures.length];
+      const feature =
+        positiveFeatures[Math.abs(hash + i * 3) % positiveFeatures.length];
       if (!detectedFeatures.includes(feature)) {
         detectedFeatures.push(feature);
       }
@@ -153,27 +169,33 @@ class OpenRouterService {
       detectedFeatures: detectedFeatures,
       detectedBarriers: detectedBarriers,
       analysis: `This space shows ${detectedFeatures.length} positive accessibility features and ${detectedBarriers.length} areas for improvement. The overall accessibility score is ${baseScore}/100.`,
-      method: "Mock AI Analysis"
+      method: "Mock AI Analysis",
     };
   }
 
   createAccessibilityPrompt(rekognitionLabels = []) {
-    let rekognitionInfo = '';
+    let rekognitionInfo = "";
     if (rekognitionLabels && rekognitionLabels.length > 0) {
-      const positiveFeatures = rekognitionLabels.filter(l => l.category === 'positive');
-      const barriers = rekognitionLabels.filter(l => l.category === 'negative');
-      const safetyFeatures = rekognitionLabels.filter(l => l.category === 'safety');
-      
+      const positiveFeatures = rekognitionLabels.filter(
+        (l) => l.category === "positive",
+      );
+      const barriers = rekognitionLabels.filter(
+        (l) => l.category === "negative",
+      );
+      const safetyFeatures = rekognitionLabels.filter(
+        (l) => l.category === "safety",
+      );
+
       rekognitionInfo = `\n\nAWS Rekognition Analysis Results:
       
       POSITIVE FEATURES DETECTED:
-      ${positiveFeatures.map(f => `- ${f.name} (${f.confidence}% confidence)`).join('\n')}
+      ${positiveFeatures.map((f) => `- ${f.name} (${f.confidence}% confidence)`).join("\n")}
       
       BARRIERS IDENTIFIED:
-      ${barriers.map(b => `- ${b.name} (${b.confidence}% confidence)`).join('\n')}
+      ${barriers.map((b) => `- ${b.name} (${b.confidence}% confidence)`).join("\n")}
       
       SAFETY FEATURES:
-      ${safetyFeatures.map(s => `- ${s.name} (${s.confidence}% confidence)`).join('\n')}
+      ${safetyFeatures.map((s) => `- ${s.name} (${s.confidence}% confidence)`).join("\n")}
       
       Use this Rekognition data to inform your detailed analysis.`;
     }
@@ -267,7 +289,7 @@ class OpenRouterService {
       if (jsonMatch) {
         const jsonStr = jsonMatch[0];
         const parsed = JSON.parse(jsonStr);
-        
+
         return {
           filename,
           score: parsed.score || 0,
@@ -275,18 +297,18 @@ class OpenRouterService {
           barriers: parsed.barriers || [],
           safety_concerns: parsed.safety_concerns || [],
           recommendations: parsed.recommendations || [],
-          accessibility_rating: parsed.accessibility_rating || 'Unknown',
+          accessibility_rating: parsed.accessibility_rating || "Unknown",
           priority_improvements: parsed.priority_improvements || [],
-          raw_analysis: analysisText
+          raw_analysis: analysisText,
         };
       } else {
         // Fallback parsing if JSON extraction fails
         return this.fallbackParsing(analysisText, filename);
       }
     } catch (error) {
-      this.logger.warn('JSON parsing failed, using fallback', { 
-        filename, 
-        error: error.message 
+      this.logger.warn("JSON parsing failed, using fallback", {
+        filename,
+        error: error.message,
       });
       return this.fallbackParsing(analysisText, filename);
     }
@@ -299,17 +321,35 @@ class OpenRouterService {
 
     // Extract features and barriers using keyword matching
     const positiveFeatures = this.extractItems(analysisText, [
-      'ramp', 'wide', 'accessible', 'grab bar', 'handrail', 'good lighting',
-      'clear pathway', 'accessible bathroom', 'accessible kitchen'
+      "ramp",
+      "wide",
+      "accessible",
+      "grab bar",
+      "handrail",
+      "good lighting",
+      "clear pathway",
+      "accessible bathroom",
+      "accessible kitchen",
     ]);
 
     const barriers = this.extractItems(analysisText, [
-      'step', 'narrow', 'threshold', 'poor lighting', 'cluttered',
-      'inaccessible', 'trip hazard', 'slippery'
+      "step",
+      "narrow",
+      "threshold",
+      "poor lighting",
+      "cluttered",
+      "inaccessible",
+      "trip hazard",
+      "slippery",
     ]);
 
     const recommendations = this.extractItems(analysisText, [
-      'install', 'add', 'improve', 'widen', 'remove', 'fix'
+      "install",
+      "add",
+      "improve",
+      "widen",
+      "remove",
+      "fix",
     ]);
 
     return {
@@ -321,35 +361,35 @@ class OpenRouterService {
       recommendations: recommendations,
       accessibility_rating: this.getRatingFromScore(score),
       priority_improvements: recommendations.slice(0, 3),
-      raw_analysis: analysisText
+      raw_analysis: analysisText,
     };
   }
 
   extractItems(text, keywords) {
     const items = [];
-    const lines = text.split('\n');
-    
+    const lines = text.split("\n");
+
     for (const line of lines) {
       const lowerLine = line.toLowerCase();
       for (const keyword of keywords) {
         if (lowerLine.includes(keyword.toLowerCase())) {
-          const cleanLine = line.replace(/^[-•*]\s*/, '').trim();
+          const cleanLine = line.replace(/^[-•*]\s*/, "").trim();
           if (cleanLine && !items.includes(cleanLine)) {
             items.push(cleanLine);
           }
         }
       }
     }
-    
+
     return items.slice(0, 5); // Limit to 5 items
   }
 
   getRatingFromScore(score) {
-    if (score >= 90) return 'Excellent';
-    if (score >= 80) return 'Good';
-    if (score >= 70) return 'Fair';
-    if (score >= 60) return 'Poor';
-    return 'Very Poor';
+    if (score >= 90) return "Excellent";
+    if (score >= 80) return "Good";
+    if (score >= 70) return "Fair";
+    if (score >= 60) return "Poor";
+    return "Very Poor";
   }
 }
 

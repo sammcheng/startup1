@@ -17,3 +17,11 @@ async def get_dashboard_summary(
     db: AsyncSession = Depends(get_db),
 ) -> DashboardSummaryResponse:
     return await dashboard_service.get_dashboard_summary(db, current_user)
+
+
+@router.get("", response_model=DashboardSummaryResponse, include_in_schema=False)
+async def get_dashboard_summary_alias(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> DashboardSummaryResponse:
+    return await dashboard_service.get_dashboard_summary(db, current_user)

@@ -1,10 +1,7 @@
 "use client";
 
-// Approver dashboard runs entirely on the client — it reads from
-// localStorage on first render (different from the server's empty state)
-// and generates PDFs via jsPDF, neither of which survive SSR cleanly.
-// Skipping SSR sidesteps the hydration mismatch and is appropriate for
-// an admin-only page that's behind a token gate anyway.
+// Approver dashboard runs on the client so it can use Clerk session state
+// and generate PDFs via jsPDF without SSR hydration mismatches.
 
 import dynamic from "next/dynamic";
 

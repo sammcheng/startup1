@@ -1,3 +1,5 @@
+import type { Tool } from "@/types/tool";
+
 export interface SellerRevenuePoint {
   date: string;
   amount: string;
@@ -13,6 +15,8 @@ export interface SellerToolSummary {
   tool_name: string;
   slug: string;
   status: "draft" | "processing" | "live" | "paused" | "rejected";
+  latest_job_status: ToolProcessingJobStatus | null;
+  latest_job_error: string | null;
   requests_this_month: number;
   revenue_this_month: string;
   avg_response_time_ms: number | null;
@@ -64,4 +68,32 @@ export interface SellerAnalyticsResponse {
   p95_response_time_ms: number | null;
   p99_response_time_ms: number | null;
   recent_errors: SellerErrorLogItem[];
+}
+
+export type ToolProcessingJobStatus =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "succeeded"
+  | "failed";
+
+export interface ToolProcessingJob {
+  id: string;
+  tool_id: string;
+  status: ToolProcessingJobStatus;
+  attempts: number;
+  max_attempts: number;
+  trigger: string;
+  last_error: string | null;
+  arq_job_id: string;
+  enqueued_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SellerSubmissionStatusResponse {
+  tool: Tool;
+  job: ToolProcessingJob | null;
 }

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -9,8 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client
-from app.models import Tool, Transaction, TransactionStatus, TransactionType, UsageLog, User
-from app.schemas.billing import BillingInvoiceSummary, PaymentMethodSummary, RevenueByToolItem, SellerBalanceResponse, SellerPayoutHistoryItem
+from app.exceptions import Forbidden, ToolNotFoundError, ToolNotLiveError
+from app.models import Tool, ToolPurchase, Transaction, TransactionStatus, TransactionType, UsageLog, User
+from app.models.tool import OwnershipType, ToolStatus
+from app.models.tool_purchase import PurchaseStatus
+from app.schemas.billing import (
+    BillingInvoiceSummary,
+    PaymentMethodSummary,
+    RevenueByToolItem,
+    SellerBalanceResponse,
+    SellerPayoutHistoryItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +114,166 @@ async def list_payment_methods(user: User) -> list[PaymentMethodSummary]:
             )
         )
     return items
+
+
+async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tuple[ToolPurchase, str | None]:
+    tool = await db.get(Tool, tool_id)
+    if not tool:
+        raise ToolNotFoundError(str(tool_id))
+    if tool.status != ToolStatus.live:
+        raise ToolNotLiveError(tool.slug)
+    if tool.seller_id == buyer.id:
+        raise Forbidden("You cannot purchase your own tool.")
+
+    existing_result = await db.execute(
+        select(ToolPurchase).where(
+            ToolPurchase.tool_id == tool.id,
+            ToolPurchase.buyer_id == buyer.id,
+            ToolPurchase.status == PurchaseStatus.active,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        return existing, None
+
+    pending_result = await db.execute(
+        select(ToolPurchase).where(
+            ToolPurchase.tool_id == tool.id,
+            ToolPurchase.buyer_id == buyer.id,
+            ToolPurchase.status == PurchaseStatus.pending,
+        )
+    )
+    pending = pending_result.scalar_one_or_none()
+    if pending:
+        return pending, await _get_pending_checkout_url(db, buyer, tool)
+
+    now = datetime.now(timezone.utc)
+    purchase_price = _quantize(tool.one_time_price or Decimal("0.00"))
+    requires_checkout = tool.ownership_type == OwnershipType.full_sale and purchase_price > 0
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=tool.id,
+        buyer_id=buyer.id,
+        seller_id=tool.seller_id,
+        purchase_price=purchase_price,
+        purchase_type=tool.ownership_type,
+        status=PurchaseStatus.pending if requires_checkout else PurchaseStatus.active,
+        created_at=now,
+    )
+    db.add(purchase)
+
+    checkout_url: str | None = None
+    if requires_checkout:
+        platform_fee = _quantize(purchase_price * PLATFORM_FEE_RATE)
+        transaction = Transaction(
+            id=uuid.uuid4(),
+            buyer_id=buyer.id,
+            seller_id=tool.seller_id,
+            tool_id=tool.id,
+            amount=purchase_price,
+            platform_fee=platform_fee,
+            seller_payout=_quantize(purchase_price - platform_fee),
+            stripe_payment_intent_id=None,
+            type=TransactionType.full_purchase,
+            status=TransactionStatus.pending,
+            period_start=now,
+            period_end=now,
+            created_at=now,
+        )
+        db.add(transaction)
+        checkout_session = await _create_tool_checkout_session(buyer, tool, purchase, transaction)
+        checkout_url = checkout_session.get("url")
+        transaction.stripe_payment_intent_id = checkout_session.get("payment_intent") or checkout_session.get("id")
+    elif purchase_price > 0:
+        platform_fee = _quantize(purchase_price * PLATFORM_FEE_RATE)
+        db.add(
+            Transaction(
+                id=uuid.uuid4(),
+                buyer_id=buyer.id,
+                seller_id=tool.seller_id,
+                tool_id=tool.id,
+                amount=purchase_price,
+                platform_fee=platform_fee,
+                seller_payout=_quantize(purchase_price - platform_fee),
+                stripe_payment_intent_id=None,
+                type=TransactionType.full_purchase,
+                status=TransactionStatus.pending,
+                period_start=now,
+                period_end=now,
+                created_at=now,
+            )
+        )
+
+    await db.commit()
+    await db.refresh(purchase)
+    return purchase, checkout_url
+
+
+async def _create_tool_checkout_session(
+    buyer: User,
+    tool: Tool,
+    purchase: ToolPurchase,
+    transaction: Transaction,
+) -> dict:
+    customer_id = buyer.stripe_customer_id
+    checkout_session = await _call_stripe(
+        stripe.checkout.Session.create,
+        mode="payment",
+        customer=customer_id,
+        customer_email=None if customer_id else buyer.email,
+        success_url=f"{settings.app_base_url.rstrip('/')}/dashboard?purchase=success",
+        cancel_url=f"{settings.app_base_url.rstrip('/')}/tools/{tool.slug}?purchase=cancelled",
+        line_items=[
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": tool.name,
+                        "description": tool.tagline,
+                    },
+                    "unit_amount": int(_quantize(purchase.purchase_price) * 100),
+                },
+                "quantity": 1,
+            }
+        ],
+        metadata={
+            "purchase_id": str(purchase.id),
+            "transaction_id": str(transaction.id),
+            "tool_id": str(tool.id),
+            "buyer_id": str(buyer.id),
+            "seller_id": str(tool.seller_id),
+        },
+    )
+    if hasattr(checkout_session, "to_dict_recursive"):
+        return checkout_session.to_dict_recursive()
+    return dict(checkout_session)
+
+
+async def _get_pending_checkout_url(db: AsyncSession, buyer: User, tool: Tool) -> str | None:
+    transaction_result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.buyer_id == buyer.id,
+            Transaction.tool_id == tool.id,
+            Transaction.type == TransactionType.full_purchase,
+            Transaction.status == TransactionStatus.pending,
+            Transaction.stripe_payment_intent_id.is_not(None),
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    transaction = transaction_result.scalar_one_or_none()
+    session_id = transaction.stripe_payment_intent_id if transaction else None
+    if not session_id or not session_id.startswith("cs_"):
+        return None
+
+    try:
+        checkout_session = await _call_stripe(stripe.checkout.Session.retrieve, session_id)
+    except stripe.StripeError:
+        logger.info("Could not retrieve pending checkout session %s", session_id, exc_info=True)
+        return None
+
+    return checkout_session.get("url")
 
 
 async def record_usage(user_id, tool_id, amount) -> None:
@@ -385,7 +555,7 @@ async def run_scheduler_loop(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            await _run_scheduled_jobs_once()
+            await run_scheduled_jobs_once()
         except Exception:
             logger.exception("Billing scheduler loop failed")
         try:
@@ -394,7 +564,7 @@ async def run_scheduler_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
-async def _run_scheduled_jobs_once() -> None:
+async def run_scheduled_jobs_once() -> None:
     now = datetime.now(timezone.utc)
     day_key = f"billing:last-daily:{now.date().isoformat()}"
     if not await _redis_client.get(day_key):
@@ -420,7 +590,11 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
     event_type = event.get("type")
     data = event.get("data", {}).get("object", {})
 
-    if event_type == "payment_intent.succeeded":
+    if event_type == "checkout.session.completed":
+        await _complete_checkout_session(db, data)
+    elif event_type == "checkout.session.expired":
+        await _expire_checkout_session(db, data)
+    elif event_type == "payment_intent.succeeded":
         payment_intent_id = data.get("id")
         await _update_transaction_status(db, payment_intent_id, TransactionStatus.completed)
     elif event_type == "invoice.paid":
@@ -440,3 +614,51 @@ async def _update_transaction_status(db: AsyncSession, payment_intent_id: str | 
     for transaction in result.scalars():
         transaction.status = status
     await db.commit()
+
+
+async def _complete_checkout_session(db: AsyncSession, session: dict) -> None:
+    metadata = session.get("metadata") or {}
+    purchase_id = _parse_uuid(metadata.get("purchase_id"))
+    transaction_id = _parse_uuid(metadata.get("transaction_id"))
+    payment_id = session.get("payment_intent") or session.get("id")
+
+    if purchase_id:
+        purchase = await db.get(ToolPurchase, purchase_id)
+        if purchase and purchase.status == PurchaseStatus.pending:
+            purchase.status = PurchaseStatus.active
+
+    if transaction_id:
+        transaction = await db.get(Transaction, transaction_id)
+        if transaction:
+            transaction.status = TransactionStatus.completed
+            transaction.stripe_payment_intent_id = payment_id
+
+    await db.commit()
+
+
+async def _expire_checkout_session(db: AsyncSession, session: dict) -> None:
+    metadata = session.get("metadata") or {}
+    purchase_id = _parse_uuid(metadata.get("purchase_id"))
+    transaction_id = _parse_uuid(metadata.get("transaction_id"))
+
+    if purchase_id:
+        purchase = await db.get(ToolPurchase, purchase_id)
+        if purchase and purchase.status == PurchaseStatus.pending:
+            purchase.status = PurchaseStatus.terminated
+
+    if transaction_id:
+        transaction = await db.get(Transaction, transaction_id)
+        if transaction and transaction.status == TransactionStatus.pending:
+            transaction.status = TransactionStatus.failed
+
+    await db.commit()
+
+
+def _parse_uuid(value: str | None) -> uuid.UUID | None:
+    if not value:
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        logger.warning("Ignoring Stripe webhook with invalid UUID metadata: %s", value)
+        return None

@@ -14,6 +14,11 @@ interface Props {
 export default function Composer({ initialSegments, onSubmit, onChange }: Props) {
   const [text, setText] = useState(() => segmentsToText(initialSegments ?? []));
   const inputRef = useRef<HTMLInputElement>(null);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     if (initialSegments) {
@@ -24,10 +29,7 @@ export default function Composer({ initialSegments, onSubmit, onChange }: Props)
 
   // Fire onChange whenever text changes (parent debounces).
   useEffect(() => {
-    onChange?.(text);
-    // We deliberately don't include onChange in deps — parent's identity may
-    // change every render and we only care about text changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    onChangeRef.current?.(text);
   }, [text]);
 
   function addCategory(cat: string) {

@@ -10,6 +10,18 @@ export interface PaymentMethodSummary {
   exp_year: number | null;
 }
 
+export interface ToolPurchaseResponse {
+  id: string;
+  tool_id: string;
+  buyer_id: string;
+  seller_id: string;
+  status: string;
+  purchase_price: string;
+  purchase_type: string;
+  created_at: string;
+  checkout_url: string | null;
+}
+
 export interface BillingInvoiceSummary {
   id: string;
   amount_due: string;

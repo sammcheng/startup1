@@ -23,8 +23,20 @@ class DashboardActivityItem(BaseModel):
     error_message: str | None = None
 
 
+class DashboardPurchasedTool(BaseModel):
+    tool_id: uuid.UUID
+    tool_name: str
+    slug: str
+    category: str
+    calls_this_month: int
+    spend_this_month: Decimal
+    last_used_at: datetime | None = None
+
+
 class DashboardSummaryResponse(BaseModel):
     display_name: str
     role: str
     stats: DashboardStatSummary
+    active_api_keys: int
+    purchased_tools: list[DashboardPurchasedTool]
     recent_activity: list[DashboardActivityItem]

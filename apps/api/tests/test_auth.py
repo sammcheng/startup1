@@ -3,6 +3,8 @@ import pytest
 from app.dependencies import get_current_identity
 from app.exceptions import Unauthorized
 from app.main import app
+from app.routers import auth
+from app.schemas.auth import AuthSyncRequest
 from app.services import auth_service
 import app.dependencies as auth_dependencies
 
@@ -42,6 +44,79 @@ def test_auth_sync_returns_user_payload(client, buyer, monkeypatch):
     assert payload["role"] == buyer.role.value
 
 
+def test_clerk_webhook_requires_configured_secret(client, monkeypatch):
+    monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "")
+
+    response = client.post("/v1/auth/webhook", content=b"{}")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "misconfiguration"
+
+
+def test_clerk_webhook_rejects_invalid_signature(client, monkeypatch):
+    class FakeWebhook:
+        def __init__(self, secret):
+            assert secret == "whsec_test"
+
+        def verify(self, body, headers):
+            raise auth.WebhookVerificationError()
+
+    monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "whsec_test")
+    monkeypatch.setattr(auth, "Webhook", FakeWebhook)
+
+    response = client.post(
+        "/v1/auth/webhook",
+        content=b"{}",
+        headers={
+            "svix-id": "msg_test",
+            "svix-timestamp": "123",
+            "svix-signature": "bad",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_signature"
+
+
+def test_clerk_webhook_dispatches_verified_user_created_event(client, monkeypatch):
+    handled = []
+    clerk_user = {
+        "id": "clerk_created",
+        "primary_email_address_id": "email_1",
+        "email_addresses": [{"id": "email_1", "email_address": "created@example.com"}],
+        "username": "created-user",
+    }
+
+    class FakeWebhook:
+        def __init__(self, secret):
+            assert secret == "whsec_test"
+
+        def verify(self, body, headers):
+            assert body == b'{"type":"user.created"}'
+            assert headers["svix-id"] == "msg_test"
+            return {"type": "user.created", "data": clerk_user}
+
+    async def fake_handle_user_created(db, clerk_id, payload):
+        handled.append((clerk_id, payload))
+
+    monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "whsec_test")
+    monkeypatch.setattr(auth, "Webhook", FakeWebhook)
+    monkeypatch.setattr(auth, "_handle_user_created", fake_handle_user_created)
+
+    response = client.post(
+        "/v1/auth/webhook",
+        content=b'{"type":"user.created"}',
+        headers={
+            "svix-id": "msg_test",
+            "svix-timestamp": "123",
+            "svix-signature": "sig_test",
+        },
+    )
+
+    assert response.status_code == 204
+    assert handled == [("clerk_created", clerk_user)]
+
+
 def test_resolve_jwks_url_falls_back_to_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
     monkeypatch.setattr(
@@ -65,3 +140,78 @@ def test_resolve_jwks_url_rejects_untrusted_issuer(monkeypatch):
 
     with pytest.raises(Unauthorized):
         auth_dependencies._resolve_jwks_url("fake-token")
+
+
+class _FakeAuthResult:
+    def __init__(self, value=None):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class _FakeAuthSession:
+    def __init__(self):
+        self.added = []
+        self.commits = 0
+        self.refreshed = []
+
+    async def execute(self, statement):
+        return _FakeAuthResult()
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, obj):
+        self.refreshed.append(obj)
+
+
+@pytest.mark.asyncio
+async def test_sync_user_trusts_verified_identity_email_over_client_body():
+    db = _FakeAuthSession()
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_verified",
+        email="verified@example.com",
+        username="verified-user",
+        display_name="Verified User",
+    )
+    profile = AuthSyncRequest(
+        email="attacker@example.com",
+        username="client-user",
+        display_name="Client User",
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity, profile)
+
+    assert user.email == "verified@example.com"
+    assert db.added == [user]
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_lazily_syncs_verified_identity(monkeypatch):
+    db = _FakeAuthSession()
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_lazy",
+        email="lazy@example.com",
+        username="lazy-user",
+        display_name="Lazy User",
+    )
+
+    async def fake_verify_clerk_identity(token):
+        assert token == "test-token"
+        return identity
+
+    monkeypatch.setattr(auth_dependencies, "verify_clerk_identity", fake_verify_clerk_identity)
+
+    user = await auth_dependencies.get_current_user("Bearer test-token", db)
+
+    assert user.clerk_id == "clerk_lazy"
+    assert user.email == "lazy@example.com"
+    assert user.username == "lazy-user"
+    assert user.is_active is True
+    assert db.added == [user]
+    assert db.commits == 1

@@ -1,12 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from svix.webhooks import Webhook, WebhookVerificationError
 
 from app.config import settings
 from app.dependencies import get_current_identity, get_db
+from app.exceptions import AppError
 from app.models import User
 from app.schemas.auth import AuthSyncRequest, AuthSyncResponse
 from app.services.auth_service import AuthIdentity, sync_user_from_identity
@@ -81,9 +82,10 @@ async def clerk_webhook(
     secret = settings.clerk_webhook_secret
     if not secret:
         logger.error("CLERK_WEBHOOK_SECRET is not configured")
-        raise HTTPException(
+        raise AppError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "MISCONFIGURATION", "message": "Webhook secret not set."},
+            error_code="misconfiguration",
+            message="Webhook secret not set.",
         )
 
     try:
@@ -91,9 +93,10 @@ async def clerk_webhook(
         event: dict = wh.verify(body, svix_headers)
     except WebhookVerificationError:
         logger.warning("Clerk webhook signature verification failed")
-        raise HTTPException(
+        raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_SIGNATURE", "message": "Webhook signature invalid."},
+            error_code="invalid_signature",
+            message="Webhook signature invalid.",
         )
 
     event_type: str = event.get("type", "")
