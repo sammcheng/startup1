@@ -33,6 +33,9 @@ jobs:
       - name: Validate render monorepo settings
         run: python scripts/render_blueprint_report.py --check
 
+      - name: Validate production readiness assumptions
+        run: python scripts/production_readiness_check.py
+
   backend:
     runs-on: ubuntu-latest
     defaults:

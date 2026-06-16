@@ -188,6 +188,18 @@ Release verification after deploy:
 4. Run a signed-in smoke test for `/dashboard`, tool purchase redirect, seller tool upload/configure, and `/submit/{id}/status`.
 5. Confirm Clerk and Stripe webhooks deliver successfully with real provider events.
 
+Production readiness commands:
+```bash
+python3 scripts/production_readiness_check.py
+python3 scripts/render_blueprint_report.py --check
+python3 scripts/production_smoke_check.py --app-url https://hackmarket.io --api-url https://api.hackmarket.io
+```
+
+Launch checklist:
+- See `docs/production-launch-checklist.md` before publishing to real users.
+- Rotate the Clerk secret key that was pasted into chat before launch.
+- Keep live secrets only in Vercel, Render, Clerk, Stripe, AWS, GitHub, or a real secret manager.
+
 **CI/CD**
 
 GitHub Actions workflow: `.github/workflows/ci.yml`
@@ -199,6 +211,7 @@ On pull requests and pushes to `main`, CI:
 - runs frontend type checking
 - runs frontend linting
 - validates the Render blueprint contract
+- validates production readiness assumptions
 - builds the production Docker images
 
 On pushes to `main`, CI also pushes Docker images to GHCR as build artifacts. Production deploys are handled by Vercel Git integration for `apps/web` and Render auto-deploy for the services in `render.yaml`.
