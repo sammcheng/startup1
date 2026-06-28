@@ -252,6 +252,9 @@ def check_repo_files(failures: list[str]) -> None:
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
     expect("npm audit --audit-level=high" in ci_workflow, "CI must audit Node dependencies", failures)
+    expect("npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures)
+    expect("npm run test:security" in ci_workflow, "CI must test frontend security headers", failures)
+    expect("npm run build" in ci_workflow, "CI must build the frontend", failures)
 
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     for key in [

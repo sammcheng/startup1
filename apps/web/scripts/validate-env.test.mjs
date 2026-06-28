@@ -8,7 +8,8 @@ test("accepts valid deploy URLs and Clerk key", () => {
     NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
     NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
     NEXT_PUBLIC_CONVERTER_URL: "https://converter.hackmarket.io",
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_abc123",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
+    CLERK_SECRET_KEY: "sk_test_abc123",
   });
 
   assert.deepEqual(errors, []);
@@ -47,13 +48,48 @@ test("rejects malformed Clerk publishable key", () => {
   assert.match(errors[0], /Clerk publishable key/);
 });
 
+test("rejects Clerk publishable key with invalid encoded frontend host", () => {
+  const errors = validateEnv({
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_abc123",
+  });
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /frontend API host/);
+});
+
 test("requires Clerk publishable key for deploy builds", () => {
   const errors = validateEnv({
     VERCEL: "1",
     NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
     NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    CLERK_SECRET_KEY: "sk_test_abc123",
   });
 
   assert.equal(errors.length, 1);
   assert.match(errors[0], /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required/);
+});
+
+test("requires Clerk secret key for deploy builds", () => {
+  const errors = validateEnv({
+    VERCEL: "1",
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
+  });
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /CLERK_SECRET_KEY is required/);
+});
+
+test("rejects malformed Clerk secret key", () => {
+  const errors = validateEnv({
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    CLERK_SECRET_KEY: "pk_test_not_secret",
+  });
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /Clerk secret key/);
 });

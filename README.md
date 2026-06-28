@@ -170,6 +170,7 @@ Render monorepo note:
 Recommended hosted env values:
 - Vercel `NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1`
 - Vercel `NEXT_PUBLIC_APP_URL=https://hackmarket.io`
+- Vercel `CLERK_SECRET_KEY`: required by the Next.js proxy that protects dashboard, admin, and approver routes
 - Render custom domain `api.hackmarket.io` pointed at the `start` service
 - Render `CORS_ORIGINS=["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]`
 - Render `CORS_ORIGIN_REGEX=`
@@ -214,8 +215,10 @@ On pull requests and pushes to `main`, CI:
 - runs backend tests
 - installs frontend dependencies
 - audits frontend dependencies for high-severity vulnerabilities
+- runs frontend environment and security-header tests
 - runs frontend type checking
 - runs frontend linting
+- builds the production frontend
 - audits seller tool dependencies for high-severity vulnerabilities
 - validates the Render blueprint contract
 - validates production readiness assumptions

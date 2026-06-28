@@ -69,8 +69,28 @@ function validatePublishableKey(value, errors, strictDeployEnv) {
     }
     return;
   }
-  if (!/^pk_(test|live)_[A-Za-z0-9]+$/.test(value.trim())) {
+  const trimmed = value.trim();
+  const match = /^pk_(test|live)_([A-Za-z0-9+/=_-]+)$/.exec(trimmed);
+  if (!match) {
     errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must look like a Clerk publishable key.");
+    return;
+  }
+
+  const decoded = Buffer.from(match[2], "base64").toString("utf8");
+  if (!decoded.endsWith("$") || !decoded.includes(".")) {
+    errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must decode to a Clerk frontend API host.");
+  }
+}
+
+function validateClerkSecretKey(value, errors, strictDeployEnv) {
+  if (isBlank(value)) {
+    if (strictDeployEnv) {
+      errors.push("CLERK_SECRET_KEY is required for deploy builds.");
+    }
+    return;
+  }
+  if (!/^sk_(test|live)_[A-Za-z0-9]+$/.test(value.trim())) {
+    errors.push("CLERK_SECRET_KEY must look like a Clerk secret key.");
   }
 }
 
@@ -82,6 +102,7 @@ export function validateEnv(env = process.env) {
   validateRequiredPublicUrl("NEXT_PUBLIC_APP_URL", env.NEXT_PUBLIC_APP_URL, errors, strictDeployEnv);
   validateOptionalPublicUrl("NEXT_PUBLIC_CONVERTER_URL", env.NEXT_PUBLIC_CONVERTER_URL, errors, strictDeployEnv);
   validatePublishableKey(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, errors, strictDeployEnv);
+  validateClerkSecretKey(env.CLERK_SECRET_KEY, errors, strictDeployEnv);
 
   return errors;
 }

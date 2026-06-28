@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
 DEFAULT_FRONTEND_PATHS = [
@@ -29,12 +29,19 @@ DEFAULT_FRONTEND_PATHS = [
     "/terms",
     "/privacy",
     "/seller-agreement",
-    "/admin",
-    "/approver",
     "/sign-in",
     "/sign-up",
 ]
+AUTH_BOUNDARY_PATHS = ["/dashboard", "/admin", "/approver"]
 DEFAULT_TIMEOUT_SECONDS = 15
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+NO_REDIRECT_OPENER = build_opener(NoRedirectHandler)
 
 
 @dataclass(frozen=True)
@@ -55,13 +62,15 @@ def request(
     headers: dict[str, str] | None = None,
     body: bytes | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
-) -> tuple[int, str]:
+    follow_redirects: bool = True,
+) -> tuple[int, str, dict[str, str]]:
     request_headers = {"User-Agent": "hackmarket-smoke-check/1.0"}
     if headers:
         request_headers.update(headers)
     req = Request(url, data=body, headers=request_headers, method=method)
-    with urlopen(req, timeout=timeout) as response:
-        return response.status, response.read(4096).decode("utf-8", errors="replace")
+    opener = urlopen if follow_redirects else NO_REDIRECT_OPENER.open
+    with opener(req, timeout=timeout) as response:
+        return response.status, response.read(4096).decode("utf-8", errors="replace"), dict(response.headers)
 
 
 def run_http_check(
@@ -76,7 +85,7 @@ def run_http_check(
 ) -> CheckResult:
     started = time.perf_counter()
     try:
-        status, response_body = request(method, url, headers=headers, body=body, timeout=timeout)
+        status, response_body, _response_headers = request(method, url, headers=headers, body=body, timeout=timeout)
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         if status in expected_statuses:
             return CheckResult(name, True, f"{status} in {elapsed_ms}ms")
@@ -95,7 +104,7 @@ def run_http_check(
 def check_ready(api_root: str, timeout: int) -> CheckResult:
     url = urljoin(api_root, "ready")
     try:
-        status, body = request("GET", url, timeout=timeout)
+        status, body, _headers = request("GET", url, timeout=timeout)
     except Exception as exc:
         return CheckResult("api /ready", False, f"request failed: {exc}")
 
@@ -122,6 +131,75 @@ def check_discovery(api_root: str, timeout: int) -> CheckResult:
         body=body,
         timeout=timeout,
     )
+
+
+def check_frontend_security_headers(app_root: str, timeout: int) -> CheckResult:
+    required = {
+        "content-security-policy",
+        "x-content-type-options",
+        "x-frame-options",
+        "referrer-policy",
+        "permissions-policy",
+    }
+    try:
+        status, _body, headers = request("GET", app_root, timeout=timeout)
+    except Exception as exc:
+        return CheckResult("frontend security headers", False, f"request failed: {exc}")
+    normalized = {key.lower(): value for key, value in headers.items()}
+    missing = sorted(required - set(normalized))
+    if status != 200:
+        return CheckResult("frontend security headers", False, f"unexpected {status}")
+    if missing:
+        return CheckResult("frontend security headers", False, f"missing {', '.join(missing)}")
+    return CheckResult("frontend security headers", True, "required headers present")
+
+
+def check_api_security_headers(api_root: str, timeout: int) -> CheckResult:
+    required = {
+        "x-hackmarket-request-id",
+        "x-hackmarket-response-time-ms",
+        "x-content-type-options",
+        "x-frame-options",
+        "referrer-policy",
+        "permissions-policy",
+    }
+    try:
+        status, body, headers = request("GET", urljoin(api_root, "health"), timeout=timeout)
+    except Exception as exc:
+        return CheckResult("api security headers", False, f"request failed: {exc}")
+    normalized = {key.lower(): value for key, value in headers.items()}
+    missing = sorted(required - set(normalized))
+    if status != 200:
+        return CheckResult("api security headers", False, f"unexpected {status}: {body[:240]}")
+    if missing:
+        return CheckResult("api security headers", False, f"missing {', '.join(missing)}")
+    return CheckResult("api security headers", True, "required headers present")
+
+
+def check_auth_boundary(app_root: str, path: str, timeout: int) -> CheckResult:
+    try:
+        status, _body, headers = request(
+            "GET",
+            urljoin(app_root, path.lstrip("/")),
+            timeout=timeout,
+            follow_redirects=False,
+        )
+    except HTTPError as exc:
+        location = exc.headers.get("Location", "")
+        if exc.code in {307, 308} and ("/sign-in" in location or "/sign-up" in location):
+            return CheckResult(f"auth boundary {path}", True, f"redirects to auth ({exc.code})")
+        if exc.code in {401, 403}:
+            return CheckResult(f"auth boundary {path}", True, f"protected with {exc.code}")
+        return CheckResult(f"auth boundary {path}", False, f"HTTP {exc.code}")
+    except Exception as exc:
+        return CheckResult(f"auth boundary {path}", False, f"request failed: {exc}")
+
+    location = headers.get("Location", "")
+    if status in {307, 308} and ("/sign-in" in location or "/sign-up" in location):
+        return CheckResult(f"auth boundary {path}", True, f"redirects to auth ({status})")
+    if status in {401, 403}:
+        return CheckResult(f"auth boundary {path}", True, f"protected with {status}")
+    return CheckResult(f"auth boundary {path}", False, f"unexpected public status {status}")
 
 
 def check_authenticated_dashboard(app_root: str, clerk_session_token: str, timeout: int) -> CheckResult:
@@ -168,6 +246,10 @@ def main() -> int:
                 timeout=args.timeout,
             )
         )
+    results.append(check_frontend_security_headers(app_root, args.timeout))
+
+    for path in AUTH_BOUNDARY_PATHS:
+        results.append(check_auth_boundary(app_root, path, args.timeout))
 
     results.append(
         run_http_check(
@@ -179,6 +261,7 @@ def main() -> int:
         )
     )
     results.append(check_ready(api_root, args.timeout))
+    results.append(check_api_security_headers(api_root, args.timeout))
     results.append(check_discovery(api_root, args.timeout))
 
     if args.clerk_session_token:
