@@ -48,6 +48,7 @@ ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_a
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 PRODUCTION_LOAD_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_load_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
+PROXY_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "proxy_service.py"
 SOURCE_ARCHIVE = REPO_ROOT / "apps" / "api" / "app" / "services" / "source_archive.py"
 CONTAINER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "container_service.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
@@ -489,6 +490,22 @@ def check_repo_files(failures: list[str]) -> None:
     expect("getaddrinfo" in url_safety, "URL safety must resolve hostnames before outbound tool calls", failures)
     expect("validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety, "URL safety DNS checks must not block the async request path", failures)
     expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
+
+    proxy_service = PROXY_SERVICE.read_text(encoding="utf-8")
+    expect(
+        "SENSITIVE_REQUEST_HEADERS" in proxy_service
+        and "authorization" in proxy_service
+        and "cookie" in proxy_service
+        and "x-forwarded-for" in proxy_service
+        and "x-real-ip" in proxy_service,
+        "tool proxy must not forward user credentials or client network identity headers to seller tools",
+        failures,
+    )
+    expect(
+        "SENSITIVE_RESPONSE_HEADERS" in proxy_service and "set-cookie" in proxy_service,
+        "tool proxy must not return seller Set-Cookie headers to buyers",
+        failures,
+    )
 
     source_archive = SOURCE_ARCHIVE.read_text(encoding="utf-8")
     container_service = CONTAINER_SERVICE.read_text(encoding="utf-8")

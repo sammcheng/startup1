@@ -23,6 +23,22 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 
+SENSITIVE_REQUEST_HEADERS = {
+    "authorization",
+    "cookie",
+    "forwarded",
+    "x-api-key",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "x-real-ip",
+}
+
+SENSITIVE_RESPONSE_HEADERS = {
+    "set-cookie",
+}
+
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -68,7 +84,7 @@ def filter_request_headers(headers, *, strip_api_key: bool = True) -> dict[str, 
         lower = key.lower()
         if lower in HOP_BY_HOP_HEADERS:
             continue
-        if strip_api_key and lower == "x-api-key":
+        if lower in SENSITIVE_REQUEST_HEADERS and (strip_api_key or lower != "x-api-key"):
             continue
         filtered[key] = value
     return filtered
@@ -77,7 +93,8 @@ def filter_request_headers(headers, *, strip_api_key: bool = True) -> dict[str, 
 def filter_response_headers(headers) -> dict[str, str]:
     filtered: dict[str, str] = {}
     for key, value in headers.items():
-        if key.lower() in HOP_BY_HOP_HEADERS:
+        lower = key.lower()
+        if lower in HOP_BY_HOP_HEADERS or lower in SENSITIVE_RESPONSE_HEADERS:
             continue
         filtered[key] = value
     return filtered
