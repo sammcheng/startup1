@@ -721,6 +721,14 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_safe_avatar_url" in auth_service
+        and 'parsed.scheme == "https"' in auth_service
+        and "profile.avatar_url" in auth_service
+        and "identity.avatar_url" in auth_service,
+        "auth sync must sanitize stored avatar URLs before frontend rendering",
+        failures,
+    )
+    expect(
         "Verified account email is required" in auth_router,
         "auth sync must fail cleanly when verified Clerk identity has no email",
         failures,

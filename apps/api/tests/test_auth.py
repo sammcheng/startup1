@@ -249,6 +249,44 @@ async def test_sync_user_trusts_verified_identity_email_over_client_body():
 
 
 @pytest.mark.asyncio
+async def test_sync_user_accepts_https_avatar_url():
+    db = _FakeAuthSession()
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_avatar",
+        email="avatar@example.com",
+        username="avatar-user",
+        display_name="Avatar User",
+        avatar_url="https://images.clerk.dev/avatar.png",
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity)
+
+    assert user.avatar_url == "https://images.clerk.dev/avatar.png"
+
+
+@pytest.mark.asyncio
+async def test_sync_user_drops_unsafe_avatar_urls():
+    db = _FakeAuthSession()
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_unsafe_avatar",
+        email="avatar@example.com",
+        username="avatar-user",
+        display_name="Avatar User",
+        avatar_url="javascript:alert(1)",
+    )
+    profile = AuthSyncRequest(
+        email="avatar@example.com",
+        username="avatar-user",
+        display_name="Avatar User",
+        avatar_url="http://example.com/avatar.png",
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity, profile)
+
+    assert user.avatar_url is None
+
+
+@pytest.mark.asyncio
 async def test_sync_user_rejects_client_email_fallback_in_production(monkeypatch):
     db = _FakeAuthSession()
     monkeypatch.setattr(auth_service.settings, "environment", "production")

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +46,7 @@ async def sync_user_from_identity(
                 clerk_id=identity.clerk_id,
             ),
             display_name=(profile.display_name if profile else None) or identity.display_name or _display_name_from_email(email),
-            avatar_url=(profile.avatar_url if profile else None) or identity.avatar_url,
+            avatar_url=_safe_avatar_url((profile.avatar_url if profile else None), identity.avatar_url),
             role=UserRole.both,
             is_active=True,
         )
@@ -62,7 +63,7 @@ async def sync_user_from_identity(
         current_user_id=user.id,
     )
     user.display_name = (profile.display_name if profile else None) or identity.display_name or user.display_name
-    user.avatar_url = (profile.avatar_url if profile else None) or identity.avatar_url or user.avatar_url
+    user.avatar_url = _safe_avatar_url((profile.avatar_url if profile else None), identity.avatar_url, user.avatar_url)
     user.is_active = True
     await db.commit()
     await db.refresh(user)
@@ -100,3 +101,16 @@ def _username_from_email(email: str) -> str:
 
 def _display_name_from_email(email: str) -> str:
     return _username_from_email(email).replace("-", " ").replace("_", " ").title() or "Hackmarket User"
+
+
+def _safe_avatar_url(*values: str | None) -> str | None:
+    for value in values:
+        if not value:
+            continue
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            continue
+        if parsed.scheme == "https" and parsed.netloc:
+            return value
+    return None
