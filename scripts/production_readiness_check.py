@@ -30,6 +30,7 @@ ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
+API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 
 
 API_REQUIRED_ENV = {
@@ -263,6 +264,18 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "_existing_seller_payout_id" in billing_service,
         "billing scheduler must guard seller payouts with DB-backed idempotency",
+        failures,
+    )
+
+    api_main = API_MAIN.read_text(encoding="utf-8")
+    expect(
+        "worker_heartbeat" in api_main and "missing_heartbeat" in api_main,
+        "API readiness must expose worker heartbeat status",
+        failures,
+    )
+    expect(
+        "degraded_high_depth" in api_main,
+        "API readiness must degrade when worker queue depth is too high",
         failures,
     )
 

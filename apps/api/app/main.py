@@ -217,6 +217,7 @@ async def ready():
     from app.services import queue_service
 
     checks: dict = {"database": "ok", "redis": "ok"}
+    queue_details: dict | None = None
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
@@ -231,8 +232,16 @@ async def ready():
         try:
             depth = await queue_service.queue_depth(_redis_client)
             worker_health = await _redis_client.get(settings.worker_health_check_key)
-            checks["queue"] = f"ok depth={depth}"
-            checks["worker"] = "ok" if worker_health else "missing_heartbeat"
+            worker_healthy = bool(worker_health)
+            queue_details = {
+                "name": settings.worker_queue_name,
+                "depth": depth,
+                "depth_threshold": settings.alert_queue_depth_threshold,
+                "worker_heartbeat": worker_healthy,
+                "worker_health_check_key": settings.worker_health_check_key,
+            }
+            checks["queue"] = "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
+            checks["worker"] = "ok" if worker_healthy else "missing_heartbeat"
             if depth >= settings.alert_queue_depth_threshold:
                 await alert_service.send_alert(
                     "queue_depth_high",
@@ -253,8 +262,15 @@ async def ready():
                 )
         except Exception as exc:
             checks["queue"] = f"error: {type(exc).__name__}"
+            queue_details = {
+                "name": settings.worker_queue_name,
+                "depth": None,
+                "depth_threshold": settings.alert_queue_depth_threshold,
+                "worker_heartbeat": False,
+                "worker_health_check_key": settings.worker_health_check_key,
+            }
 
-    all_ok = checks.get("database") == "ok" and checks.get("redis") == "ok" and checks.get("queue", "ok").startswith("ok")
+    all_ok = all(value == "ok" for value in checks.values())
     if not all_ok and settings.environment == "production":
         await alert_service.send_alert(
             "api_readiness_degraded",
@@ -267,4 +283,6 @@ async def ready():
         "environment": settings.environment,
         "checks": checks,
     }
+    if queue_details is not None:
+        payload["queue"] = queue_details
     return JSONResponse(content=payload, status_code=200 if all_ok else 503)

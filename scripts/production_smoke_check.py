@@ -115,7 +115,11 @@ def check_ready(api_root: str, timeout: int) -> CheckResult:
 
     readiness = payload.get("status")
     if status == 200 and readiness == "ready":
-        queue_depth = payload.get("queue", {}).get("depth")
+        queue = payload.get("queue") or {}
+        queue_depth = queue.get("depth")
+        worker_heartbeat = queue.get("worker_heartbeat")
+        if queue and worker_heartbeat is not True:
+            return CheckResult("api /ready", False, f"worker heartbeat missing; payload={payload}")
         return CheckResult("api /ready", True, f"ready; queue_depth={queue_depth}")
     return CheckResult("api /ready", False, f"{status}; payload={payload}")
 

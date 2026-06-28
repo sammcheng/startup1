@@ -105,11 +105,60 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
 
     response = client.get("/ready")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["queue"] == "degraded_high_depth"
+    assert payload["checks"]["worker"] == "missing_heartbeat"
+    assert payload["queue"] == {
+        "name": "hackmarket:jobs",
+        "depth": 101,
+        "depth_threshold": 100,
+        "worker_heartbeat": False,
+        "worker_health_check_key": "hackmarket:jobs:health",
+    }
     assert [alert["event"] for alert in alerts] == [
         "queue_depth_high",
         "worker_heartbeat_missing",
+        "api_readiness_degraded",
     ]
+
+
+def test_ready_returns_production_queue_details_when_worker_is_healthy(client, monkeypatch):
+    class FakeReadySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return None
+
+    class FakeProductionRedis:
+        async def ping(self):
+            return True
+
+        async def zcard(self, key):
+            return 2
+
+        async def get(self, key):
+            return "1"
+
+    monkeypatch.setattr(dependencies, "AsyncSessionLocal", lambda: FakeReadySession())
+    monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
+    monkeypatch.setattr("app.main.settings.environment", "production")
+    monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["checks"]["queue"] == "ok"
+    assert payload["checks"]["worker"] == "ok"
+    assert payload["queue"]["depth"] == 2
+    assert payload["queue"]["worker_heartbeat"] is True
 
 
 def test_cors_allows_configured_origin(client):

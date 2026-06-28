@@ -187,7 +187,7 @@ Recommended hosted env values:
 Release verification after deploy:
 1. Confirm frontend responds on the public Vercel URL and custom domain.
 2. Confirm API `/health` and `/ready` return success from the live Render service.
-3. Confirm the Render worker health check key appears in Redis and `/ready` reports queue depth.
+3. Confirm the Render worker health check key appears in Redis and `/ready` reports queue depth plus `worker_heartbeat=true`.
 4. Run a signed-in smoke test for `/dashboard`, tool purchase redirect, seller tool upload/configure, and `/submit/{id}/status`.
 5. Confirm Clerk and Stripe webhooks deliver successfully with real provider events.
 6. Replay a Stripe checkout or invoice event in test mode and confirm the second delivery is idempotent.

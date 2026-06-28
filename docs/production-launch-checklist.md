@@ -131,6 +131,7 @@ CLERK_SESSION_TOKEN=... python3 scripts/production_smoke_check.py \
 Watch these signals during the first launch window:
 - API `/health` and `/ready`
 - Worker health key reported by `/ready`
+- `/ready` must return `degraded` if the worker heartbeat is missing or queue depth is above threshold.
 - Redis queue depth
 - Failed `tool_processing_jobs`
 - Alert webhook deliveries for worker failures, readiness degradation, and invalid provider webhooks
