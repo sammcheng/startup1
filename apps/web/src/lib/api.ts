@@ -6,7 +6,7 @@ import {
 } from "@/lib/env";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
-const REQUEST_ID_HEADER = "X-HackMarket-Request-Id";
+export const REQUEST_ID_HEADER = "X-HackMarket-Request-Id";
 export { API_BASE, getGatewayBaseUrl, isLocalServiceUrl, shouldSkipBuildTimeFetch };
 
 export class ApiError extends Error {
@@ -71,7 +71,7 @@ function toApiError(res: Response, data: unknown): ApiError {
   );
 }
 
-function createRequestId(): string {
+export function createRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `web_${crypto.randomUUID().replaceAll("-", "")}`;
   }

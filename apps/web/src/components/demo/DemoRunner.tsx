@@ -14,7 +14,7 @@ import ImageOutput from "./ImageOutput";
 import TableOutput from "./TableOutput";
 import TextOutput from "./TextOutput";
 import type { DemoFileValue, DemoImageValue, DemoInputSchema, DemoRunnerProps, DemoSchemaField, DemoResult } from "./types";
-import { API_BASE, getGatewayBaseUrl } from "@/lib/api";
+import { API_BASE, REQUEST_ID_HEADER, createRequestId, getGatewayBaseUrl } from "@/lib/api";
 import { DEMO_API_KEY } from "@/lib/env";
 
 const GATEWAY_BASE = getGatewayBaseUrl();
@@ -111,6 +111,7 @@ export default function DemoRunner({
           : `${DEMO_BASE}/tools/${toolSlug}/demo`);
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        [REQUEST_ID_HEADER]: createRequestId(),
       };
       if (DEMO_API_KEY) {
         headers["X-API-Key"] = DEMO_API_KEY;

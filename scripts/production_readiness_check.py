@@ -62,6 +62,8 @@ WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace
 WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
 WEB_TOOL_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "tools" / "[slug]" / "page.tsx"
 WEB_DOCS_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "docs" / "DocsClient.tsx"
+WEB_DEMO_RUNNER = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "DemoRunner.tsx"
+WEB_LIVE_BENCHMARK = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "LiveBenchmark.tsx"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
@@ -600,11 +602,21 @@ def check_repo_files(failures: list[str]) -> None:
     )
     docs_client = WEB_DOCS_CLIENT.read_text(encoding="utf-8")
     web_api_client = WEB_API_CLIENT.read_text(encoding="utf-8")
+    web_demo_runner = WEB_DEMO_RUNNER.read_text(encoding="utf-8")
+    web_live_benchmark = WEB_LIVE_BENCHMARK.read_text(encoding="utf-8")
     expect(
         'REQUEST_ID_HEADER = "X-HackMarket-Request-Id"' in web_api_client
         and "createRequestId" in web_api_client
         and "options.requestId ?? createRequestId()" in web_api_client,
         "frontend API client must attach traceable request IDs to outbound API calls",
+        failures,
+    )
+    expect(
+        "REQUEST_ID_HEADER" in web_demo_runner
+        and "createRequestId()" in web_demo_runner
+        and "REQUEST_ID_HEADER" in web_live_benchmark
+        and "createRequestId()" in web_live_benchmark,
+        "frontend demo and benchmark calls must attach traceable request IDs",
         failures,
     )
     expect(

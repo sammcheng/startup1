@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { REQUEST_ID_HEADER, createRequestId } from "@/lib/api";
+
 interface Props {
   endpoint: string;
 }
@@ -22,7 +24,10 @@ export default function LiveBenchmark({ endpoint }: Props) {
       try {
         await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            [REQUEST_ID_HEADER]: createRequestId(),
+          },
           body: "{}",
         });
       } catch {
