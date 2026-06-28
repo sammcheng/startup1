@@ -3,6 +3,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from urllib.parse import urlparse
 
 import stripe
 from sqlalchemy import func, select
@@ -40,6 +41,16 @@ stripe.api_key = settings.stripe_secret_key
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _is_trusted_stripe_checkout_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme == "https" and parsed.hostname == "checkout.stripe.com"
 
 
 async def _call_stripe(func, *args, **kwargs):
@@ -219,12 +230,12 @@ async def purchase_tool(
                 message="Stripe checkout could not be created. Please retry in a moment.",
             ) from exc
         checkout_url = checkout_session.get("url")
-        if not checkout_url:
+        if not _is_trusted_stripe_checkout_url(checkout_url):
             await _fail_checkout_creation(db, purchase, transaction)
             raise AppError(
                 status_code=502,
                 error_code="checkout_unavailable",
-                message="Stripe checkout did not return a usable checkout URL. Please retry in a moment.",
+                message="Stripe checkout did not return a trusted checkout URL. Please retry in a moment.",
             )
         # Store the Checkout Session ID while pending so buyers can recover the
         # checkout URL. The completion webhook replaces it with the payment
@@ -325,7 +336,11 @@ async def _get_pending_checkout_url(db: AsyncSession, buyer: User, tool: Tool) -
         logger.info("Could not retrieve pending checkout session %s", session_id, exc_info=True)
         return None
 
-    return checkout_session.get("url")
+    checkout_url = checkout_session.get("url")
+    if not _is_trusted_stripe_checkout_url(checkout_url):
+        logger.warning("Ignoring untrusted checkout URL for pending session %s", session_id)
+        return None
+    return checkout_url
 
 
 async def _terminate_stale_pending_purchase(

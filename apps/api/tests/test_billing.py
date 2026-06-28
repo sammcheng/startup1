@@ -313,7 +313,7 @@ async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer
     async def fake_checkout_session(buyer, tool, purchase, transaction):
         return {
             "id": "cs_test_purchase",
-            "url": "https://checkout.stripe.test/session",
+            "url": "https://checkout.stripe.com/session",
             "payment_intent": "pi_test_purchase",
         }
 
@@ -324,7 +324,7 @@ async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer
     assert purchase.status == PurchaseStatus.pending
     assert purchase.purchase_price == Decimal("100.00")
     assert purchase.purchase_type == OwnershipType.full_sale
-    assert checkout_url == "https://checkout.stripe.test/session"
+    assert checkout_url == "https://checkout.stripe.com/session"
     assert db.committed == 2
     assert any(isinstance(item, ToolPurchase) for item in db.added)
     transaction = next(item for item in db.added if isinstance(item, Transaction))
@@ -332,6 +332,31 @@ async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer
     assert transaction.platform_fee == Decimal("20.00")
     assert transaction.seller_payout == Decimal("80.00")
     assert transaction.stripe_payment_intent_id == "cs_test_purchase"
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_rejects_untrusted_checkout_session_url(buyer, live_tool, monkeypatch):
+    live_tool.ownership_type = OwnershipType.full_sale
+    live_tool.one_time_price = Decimal("100.00")
+    db = FakePurchaseSession(live_tool)
+
+    async def fake_checkout_session(buyer, tool, purchase, transaction):
+        return {
+            "id": "cs_test_purchase",
+            "url": "https://attacker.example/checkout",
+            "payment_intent": "pi_test_purchase",
+        }
+
+    monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
+
+    with pytest.raises(billing_service.AppError, match="trusted checkout URL"):
+        await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    purchase = next(item for item in db.added if isinstance(item, ToolPurchase))
+    transaction = next(item for item in db.added if isinstance(item, Transaction))
+    assert purchase.status == PurchaseStatus.terminated
+    assert transaction.status == billing_service.TransactionStatus.failed
+    assert db.committed == 2
 
 
 @pytest.mark.asyncio
@@ -376,7 +401,7 @@ async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer
         return {"id": "cs_should_not_be_created"}
 
     async def fake_call_stripe(func, *args, **kwargs):
-        return {"id": "cs_test_winner", "url": "https://checkout.stripe.test/winner"}
+        return {"id": "cs_test_winner", "url": "https://checkout.stripe.com/winner"}
 
     monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
     monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
@@ -384,7 +409,7 @@ async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer
     purchase, checkout_url = await billing_service.purchase_tool(db, buyer, live_tool.id)
 
     assert purchase is winning_pending
-    assert checkout_url == "https://checkout.stripe.test/winner"
+    assert checkout_url == "https://checkout.stripe.com/winner"
     assert stripe_calls == []
     assert db.rollbacks == 1
 
@@ -442,16 +467,69 @@ async def test_purchase_tool_reuses_pending_checkout_session(buyer, live_tool, m
     db = FakePurchaseSession(live_tool, pending=pending, pending_transaction=pending_transaction)
 
     async def fake_call_stripe(func, *args, **kwargs):
-        return {"id": "cs_test_existing", "url": "https://checkout.stripe.test/existing"}
+        return {"id": "cs_test_existing", "url": "https://checkout.stripe.com/existing"}
 
     monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
 
     purchase, checkout_url = await billing_service.purchase_tool(db, buyer, live_tool.id)
 
     assert purchase is pending
-    assert checkout_url == "https://checkout.stripe.test/existing"
+    assert checkout_url == "https://checkout.stripe.com/existing"
     assert db.added == []
     assert db.committed == 0
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_retries_pending_purchase_with_untrusted_checkout_url(buyer, live_tool, monkeypatch):
+    live_tool.ownership_type = OwnershipType.full_sale
+    live_tool.one_time_price = Decimal("100.00")
+    stale_pending = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=live_tool.id,
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        purchase_price=Decimal("100.00"),
+        purchase_type=live_tool.ownership_type,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(UTC),
+    )
+    stale_transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="cs_test_existing",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakePurchaseSession(live_tool, pending=stale_pending, pending_transaction=stale_transaction)
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        return {"id": "cs_test_existing", "url": "https://attacker.example/checkout"}
+
+    async def fake_checkout_session(buyer, tool, purchase, transaction):
+        return {
+            "id": "cs_test_retry",
+            "url": "https://checkout.stripe.com/retry",
+            "payment_intent": "pi_test_retry",
+        }
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+    monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
+
+    purchase, checkout_url = await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    assert stale_pending.status == PurchaseStatus.terminated
+    assert stale_transaction.status == billing_service.TransactionStatus.failed
+    assert purchase is not stale_pending
+    assert checkout_url == "https://checkout.stripe.com/retry"
+    assert db.committed == 3
 
 
 @pytest.mark.asyncio
@@ -493,7 +571,7 @@ async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer
     async def fake_checkout_session(buyer, tool, purchase, transaction):
         return {
             "id": "cs_test_retry",
-            "url": "https://checkout.stripe.test/retry",
+            "url": "https://checkout.stripe.com/retry",
             "payment_intent": "pi_test_retry",
         }
 
@@ -505,7 +583,7 @@ async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer
     assert stale_transaction.status == billing_service.TransactionStatus.failed
     assert purchase is not stale_pending
     assert purchase.status == PurchaseStatus.pending
-    assert checkout_url == "https://checkout.stripe.test/retry"
+    assert checkout_url == "https://checkout.stripe.com/retry"
     assert db.committed == 3
 
 
@@ -554,7 +632,7 @@ def test_purchase_tool_route_returns_checkout_url(client, auth_overrides, buyer,
     async def fake_purchase_tool(db, current_user, tool_id):
         assert current_user is buyer
         assert tool_id == live_tool.id
-        return purchase, "https://checkout.stripe.test/session"
+        return purchase, "https://checkout.stripe.com/session"
 
     monkeypatch.setattr(billing_service, "purchase_tool", fake_purchase_tool)
 
@@ -569,7 +647,7 @@ def test_purchase_tool_route_returns_checkout_url(client, auth_overrides, buyer,
     assert payload["status"] == "pending"
     assert payload["purchase_price"] == "100.00"
     assert payload["purchase_type"] == "full_sale"
-    assert payload["checkout_url"] == "https://checkout.stripe.test/session"
+    assert payload["checkout_url"] == "https://checkout.stripe.com/session"
 
 
 def test_purchase_tool_route_supports_existing_active_purchase(client, auth_overrides, buyer, live_tool, monkeypatch):
