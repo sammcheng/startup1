@@ -1,7 +1,6 @@
 from app.models.tool import ToolStatus
 from app.routers import internal
-from app.services import tool_service
-from app.services import repo_analyzer
+from app.services import repo_analyzer, tool_service
 
 
 def test_create_tool(client, auth_overrides, seller, tool_factory, monkeypatch):
@@ -86,13 +85,14 @@ def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monke
 def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(current_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == seller.id
         return draft_tool
 
     async def fake_get_view_count(redis, slug):
         return 0
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "get_view_count", fake_get_view_count)
 
     response = client.get(f"/v1/tools/me/{draft_tool.id}")
@@ -101,24 +101,26 @@ def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
     assert response.json()["id"] == str(draft_tool.id)
 
 
-def test_get_my_tool_rejects_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):
+def test_get_my_tool_returns_not_found_for_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 
-    async def fake_get_tool_by_id(db, tool_id):
-        return draft_tool
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == buyer.id
+        return None
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.get(f"/v1/tools/me/{draft_tool.id}")
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "forbidden"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_found"
 
 
 def test_update_own_tool(client, auth_overrides, seller, live_tool, monkeypatch):
     auth_overrides(current_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == seller.id
         return live_tool
 
     async def fake_update_tool(db, tool, body, redis=None):
@@ -128,7 +130,7 @@ def test_update_own_tool(client, auth_overrides, seller, live_tool, monkeypatch)
     async def fake_get_view_count(redis, slug):
         return 0
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(tool_service, "get_view_count", fake_get_view_count)
 
@@ -141,24 +143,27 @@ def test_update_own_tool(client, auth_overrides, seller, live_tool, monkeypatch)
 def test_update_other_sellers_tool(client, auth_overrides, buyer, live_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 
-    async def fake_get_tool_by_id(db, tool_id):
-        return live_tool
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == buyer.id
+        return None
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.put(f"/v1/tools/{live_tool.id}", json={"tagline": "Malicious change"})
 
-    assert response.status_code == 403
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_found"
 
 
 def test_update_processing_tool_rejected(client, auth_overrides, seller, live_tool, monkeypatch):
     auth_overrides(current_user=seller)
     live_tool.status = ToolStatus.processing
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == seller.id
         return live_tool
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.put(f"/v1/tools/{live_tool.id}", json={"tagline": "Not yet"})
 
@@ -170,7 +175,8 @@ def test_delete_own_tool_pauses_it(client, auth_overrides, seller, live_tool, mo
     auth_overrides(current_user=seller)
     paused = []
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == seller.id
         return live_tool
 
     async def fake_has_active_consumers(db, tool_id):
@@ -181,7 +187,7 @@ def test_delete_own_tool_pauses_it(client, auth_overrides, seller, live_tool, mo
         tool.status = ToolStatus.paused
         return tool
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "has_active_consumers", fake_has_active_consumers)
     monkeypatch.setattr(tool_service, "pause_tool", fake_pause_tool)
 
@@ -195,15 +201,16 @@ def test_delete_own_tool_pauses_it(client, auth_overrides, seller, live_tool, mo
 def test_delete_other_sellers_tool_rejected(client, auth_overrides, buyer, live_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 
-    async def fake_get_tool_by_id(db, tool_id):
-        return live_tool
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == buyer.id
+        return None
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.delete(f"/v1/tools/{live_tool.id}")
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "forbidden"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_found"
 
 
 def test_duplicate_slug_handled(client, auth_overrides, seller, tool_factory, monkeypatch):

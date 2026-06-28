@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db, require_seller
-from app.exceptions import AppError, Forbidden, ToolNotFoundError, UploadFailedError
+from app.exceptions import AppError, ToolNotFoundError, UploadFailedError
 from app.models.tool import Tool, ToolStatus
 from app.models.user import User
 from app.schemas.tool import (
@@ -27,13 +27,11 @@ router = APIRouter(prefix="/tools", tags=["tool-upload"])
 async def _get_owned_tool(
     tool_id: uuid.UUID,
     current_user: Annotated[User, Depends(require_seller)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Tool:
-    tool = await tool_service.get_tool_by_id(db, tool_id)
+    tool = await tool_service.get_tool_for_seller(db, tool_id, current_user.id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
-    if tool.seller_id != current_user.id:
-        raise Forbidden("You do not own this tool.")
     return tool
 
 
@@ -46,9 +44,9 @@ async def _get_owned_tool(
 async def upload_tool_source(
     tool_id: uuid.UUID,
     request: Request,
-    source_zip: UploadFile | None = File(default=None),
-    tool: Tool = Depends(_get_owned_tool),
-    db: AsyncSession = Depends(get_db),
+    tool: Annotated[Tool, Depends(_get_owned_tool)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    source_zip: Annotated[UploadFile | None, File()] = None,
 ) -> ToolUploadResponse:
     content_type = request.headers.get("content-type", "")
     source_file_tree: list[str] | None = None
@@ -129,8 +127,8 @@ async def upload_tool_source(
 async def configure_tool(
     tool_id: uuid.UUID,
     body: ToolConfigureRequest,
-    tool: Tool = Depends(_get_owned_tool),
-    db: AsyncSession = Depends(get_db),
+    tool: Annotated[Tool, Depends(_get_owned_tool)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ToolResponse:
     if not body.deployment_url and not body.entry_command:
         raise AppError(
@@ -182,7 +180,7 @@ async def configure_tool(
 )
 async def get_tool_status(
     tool_id: uuid.UUID,
-    tool: Tool = Depends(_get_owned_tool),
+    tool: Annotated[Tool, Depends(_get_owned_tool)],
 ) -> ToolStatusResponse:
     return ToolStatusResponse(
         tool_id=tool.id,

@@ -1,6 +1,6 @@
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 import httpx
@@ -9,8 +9,20 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.dependencies import get_current_user, get_db, get_optional_current_user, get_redis, require_seller
-from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError, Unauthorized
+from app.dependencies import (
+    get_current_user,
+    get_db,
+    get_optional_current_user,
+    get_redis,
+    require_seller,
+)
+from app.exceptions import (
+    AppError,
+    RateLimitExceededError,
+    ToolNotFoundError,
+    ToolNotLiveError,
+    Unauthorized,
+)
 from app.middleware.rate_limiter import check_rate_limit
 from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
@@ -96,8 +108,8 @@ async def _check_demo_rate_limit(redis: Redis, request: Request, slug: str) -> t
 )
 async def get_my_tools(
     current_user: Annotated[User, Depends(require_seller)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> list[ToolResponse]:
     """Return all tools owned by the authenticated seller (any status)."""
     tools = await tool_service.get_seller_tools(db, current_user.id)
@@ -118,15 +130,13 @@ async def get_my_tools(
 async def get_my_tool(
     tool_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolResponse:
     """Return one authenticated user's owned tool, regardless of status."""
-    tool = await tool_service.get_tool_by_id(db, tool_id)
+    tool = await tool_service.get_tool_for_seller(db, tool_id, current_user.id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
-    if tool.seller_id != current_user.id:
-        raise Forbidden("You do not own this tool.")
     view_count = await tool_service.get_view_count(redis, tool.slug)
     return ToolResponse.model_validate(tool).model_copy(update={"view_count": view_count})
 
@@ -145,7 +155,7 @@ async def get_my_tool(
 async def create_tool(
     body: ToolCreate,
     current_user: Annotated[User, Depends(require_seller)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ToolResponse:
     """Create a tool in 'draft' status. Requires seller role."""
     tool = await tool_service.create_tool(db, current_user.id, body)
@@ -166,8 +176,8 @@ async def create_tool(
 async def discover_tools(
     body: ToolDiscoverRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolDiscoverResponse:
     """Tokenize the query, score live tools across name/tagline/description/
     category/schema, and return the top *limit* with a per-result fit line.
@@ -211,8 +221,8 @@ async def submit_repo(
     body: ToolSubmitRequest,
     request: Request,
     current_user: Annotated[User | None, Depends(get_optional_current_user)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolSubmitResponse:
     """Clone the repo (shallow), run repo_analyzer (OpenRouter Claude Sonnet,
     with dev-only heuristic fallback unless explicitly enabled), create a draft
@@ -340,10 +350,10 @@ async def submit_repo(
 )
 async def list_tools(
     filters: Annotated[ToolFilters, Depends(_parse_filters)],
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ToolListResponse:
     """Public endpoint. Returns paginated live tools with optional filters."""
     items, total = await tool_service.list_live_tools(db, filters, page, limit)
@@ -377,8 +387,8 @@ async def run_tool_demo(
     slug: str,
     request: Request,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> Response:
     tool = await tool_service.get_tool_by_slug(db, slug)
     if not tool:
@@ -389,7 +399,7 @@ async def run_tool_demo(
     limit, remaining = await _check_demo_rate_limit(redis, request, slug)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     request_body = await request.body()
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
 
     upstream_status_code = status.HTTP_502_BAD_GATEWAY
     upstream_content = b""
@@ -425,7 +435,7 @@ async def run_tool_demo(
         upstream_content = b'{"error":{"code":"TOOL_REQUEST_FAILED","message":"The demo request failed before completion."}}'
         upstream_headers = {"content-type": "application/json"}
 
-    response_time_ms = max(int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000), 1)
+    response_time_ms = max(int((datetime.now(UTC) - started_at).total_seconds() * 1000), 1)
     await tool_service.increment_total_requests(redis, tool.id)
     background_tasks.add_task(tool_service.flush_total_requests_if_needed, redis, tool.id)
 
@@ -458,7 +468,7 @@ async def run_tool_demo(
 async def get_tool_docs(
     slug: str,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ToolDocumentation:
     tool = await tool_service.get_tool_by_slug(db, slug)
     if not tool:
@@ -478,8 +488,8 @@ async def get_tool_docs(
 )
 async def get_tool(
     slug: str,
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolResponse:
     """Public endpoint. Returns full tool details and increments the view counter."""
     tool = await tool_service.get_tool_by_slug(db, slug)
@@ -504,15 +514,13 @@ async def update_tool(
     tool_id: uuid.UUID,
     body: ToolUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolResponse:
     """Update allowed fields. Caller must own the tool. Blocked while in 'processing'."""
-    tool = await tool_service.get_tool_by_id(db, tool_id)
+    tool = await tool_service.get_tool_for_seller(db, tool_id, current_user.id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
-    if tool.seller_id != current_user.id:
-        raise Forbidden("You do not own this tool.")
     if tool.status == ToolStatus.processing:
         raise AppError(
             message="Cannot update a tool while it is being processed.",
@@ -538,18 +546,16 @@ async def update_tool(
 async def delete_tool(
     tool_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> None:
     """
     Sets tool status to 'paused'. Does not delete from the database.
     Logs a warning if the tool has had recent usage activity.
     """
-    tool = await tool_service.get_tool_by_id(db, tool_id)
+    tool = await tool_service.get_tool_for_seller(db, tool_id, current_user.id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
-    if tool.seller_id != current_user.id:
-        raise Forbidden("You do not own this tool.")
 
     if await tool_service.has_active_consumers(db, tool_id):
         import logging

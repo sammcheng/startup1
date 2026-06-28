@@ -2,10 +2,10 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -95,7 +95,7 @@ async def get_view_counts(redis: Redis, slugs: list[str]) -> dict[str, int]:
         for slug in slugs:
             await pipe.get(f"{_VIEW_KEY_PREFIX}{slug}")
         results = await pipe.execute()
-    return {slug: int(v) if v else 0 for slug, v in zip(slugs, results)}
+    return {slug: int(v) if v else 0 for slug, v in zip(slugs, results, strict=False)}
 
 
 async def increment_total_requests(redis: Redis, tool_id: uuid.UUID) -> int:
@@ -134,7 +134,7 @@ async def flush_total_requests_if_needed(redis: Redis, tool_id: uuid.UUID) -> No
 
 async def has_active_consumers(db: AsyncSession, tool_id: uuid.UUID) -> bool:
     """Return True if there is any usage activity in the last 30 days."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    cutoff = datetime.now(UTC) - timedelta(days=30)
     result = await db.execute(
         select(UsageLog.id)
         .where(UsageLog.tool_id == tool_id, UsageLog.request_timestamp >= cutoff)
@@ -238,6 +238,18 @@ async def get_tool_by_id(db: AsyncSession, tool_id: uuid.UUID) -> Tool | None:
     result = await db.execute(
         select(Tool)
         .where(Tool.id == tool_id)
+        .options(selectinload(Tool.seller))
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_tool_for_seller(db: AsyncSession, tool_id: uuid.UUID, seller_id: uuid.UUID) -> Tool | None:
+    result = await db.execute(
+        select(Tool)
+        .where(
+            Tool.id == tool_id,
+            Tool.seller_id == seller_id,
+        )
         .options(selectinload(Tool.seller))
     )
     return result.scalar_one_or_none()

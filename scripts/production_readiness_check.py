@@ -358,6 +358,11 @@ def check_repo_files(failures: list[str]) -> None:
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)
     expect('return slug[:90] or "tool"' in tool_service, "tool slug generation must have a safe fallback for non-sluggable names", failures)
+    expect(
+        "get_tool_for_seller" in tool_service and "Tool.seller_id == seller_id" in tool_service,
+        "seller-owned tool routes must use account-scoped tool lookup",
+        failures,
+    )
     api_key_service = API_KEY_SERVICE.read_text(encoding="utf-8")
     expect(
         "_lock_user_for_api_key_create" in api_key_service

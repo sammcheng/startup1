@@ -43,7 +43,7 @@ def test_upload_waits_for_configuration(client, auth_overrides, seller, draft_to
     auth_overrides(seller_user=seller)
     queue_calls: list[str] = []
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_update_tool(db, tool, updates):
@@ -56,7 +56,7 @@ def test_upload_waits_for_configuration(client, auth_overrides, seller, draft_to
         queue_calls.append(f"{trigger}:{tool.id}")
         return type("QueuedJob", (), {"id": "job_queued"})()
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(storage_service, "upload_bytes", fake_upload_bytes)
     monkeypatch.setattr(job_service, "enqueue_tool_processing", fake_enqueue_tool_processing)
@@ -78,7 +78,7 @@ def test_upload_queues_processing_when_runtime_is_configured(client, auth_overri
     queued_job_id = uuid.uuid4()
     queue_calls: list[str] = []
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_update_tool(db, tool, updates):
@@ -91,7 +91,7 @@ def test_upload_queues_processing_when_runtime_is_configured(client, auth_overri
         queue_calls.append(f"{trigger}:{tool.id}")
         return type("QueuedJob", (), {"id": queued_job_id})()
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(storage_service, "upload_bytes", fake_upload_bytes)
     monkeypatch.setattr(job_service, "enqueue_tool_processing", fake_enqueue_tool_processing)
@@ -110,13 +110,13 @@ def test_upload_queues_processing_when_runtime_is_configured(client, auth_overri
 def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_bytes(*args, **kwargs):
         raise AssertionError("unsafe archive should not be stored")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
 
     response = client.post(
@@ -132,13 +132,13 @@ def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft
 def test_upload_rejects_zip_windows_path_traversal(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_bytes(*args, **kwargs):
         raise AssertionError("unsafe archive should not be stored")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
 
     response = client.post(
@@ -154,13 +154,13 @@ def test_upload_rejects_zip_windows_path_traversal(client, auth_overrides, selle
 def test_upload_rejects_zip_symlink(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_bytes(*args, **kwargs):
         raise AssertionError("unsafe archive should not be stored")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
 
     response = client.post(
@@ -176,13 +176,13 @@ def test_upload_rejects_zip_symlink(client, auth_overrides, seller, draft_tool, 
 def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_bytes(*args, **kwargs):
         raise AssertionError("oversized archive should not be stored")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
     monkeypatch.setattr("app.routers.upload.settings.max_source_zip_entries", 1)
 
@@ -205,13 +205,13 @@ def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller
 def test_upload_rejects_zip_with_large_uncompressed_size(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_bytes(*args, **kwargs):
         raise AssertionError("zip bomb should not be stored")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
     monkeypatch.setattr("app.routers.upload.settings.max_source_zip_uncompressed_bytes", 4)
 
@@ -231,7 +231,7 @@ def test_configure_starts_processing_when_source_exists(client, auth_overrides, 
     draft_tool.source_s3_key = f"tools/{draft_tool.id}/source.zip"
     draft_tool.status = ToolStatus.draft
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_update_tool(db, tool, updates):
@@ -244,7 +244,7 @@ def test_configure_starts_processing_when_source_exists(client, auth_overrides, 
         queue_calls.append(f"{trigger}:{tool.id}")
         return type("QueuedJob", (), {"id": "job_queued"})()
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(storage_service, "upload_json", fake_upload_json)
     monkeypatch.setattr(job_service, "enqueue_tool_processing", fake_enqueue_tool_processing)
@@ -271,7 +271,7 @@ def test_configure_marks_tool_rejected_when_queue_is_unavailable(client, auth_ov
     draft_tool.source_s3_key = f"tools/{draft_tool.id}/source.zip"
     draft_tool.status = ToolStatus.draft
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_update_tool(db, tool, updates):
@@ -283,7 +283,7 @@ def test_configure_marks_tool_rejected_when_queue_is_unavailable(client, auth_ov
     async def fake_enqueue_tool_processing(db, tool, *, trigger, payload=None):
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(storage_service, "upload_json", fake_upload_json)
     monkeypatch.setattr(job_service, "enqueue_tool_processing", fake_enqueue_tool_processing)
@@ -304,13 +304,14 @@ def test_configure_marks_tool_rejected_when_queue_is_unavailable(client, auth_ov
     assert draft_tool.status == ToolStatus.rejected
 
 
-def test_configure_rejects_other_sellers_tool(client, auth_overrides, user, draft_tool, monkeypatch):
+def test_configure_returns_not_found_for_other_sellers_tool(client, auth_overrides, user, draft_tool, monkeypatch):
     auth_overrides(seller_user=user)
 
-    async def fake_get_tool_by_id(db, tool_id):
-        return draft_tool
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == user.id
+        return None
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.post(
         f"/v1/tools/{draft_tool.id}/configure",
@@ -323,17 +324,17 @@ def test_configure_rejects_other_sellers_tool(client, auth_overrides, user, draf
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "forbidden"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_found"
 
 
 def test_configure_requires_entry_command_or_deployment_url(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
 
     response = client.post(
         f"/v1/tools/{draft_tool.id}/configure",
@@ -366,13 +367,13 @@ def test_seller_submission_status_returns_latest_processing_job(client, auth_ove
         updated_at=now,
     )
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_get_latest_tool_job(db, tool_id):
         return job
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(job_service, "get_latest_tool_job", fake_get_latest_tool_job)
 
     response = client.get(f"/v1/seller/submissions/{draft_tool.id}/status")
@@ -384,11 +385,36 @@ def test_seller_submission_status_returns_latest_processing_job(client, auth_ove
     assert payload["job"]["last_error"] == "Render was temporarily unavailable."
 
 
+def test_seller_submission_status_returns_not_found_for_other_seller(
+    client,
+    auth_overrides,
+    user,
+    draft_tool,
+    monkeypatch,
+):
+    auth_overrides(seller_user=user)
+
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == user.id
+        return None
+
+    async def fail_get_latest_tool_job(db, tool_id):
+        raise AssertionError("not-owned submission status should not query jobs")
+
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
+    monkeypatch.setattr(job_service, "get_latest_tool_job", fail_get_latest_tool_job)
+
+    response = client.get(f"/v1/seller/submissions/{draft_tool.id}/status")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_found"
+
+
 def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
     draft_tool.status = ToolStatus.draft
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fake_update_tool(db, tool, updates):
@@ -400,7 +426,7 @@ def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, d
     async def fake_verify_live_endpoint(url):
         return "https://api.example.com"
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
     monkeypatch.setattr(storage_service, "upload_json", fake_upload_json)
     monkeypatch.setattr(endpoint_service, "verify_live_endpoint", fake_verify_live_endpoint)
@@ -426,13 +452,13 @@ def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, d
 def test_configure_rejects_local_deployment_url_in_production(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
 
-    async def fake_get_tool_by_id(db, tool_id):
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
         return draft_tool
 
     async def fail_upload_json(*args, **kwargs):
         raise AssertionError("unsafe endpoint should be rejected before storing config")
 
-    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
     monkeypatch.setattr(storage_service, "upload_json", fail_upload_json)
     monkeypatch.setattr("app.services.url_safety.settings.environment", "production")
 
