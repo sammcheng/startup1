@@ -18,6 +18,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RENDER_BLUEPRINT = REPO_ROOT / "render.yaml"
 WEB_PACKAGE = REPO_ROOT / "apps" / "web" / "package.json"
+WEB_DOCKERFILE = REPO_ROOT / "apps" / "web" / "Dockerfile.prod"
 API_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements.txt"
 JOBS_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0007_add_tool_processing_jobs.py"
@@ -314,6 +315,8 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     requirements = API_REQUIREMENTS.read_text(encoding="utf-8")
+    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    web_dockerfile = WEB_DOCKERFILE.read_text(encoding="utf-8")
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
     expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
@@ -326,6 +329,22 @@ def check_repo_files(failures: list[str]) -> None:
     expect(PRODUCTION_LOAD_SMOKE_CHECK.exists(), "production load smoke check is missing", failures)
     expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
     expect(SOURCE_ARCHIVE.exists(), "source archive safety guard is missing", failures)
+    expect(
+        "ARG NEXT_PUBLIC_API_URL" in web_dockerfile
+        and "ARG NEXT_PUBLIC_APP_URL" in web_dockerfile
+        and "ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in web_dockerfile
+        and "ARG CLERK_SECRET_KEY" in web_dockerfile,
+        "web production Dockerfile must accept strict build-time env vars",
+        failures,
+    )
+    expect(
+        "build-args:" in ci_workflow
+        and "NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1" in ci_workflow
+        and "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_" in ci_workflow
+        and "CLERK_SECRET_KEY=sk_live_ci" in ci_workflow,
+        "CI web Docker image build must pass strict production env placeholders",
+        failures,
+    )
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
     expect(
@@ -561,7 +580,6 @@ def check_repo_files(failures: list[str]) -> None:
     expect("flush_total_requests_if_needed" in tools_router, "public demos must flush request counters for durable production metrics", failures)
     expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
 
-    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
     expect(
         "python ../../scripts/check_migration_safety.py" in ci_workflow,

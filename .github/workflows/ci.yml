@@ -218,6 +218,11 @@ jobs:
         with:
           context: ./apps/web
           file: ./apps/web/Dockerfile.prod
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1
+            NEXT_PUBLIC_APP_URL=https://hackmarket.io
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_YS5iJA==
+            CLERK_SECRET_KEY=sk_live_ci
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}:sha-${{ github.sha }}
