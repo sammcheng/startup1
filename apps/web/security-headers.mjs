@@ -14,13 +14,15 @@ function normalizeOrigins(values) {
 export function buildContentSecurityPolicy({
   appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://hackmarket.io",
   apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/v1",
-  converterUrl = process.env.NEXT_PUBLIC_CONVERTER_URL ?? "http://localhost:8080",
+  converterUrl = process.env.NEXT_PUBLIC_CONVERTER_URL,
   nodeEnv = process.env.NODE_ENV ?? "development",
 } = {}) {
   const appOrigin = readOrigin(appUrl);
   const apiOrigin = readOrigin(apiUrl);
-  const converterOrigin = readOrigin(converterUrl);
   const isProduction = nodeEnv === "production";
+  const converterOrigin = readOrigin(
+    converterUrl ?? (isProduction ? null : "http://localhost:8080"),
+  );
 
   const connectSrc = normalizeOrigins([
     "'self'",

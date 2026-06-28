@@ -25,6 +25,28 @@ test("buildContentSecurityPolicy keeps unsafe-eval out of production", () => {
   assert.doesNotMatch(csp, /unsafe-eval/);
 });
 
+test("buildContentSecurityPolicy does not add localhost converter origin in production", () => {
+  const csp = buildContentSecurityPolicy({
+    appUrl: "https://hackmarket.io",
+    apiUrl: "https://api.hackmarket.io/v1",
+    converterUrl: undefined,
+    nodeEnv: "production",
+  });
+
+  assert.doesNotMatch(csp, /localhost:8080/);
+});
+
+test("buildContentSecurityPolicy allows local converter origin in development", () => {
+  const csp = buildContentSecurityPolicy({
+    appUrl: "http://localhost:3000",
+    apiUrl: "http://localhost:8000/v1",
+    converterUrl: undefined,
+    nodeEnv: "development",
+  });
+
+  assert.match(csp, /localhost:8080/);
+});
+
 test("buildSecurityHeaders adds strict transport security only in production", () => {
   const devHeaders = buildSecurityHeaders({ nodeEnv: "development" });
   const prodHeaders = buildSecurityHeaders({ nodeEnv: "production" });

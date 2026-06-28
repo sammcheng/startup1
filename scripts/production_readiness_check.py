@@ -53,6 +53,7 @@ SOURCE_ARCHIVE = REPO_ROOT / "apps" / "api" / "app" / "services" / "source_archi
 CONTAINER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "container_service.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
 WEB_ENV = REPO_ROOT / "apps" / "web" / "src" / "lib" / "env.ts"
+WEB_SECURITY_HEADERS = REPO_ROOT / "apps" / "web" / "security-headers.mjs"
 WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
 WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
 WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
@@ -476,6 +477,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect("Audit trail" in admin_page, "admin dashboard must render admin audit trail", failures)
 
     web_env = WEB_ENV.read_text(encoding="utf-8")
+    web_security_headers = WEB_SECURITY_HEADERS.read_text(encoding="utf-8")
     expect(
         'process.env.NODE_ENV !== "production" && CONVERTER_ENABLED' in web_env,
         "frontend must disable converter catalog fallback in production",
@@ -484,6 +486,11 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         'ALLOW_PUBLIC_DEMO_API_KEY = process.env.NODE_ENV !== "production"' in web_env,
         "frontend must ignore public demo API keys in production",
+        failures,
+    )
+    expect(
+        'converterUrl ?? (isProduction ? null : "http://localhost:8080")' in web_security_headers,
+        "frontend production CSP must not include the local converter origin unless configured",
         failures,
     )
     for path in [WEB_HOME_PAGE, WEB_MARKETPLACE_PAGE, WEB_MARKETPLACE_CLIENT, WEB_TOOL_PAGE]:
