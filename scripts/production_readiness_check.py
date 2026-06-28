@@ -314,6 +314,8 @@ def check_repo_files(failures: list[str]) -> None:
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
     expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)
     expect("is_private" in url_safety and "is_loopback" in url_safety, "URL safety must reject private/loopback IPs", failures)
+    expect("getaddrinfo" in url_safety, "URL safety must resolve hostnames before outbound tool calls", failures)
+    expect("validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety, "URL safety DNS checks must not block the async request path", failures)
     expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")

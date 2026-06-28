@@ -4,11 +4,11 @@ import httpx
 
 from app.exceptions import AppError
 from app.services.proxy_service import get_http_client
-from app.services.url_safety import validate_public_tool_endpoint
+from app.services.url_safety import validate_public_tool_endpoint_async
 
 
 async def verify_live_endpoint(endpoint_url: str) -> str:
-    normalized = validate_public_tool_endpoint(endpoint_url)
+    normalized = await validate_public_tool_endpoint_async(endpoint_url)
     parsed = urlparse(normalized)
     if not parsed.netloc:
         raise AppError(

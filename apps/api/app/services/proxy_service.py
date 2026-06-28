@@ -8,7 +8,7 @@ import httpx
 from fastapi import Request
 
 from app.config import settings
-from app.services.url_safety import validate_public_tool_endpoint
+from app.services.url_safety import validate_public_tool_endpoint_async
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -137,7 +137,7 @@ async def forward_request(
     timeout_seconds: int = 30,
     extra_headers: dict[str, str] | None = None,
 ) -> httpx.Response:
-    validate_public_tool_endpoint(api_endpoint)
+    await validate_public_tool_endpoint_async(api_endpoint)
     url = build_upstream_url(api_endpoint, tool_path, request.url.query.encode("utf-8"))
     headers = filter_request_headers(request.headers)
     headers["X-HackMarket-Request-Id"] = request_id
