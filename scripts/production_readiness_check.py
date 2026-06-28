@@ -471,6 +471,13 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        'openapi_url=debug_only_url("/openapi.json")' in api_main
+        and 'docs_url=debug_only_url("/docs")' in api_main
+        and 'redoc_url=debug_only_url("/redoc")' in api_main,
+        "API docs and raw OpenAPI schema must be debug-only",
+        failures,
+    )
+    expect(
         "degraded_high_depth" in operations_health_service,
         "shared operations health must degrade when worker queue depth is too high",
         failures,

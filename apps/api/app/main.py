@@ -65,6 +65,10 @@ def normalize_request_id(value: str | None) -> str:
     return value
 
 
+def debug_only_url(path: str) -> str | None:
+    return path if settings.debug else None
+
+
 async def _close_app_resources() -> None:
     from app.dependencies import _redis_client, engine
     from app.services.proxy_service import close_http_client
@@ -116,8 +120,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 app = FastAPI(
     title="Hackmarket API",
     version="0.1.0",
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
+    openapi_url=debug_only_url("/openapi.json"),
+    docs_url=debug_only_url("/docs"),
+    redoc_url=debug_only_url("/redoc"),
     lifespan=lifespan,
 )
 

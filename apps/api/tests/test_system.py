@@ -1,4 +1,4 @@
-from app import dependencies
+from app import dependencies, main
 
 
 async def fake_healthy_processing_jobs(db):
@@ -28,6 +28,18 @@ def test_responses_include_security_headers(client):
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
     assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+
+
+def test_debug_only_url_is_disabled_when_debug_is_false(monkeypatch):
+    monkeypatch.setattr(main.settings, "debug", False)
+
+    assert main.debug_only_url("/openapi.json") is None
+
+
+def test_debug_only_url_is_enabled_when_debug_is_true(monkeypatch):
+    monkeypatch.setattr(main.settings, "debug", True)
+
+    assert main.debug_only_url("/openapi.json") == "/openapi.json"
 
 
 def test_request_id_preserves_safe_client_id(client):
