@@ -351,6 +351,28 @@ def test_submit_repo_anonymous_uses_system_seller(client, seller, tool_factory, 
     assert "account" in payload["message"].lower()
 
 
+def test_submit_repo_production_requires_sign_in_for_anonymous_preview(client, monkeypatch):
+    async def fail_clone_repo(github_url, repo_path):
+        raise AssertionError("production anonymous submissions must stop before cloning")
+
+    async def fail_system_seller(db):
+        raise AssertionError("production anonymous submissions must not create system-owned drafts")
+
+    monkeypatch.setattr(repo_analyzer.settings, "environment", "production")
+    monkeypatch.setattr(repo_analyzer, "clone_repo", fail_clone_repo)
+    monkeypatch.setattr(internal, "_get_or_create_system_seller", fail_system_seller)
+
+    response = client.post(
+        "/v1/tools/submit",
+        json={"github_url": "https://github.com/openai/example"},
+    )
+
+    assert response.status_code == 401
+    payload = response.json()
+    assert payload["error"]["code"] == "unauthorized"
+    assert "sign in" in payload["error"]["message"].lower()
+
+
 def test_submit_repo_production_requires_live_analysis(
     client, auth_overrides, user, monkeypatch
 ):

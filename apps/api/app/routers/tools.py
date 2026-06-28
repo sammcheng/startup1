@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_current_user, get_db, get_optional_current_user, get_redis, require_seller
-from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
+from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError, Unauthorized
 from app.middleware.rate_limiter import check_rate_limit
 from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
@@ -196,9 +196,8 @@ async def discover_tools(
 
 # ---------------------------------------------------------------------------
 # POST /tools/submit — single-call submit flow (ported from kc).
-# Paste a GitHub URL, get back a fully-analyzed draft listing. No auth
-# required (anonymous demo submitter); the draft is owned by a system user
-# until claimed via the normal seller flow.
+# Paste a GitHub URL, get back a fully-analyzed draft listing. Production
+# requires auth so every draft belongs to the submitter's account.
 # ---------------------------------------------------------------------------
 
 
@@ -217,12 +216,14 @@ async def submit_repo(
 ) -> ToolSubmitResponse:
     """Clone the repo (shallow), run repo_analyzer (OpenRouter Claude Sonnet,
     with dev-only heuristic fallback unless explicitly enabled), create a draft
-    Tool owned by the system submitter, and return the analyzed listing for
-    review/edit on the frontend.
+    Tool owned by the submitter, and return the analyzed listing for review/edit
+    on the frontend. Anonymous preview drafts are development-only.
 
     Mirrors kc's POST /api/submit — one call returns a fully-populated draft.
     """
     await _check_public_rate_limit(redis, request, "submit")
+    if settings.environment == "production" and current_user is None:
+        raise Unauthorized("Sign in before submitting a tool for analysis.")
 
     # Lazy imports to keep the module load fast.
     import secrets

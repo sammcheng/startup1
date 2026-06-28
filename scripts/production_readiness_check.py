@@ -39,6 +39,7 @@ BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_ser
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_CONFIG = REPO_ROOT / "apps" / "api" / "app" / "config.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
+API_TOOLS_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "tools.py"
 BOOTSTRAP_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "bootstrap_service.py"
 OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
 ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
@@ -336,6 +337,17 @@ def check_repo_files(failures: list[str]) -> None:
     expect("enable_bootstrap_tool_seed: bool = False" in api_config, "bootstrap tool seed must default off", failures)
     expect("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config, "production must reject fixed bootstrap marketplace seeds", failures)
     expect(BOOTSTRAP_SERVICE.exists(), "bootstrap seed service is missing", failures)
+    tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
+    expect(
+        'settings.environment == "production" and current_user is None' in tools_router,
+        "production tool submissions must require a signed-in owner",
+        failures,
+    )
+    expect(
+        "Sign in before submitting a tool for analysis" in tools_router,
+        "anonymous production submissions must fail before creating system-owned drafts",
+        failures,
+    )
     expect(OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures)
     operations_health_service = OPERATIONS_HEALTH_SERVICE.read_text(encoding="utf-8")
     expect("get_operations_health" in operations_health_service, "operations health service must expose shared health summary", failures)
