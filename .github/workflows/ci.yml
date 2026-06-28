@@ -28,6 +28,9 @@ jobs:
       - name: Scan tracked files for committed secrets
         run: python scripts/security_scan.py
 
+      - name: Block committed build artifacts and local files
+        run: python scripts/repo_hygiene_check.py
+
   render-blueprint:
     runs-on: ubuntu-latest
     steps:

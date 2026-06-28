@@ -29,6 +29,7 @@ DATA_INTEGRITY_MIGRATION = (
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
+REPO_HYGIENE_CHECK = REPO_ROOT / "scripts" / "repo_hygiene_check.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 
@@ -254,6 +255,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
     expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
+    expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
     expect(
@@ -281,6 +283,11 @@ def check_repo_files(failures: list[str]) -> None:
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
+    expect(
+        "python scripts/repo_hygiene_check.py" in ci_workflow,
+        "CI must block committed build artifacts and local files",
+        failures,
+    )
     expect("npm audit --audit-level=high" in ci_workflow, "CI must audit Node dependencies", failures)
     expect("npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures)
     expect("npm run test:security" in ci_workflow, "CI must test frontend security headers", failures)

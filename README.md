@@ -195,6 +195,7 @@ Release verification after deploy:
 Production readiness commands:
 ```bash
 python3 scripts/security_scan.py
+python3 scripts/repo_hygiene_check.py
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test python3 scripts/check_alembic_migrations.py --upgrade
@@ -212,6 +213,7 @@ GitHub Actions workflow: `.github/workflows/ci.yml`
 
 On pull requests and pushes to `main`, CI:
 - scans tracked files for committed production secrets
+- blocks committed build artifacts, dependency folders, caches, and local env files
 - installs backend dependencies
 - runs backend tests
 - installs frontend dependencies

@@ -99,6 +99,7 @@ Run local repo checks:
 
 ```bash
 python3 scripts/security_scan.py
+python3 scripts/repo_hygiene_check.py
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
 ```
