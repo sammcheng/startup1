@@ -51,6 +51,19 @@ root_logger.addHandler(handler)
 
 logger = logging.getLogger(__name__)
 
+MAX_REQUEST_ID_LENGTH = 128
+REQUEST_ID_ALLOWED_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+
+
+def normalize_request_id(value: str | None) -> str:
+    if not value:
+        return str(uuid.uuid4())
+    if len(value) > MAX_REQUEST_ID_LENGTH:
+        return str(uuid.uuid4())
+    if any(char not in REQUEST_ID_ALLOWED_CHARS for char in value):
+        return str(uuid.uuid4())
+    return value
+
 
 async def _close_app_resources() -> None:
     from app.dependencies import _redis_client, engine
@@ -166,7 +179,7 @@ async def enforce_request_body_limit(request: Request, call_next):
 
 @app.middleware("http")
 async def attach_request_id(request: Request, call_next):
-    request_id = request.headers.get("X-HackMarket-Request-Id") or str(uuid.uuid4())
+    request_id = normalize_request_id(request.headers.get("X-HackMarket-Request-Id"))
     request.state.request_id = request_id
     token = set_request_id(request_id)
     start = time.monotonic()

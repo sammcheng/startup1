@@ -30,6 +30,31 @@ def test_responses_include_security_headers(client):
     assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
 
 
+def test_request_id_preserves_safe_client_id(client):
+    response = client.get("/health", headers={"X-HackMarket-Request-Id": "req_123.safe:trace-1"})
+
+    assert response.headers["X-HackMarket-Request-Id"] == "req_123.safe:trace-1"
+
+
+def test_request_id_replaces_unsafe_client_id(client):
+    unsafe_request_id = "req_123\nSet-Cookie: leaked=true"
+
+    response = client.get("/health", headers={"X-HackMarket-Request-Id": unsafe_request_id})
+
+    assert response.headers["X-HackMarket-Request-Id"] != unsafe_request_id
+    assert "\n" not in response.headers["X-HackMarket-Request-Id"]
+    assert len(response.headers["X-HackMarket-Request-Id"]) <= 128
+
+
+def test_request_id_replaces_oversized_client_id(client):
+    oversized_request_id = "a" * 129
+
+    response = client.get("/health", headers={"X-HackMarket-Request-Id": oversized_request_id})
+
+    assert response.headers["X-HackMarket-Request-Id"] != oversized_request_id
+    assert len(response.headers["X-HackMarket-Request-Id"]) <= 128
+
+
 def test_request_body_limit_rejects_invalid_content_length(client):
     response = client.post(
         "/v1/tools/discover",
