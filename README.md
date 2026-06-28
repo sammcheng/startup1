@@ -190,6 +190,7 @@ Release verification after deploy:
 3. Confirm the Render worker health check key appears in Redis and `/ready` reports queue depth.
 4. Run a signed-in smoke test for `/dashboard`, tool purchase redirect, seller tool upload/configure, and `/submit/{id}/status`.
 5. Confirm Clerk and Stripe webhooks deliver successfully with real provider events.
+6. Replay a Stripe checkout or invoice event in test mode and confirm the second delivery is idempotent.
 
 Production readiness commands:
 ```bash

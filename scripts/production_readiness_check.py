@@ -26,6 +26,7 @@ JOBS_MIGRATION = (
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
+BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 
 
 API_REQUIRED_ENV = {
@@ -248,6 +249,18 @@ def check_repo_files(failures: list[str]) -> None:
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
+
+    billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
+    expect(
+        "_existing_usage_invoice_id" in billing_service,
+        "billing scheduler must guard usage invoices with DB-backed idempotency",
+        failures,
+    )
+    expect(
+        "_existing_seller_payout_id" in billing_service,
+        "billing scheduler must guard seller payouts with DB-backed idempotency",
+        failures,
+    )
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)

@@ -29,10 +29,11 @@ class FakeRowsResult:
 
 
 class FakeBillingSession:
-    def __init__(self, buyer, tool, usage_rows):
+    def __init__(self, buyer, tool, usage_rows, *, existing_invoice=None):
         self.buyer = buyer
         self.tool = tool
         self.usage_rows = usage_rows
+        self.existing_invoice = existing_invoice
         self.added = []
         self.committed = 0
         self.execute_calls = 0
@@ -43,8 +44,10 @@ class FakeBillingSession:
     async def execute(self, statement):
         self.execute_calls += 1
         if self.execute_calls == 1:
-            return FakeRowsResult(self.usage_rows)
+            return SimpleNamespace(scalar_one_or_none=lambda: self.existing_invoice)
         if self.execute_calls == 2:
+            return FakeRowsResult(self.usage_rows)
+        if self.execute_calls == 3:
             return SimpleNamespace(scalar_one_or_none=lambda: self.tool)
         return FakeScalarResult(Decimal("10.00"))
 
@@ -88,6 +91,31 @@ class FakePurchaseSession:
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
+
+
+class FakePayoutSession:
+    def __init__(self, seller, tool, *, existing_payout=None):
+        self.seller = seller
+        self.tool = tool
+        self.existing_payout = existing_payout
+        self.added = []
+        self.committed = 0
+        self.execute_calls = 0
+
+    async def get(self, model, key):
+        return self.seller
+
+    async def execute(self, statement):
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.existing_payout)
+        return SimpleNamespace(scalar_one_or_none=lambda: self.tool)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        self.committed += 1
 
 
 @pytest.mark.asyncio
@@ -143,6 +171,39 @@ async def test_platform_fee_calculated(buyer, live_tool, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_usage_invoice_is_idempotent_for_existing_period(buyer, live_tool, monkeypatch):
+    period_end = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    period_start = period_end - timedelta(days=7)
+    existing = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("10.00"),
+        platform_fee=Decimal("2.00"),
+        seller_payout=Decimal("8.00"),
+        stripe_payment_intent_id="in_existing",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.completed,
+        period_start=period_start,
+        period_end=period_end,
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakeBillingSession(buyer, live_tool, [], existing_invoice=existing)
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("Stripe should not be called for an existing billing period")
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fail_if_called)
+
+    invoice_id = await billing_service.create_usage_invoice(db, buyer.id, period_start, period_end)
+
+    assert invoice_id == "in_existing"
+    assert db.added == []
+    assert db.committed == 0
+
+
+@pytest.mark.asyncio
 async def test_seller_payout_calculated(monkeypatch):
     class FakeRevenueSession:
         async def execute(self, statement):
@@ -156,6 +217,46 @@ async def test_seller_payout_calculated(monkeypatch):
     )
 
     assert payout == Decimal("8.00")
+
+
+@pytest.mark.asyncio
+async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool, monkeypatch):
+    seller.stripe_connect_id = "acct_existing"
+    period_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    period_end = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    existing = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=seller.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("25.00"),
+        platform_fee=Decimal("0.00"),
+        seller_payout=Decimal("25.00"),
+        stripe_payment_intent_id="tr_existing",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.completed,
+        period_start=period_start,
+        period_end=period_end,
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakePayoutSession(seller, live_tool, existing_payout=existing)
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("Stripe should not be called for an existing payout period")
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fail_if_called)
+
+    transfer_id = await billing_service.process_seller_payout(
+        db,
+        seller.id,
+        Decimal("25.00"),
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    assert transfer_id == "tr_existing"
+    assert db.added == []
+    assert db.committed == 0
 
 
 @pytest.mark.asyncio

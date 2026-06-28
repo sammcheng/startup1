@@ -280,7 +280,77 @@ async def record_usage(user_id, tool_id, amount) -> None:
     logger.info("Recorded usage for user=%s tool=%s amount=%s", user_id, tool_id, amount)
 
 
+def _period_bounds(now: datetime, *, days: int) -> tuple[datetime, datetime]:
+    period_end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    period_start = period_end - timedelta(days=days)
+    return period_start, period_end
+
+
+def _previous_month_bounds(now: datetime) -> tuple[datetime, datetime]:
+    current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    previous_month_end = current_month_start
+    previous_month_start = (current_month_start - timedelta(days=1)).replace(day=1)
+    return previous_month_start, previous_month_end
+
+
+async def _existing_usage_invoice_id(
+    db: AsyncSession,
+    user_id,
+    period_start: datetime,
+    period_end: datetime,
+) -> str | None:
+    result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.buyer_id == user_id,
+            Transaction.type == TransactionType.usage,
+            Transaction.period_start == period_start,
+            Transaction.period_end == period_end,
+            Transaction.status.in_([TransactionStatus.pending, TransactionStatus.completed]),
+            Transaction.stripe_payment_intent_id.is_not(None),
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    return existing.stripe_payment_intent_id if existing else None
+
+
+async def _existing_seller_payout_id(
+    db: AsyncSession,
+    seller_id,
+    period_start: datetime,
+    period_end: datetime,
+) -> str | None:
+    result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.buyer_id == seller_id,
+            Transaction.seller_id == seller_id,
+            Transaction.type == TransactionType.usage,
+            Transaction.period_start == period_start,
+            Transaction.period_end == period_end,
+            Transaction.status == TransactionStatus.completed,
+            Transaction.stripe_payment_intent_id.is_not(None),
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    return existing.stripe_payment_intent_id if existing else None
+
+
 async def create_usage_invoice(db: AsyncSession, user_id, period_start: datetime, period_end: datetime) -> str | None:
+    existing_invoice_id = await _existing_usage_invoice_id(db, user_id, period_start, period_end)
+    if existing_invoice_id:
+        logger.info(
+            "Skipping duplicate usage invoice for user=%s period=%s..%s",
+            user_id,
+            period_start.isoformat(),
+            period_end.isoformat(),
+        )
+        return existing_invoice_id
+
     user = await db.get(User, user_id)
     if not user:
         return None
@@ -377,17 +447,41 @@ async def calculate_seller_payout(db: AsyncSession, tool_id, period_start: datet
     return _quantize(revenue - platform_fee - estimated_api_cost)
 
 
-async def process_seller_payout(db: AsyncSession, seller_id, amount: Decimal) -> str | None:
+async def process_seller_payout(
+    db: AsyncSession,
+    seller_id,
+    amount: Decimal,
+    *,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+) -> str | None:
     user = await db.get(User, seller_id)
     if not user or not user.stripe_connect_id or amount <= 0:
         return None
+
+    if period_start is None or period_end is None:
+        period_start, period_end = _previous_month_bounds(datetime.now(timezone.utc))
+
+    existing_transfer_id = await _existing_seller_payout_id(db, seller_id, period_start, period_end)
+    if existing_transfer_id:
+        logger.info(
+            "Skipping duplicate seller payout for seller=%s period=%s..%s",
+            seller_id,
+            period_start.isoformat(),
+            period_end.isoformat(),
+        )
+        return existing_transfer_id
 
     transfer = await _call_stripe(
         stripe.Transfer.create,
         amount=int(_quantize(amount) * 100),
         currency="usd",
         destination=user.stripe_connect_id,
-        metadata={"seller_id": str(seller_id)},
+        metadata={
+            "seller_id": str(seller_id),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        },
     )
 
     fallback_tool = await db.execute(
@@ -406,8 +500,8 @@ async def process_seller_payout(db: AsyncSession, seller_id, amount: Decimal) ->
                 stripe_payment_intent_id=transfer["id"],
                 type=TransactionType.usage,
                 status=TransactionStatus.completed,
-                period_start=datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0),
-                period_end=datetime.now(timezone.utc),
+                period_start=period_start,
+                period_end=period_end,
                 created_at=datetime.now(timezone.utc),
             )
         )
@@ -517,8 +611,7 @@ async def run_daily_aggregation() -> None:
 
 async def run_weekly_invoicing() -> None:
     async with AsyncSessionLocal() as db:
-        period_end = datetime.now(timezone.utc)
-        period_start = period_end - timedelta(days=7)
+        period_start, period_end = _period_bounds(datetime.now(timezone.utc), days=7)
         users = await db.execute(
             select(User.id)
             .join(UsageLog, UsageLog.user_id == User.id)
@@ -534,8 +627,7 @@ async def run_weekly_invoicing() -> None:
 
 async def run_monthly_payouts() -> None:
     async with AsyncSessionLocal() as db:
-        period_end = datetime.now(timezone.utc)
-        period_start = period_end - timedelta(days=30)
+        period_start, period_end = _previous_month_bounds(datetime.now(timezone.utc))
         sellers = await db.execute(select(User).where(User.stripe_connect_id.is_not(None)))
         for seller in sellers.scalars():
             revenue_rows = await db.execute(select(Tool.id).where(Tool.seller_id == seller.id))
@@ -543,7 +635,13 @@ async def run_monthly_payouts() -> None:
             for row in revenue_rows.all():
                 total += await calculate_seller_payout(db, row.id, period_start, period_end)
             try:
-                await process_seller_payout(db, seller.id, _quantize(total))
+                await process_seller_payout(
+                    db,
+                    seller.id,
+                    _quantize(total),
+                    period_start=period_start,
+                    period_end=period_end,
+                )
             except stripe.StripeError:
                 logger.exception("Monthly payout failed for seller %s", seller.id)
 

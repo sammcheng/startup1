@@ -89,6 +89,7 @@ Stripe:
 - Set webhook target to `https://api.hackmarket.io/v1/billing/webhook`
 - Store the signing secret as `STRIPE_WEBHOOK_SECRET`
 - Test checkout, subscription updates, failed payments, and refunds
+- Confirm duplicate Stripe events and repeated worker scheduler runs do not create duplicate purchases, usage invoices, seller payouts, or transactions.
 
 ## 6. Verify Launch Gates
 
