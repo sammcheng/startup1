@@ -13,7 +13,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.middleware.error_handler import setup_error_handlers
 from app.request_context import get_request_id, reset_request_id, set_request_id
-from app.services import alert_service, billing_service
+from app.services import alert_service, billing_service, job_service, queue_service
 
 
 class RequestIdFilter(logging.Filter):
@@ -214,13 +214,24 @@ async def health():
 async def ready():
     from fastapi.responses import JSONResponse
     from app.dependencies import AsyncSessionLocal, _redis_client
-    from app.services import queue_service
 
     checks: dict = {"database": "ok", "redis": "ok"}
     queue_details: dict | None = None
+    processing_job_details: dict | None = None
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
+            if settings.environment == "production":
+                processing_job_details = await job_service.processing_job_health(session)
+                stuck_active = processing_job_details["stuck_active"]
+                failed_recent = processing_job_details["failed_recent"]
+                failed_threshold = processing_job_details["failed_threshold"]
+                processing_risks = []
+                if stuck_active:
+                    processing_risks.append("stuck_active")
+                if failed_recent >= failed_threshold:
+                    processing_risks.append("failed_recent")
+                checks["processing_jobs"] = "ok" if not processing_risks else "degraded_" + "_and_".join(processing_risks)
     except Exception as exc:
         checks["database"] = f"error: {type(exc).__name__}"
     try:
@@ -276,6 +287,31 @@ async def ready():
                 "worker_health_check_key": settings.worker_health_check_key,
             }
 
+    if settings.environment == "production" and processing_job_details is not None and checks.get("processing_jobs") != "ok":
+        stuck_active = processing_job_details["stuck_active"]
+        failed_recent = processing_job_details["failed_recent"]
+        failed_threshold = processing_job_details["failed_threshold"]
+        if stuck_active:
+            await alert_service.send_alert_once(
+                _redis_client,
+                "processing_jobs_stuck",
+                dedupe_key=f"stuck-active:{settings.alert_processing_job_stale_after_seconds}",
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="critical",
+                summary=f"{stuck_active} processing job(s) appear stuck.",
+                details=processing_job_details,
+            )
+        if failed_recent >= failed_threshold:
+            await alert_service.send_alert_once(
+                _redis_client,
+                "processing_jobs_failed",
+                dedupe_key=f"failed-recent:{settings.alert_failed_processing_jobs_window_seconds}",
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="warning",
+                summary=f"{failed_recent} processing job(s) failed recently.",
+                details=processing_job_details,
+            )
+
     all_ok = all(value == "ok" for value in checks.values())
     if not all_ok and settings.environment == "production":
         await alert_service.send_alert_once(
@@ -294,4 +330,6 @@ async def ready():
     }
     if queue_details is not None:
         payload["queue"] = queue_details
+    if processing_job_details is not None:
+        payload["processing_jobs"] = processing_job_details
     return JSONResponse(content=payload, status_code=200 if all_ok else 503)

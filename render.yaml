@@ -64,6 +64,12 @@ services:
         value: "900"
       - key: ALERT_QUEUE_DEPTH_THRESHOLD
         value: "100"
+      - key: ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS
+        value: "1800"
+      - key: ALERT_FAILED_PROCESSING_JOBS_THRESHOLD
+        value: "3"
+      - key: ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS
+        value: "900"
       - key: CONVERTER_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
@@ -195,6 +201,12 @@ services:
         value: "900"
       - key: ALERT_QUEUE_DEPTH_THRESHOLD
         value: "100"
+      - key: ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS
+        value: "1800"
+      - key: ALERT_FAILED_PROCESSING_JOBS_THRESHOLD
+        value: "3"
+      - key: ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS
+        value: "900"
       - key: CONVERTER_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY

@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     alert_webhook_timeout_seconds: int = 5
     alert_dedupe_ttl_seconds: int = 900
     alert_queue_depth_threshold: int = 100
+    alert_processing_job_stale_after_seconds: int = 1800
+    alert_failed_processing_jobs_threshold: int = 3
+    alert_failed_processing_jobs_window_seconds: int = 900
 
     # Rate limiting
     gateway_rate_limit_per_minute: int = 100
@@ -202,6 +205,17 @@ class Settings(BaseSettings):
 
         if self.alert_queue_depth_threshold < 1:
             raise ValueError("ALERT_QUEUE_DEPTH_THRESHOLD must be at least 1 in production.")
+
+        if self.alert_processing_job_stale_after_seconds < self.worker_job_timeout_seconds:
+            raise ValueError(
+                "ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS must be at least WORKER_JOB_TIMEOUT_SECONDS in production."
+            )
+
+        if self.alert_failed_processing_jobs_threshold < 1:
+            raise ValueError("ALERT_FAILED_PROCESSING_JOBS_THRESHOLD must be at least 1 in production.")
+
+        if self.alert_failed_processing_jobs_window_seconds < 60:
+            raise ValueError("ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS must be at least 60 in production.")
 
         if self.gateway_rate_limit_violation_alert_threshold < 1:
             raise ValueError("GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD must be at least 1 in production.")

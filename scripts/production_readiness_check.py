@@ -61,6 +61,9 @@ API_REQUIRED_ENV = {
     "ALERT_WEBHOOK_TIMEOUT_SECONDS",
     "ALERT_DEDUPE_TTL_SECONDS",
     "ALERT_QUEUE_DEPTH_THRESHOLD",
+    "ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS",
+    "ALERT_FAILED_PROCESSING_JOBS_THRESHOLD",
+    "ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS",
     "CONVERTER_SECRET",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
@@ -196,6 +199,21 @@ def check_render_blueprint(failures: list[str]) -> None:
         expect(
             env.get("ALERT_QUEUE_DEPTH_THRESHOLD", {}).get("value") == "100",
             f"{name} must define the production queue-depth alert threshold",
+            failures,
+        )
+        expect(
+            env.get("ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS", {}).get("value") == "1800",
+            f"{name} must define the production stuck processing-job alert threshold",
+            failures,
+        )
+        expect(
+            env.get("ALERT_FAILED_PROCESSING_JOBS_THRESHOLD", {}).get("value") == "3",
+            f"{name} must define the production failed processing-job alert threshold",
+            failures,
+        )
+        expect(
+            env.get("ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS", {}).get("value") == "900",
+            f"{name} must define the production failed processing-job alert window",
             failures,
         )
         expect(
@@ -343,6 +361,9 @@ def check_repo_files(failures: list[str]) -> None:
         "ALERT_WEBHOOK_URL",
         "ALERT_DEDUPE_TTL_SECONDS",
         "ALERT_QUEUE_DEPTH_THRESHOLD",
+        "ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS",
+        "ALERT_FAILED_PROCESSING_JOBS_THRESHOLD",
+        "ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS",
         "MAX_SOURCE_ZIP_ENTRIES",
         "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES",
         "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",

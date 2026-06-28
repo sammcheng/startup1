@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -98,6 +98,38 @@ async def list_latest_tool_jobs(
     for job in result.scalars():
         latest.setdefault(job.tool_id, job)
     return latest
+
+
+async def processing_job_health(db: AsyncSession, *, now: datetime | None = None) -> dict[str, int]:
+    """Summarize processing-job risk for production readiness checks."""
+    current_time = now or datetime.now(timezone.utc)
+    stale_before = current_time - timedelta(seconds=settings.alert_processing_job_stale_after_seconds)
+    failed_since = current_time - timedelta(seconds=settings.alert_failed_processing_jobs_window_seconds)
+
+    stuck_result = await db.execute(
+        select(func.count())
+        .select_from(ToolProcessingJob)
+        .where(
+            ToolProcessingJob.status.in_(ACTIVE_JOB_STATUSES),
+            ToolProcessingJob.created_at <= stale_before,
+        )
+    )
+    failed_result = await db.execute(
+        select(func.count())
+        .select_from(ToolProcessingJob)
+        .where(
+            ToolProcessingJob.status == ToolProcessingJobStatus.failed,
+            ToolProcessingJob.finished_at >= failed_since,
+        )
+    )
+
+    return {
+        "stuck_active": int(stuck_result.scalar_one()),
+        "failed_recent": int(failed_result.scalar_one()),
+        "stale_after_seconds": settings.alert_processing_job_stale_after_seconds,
+        "failed_threshold": settings.alert_failed_processing_jobs_threshold,
+        "failed_window_seconds": settings.alert_failed_processing_jobs_window_seconds,
+    }
 
 
 async def create_tool_processing_job(

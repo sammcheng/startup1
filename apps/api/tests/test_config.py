@@ -182,6 +182,46 @@ def test_production_rejects_invalid_gateway_abuse_settings() -> None:
             **PRODUCTION_REQUIRED,
         )
 
+    with pytest.raises(ValueError, match="ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            worker_job_timeout_seconds=900,
+            alert_processing_job_stale_after_seconds=899,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="ALERT_FAILED_PROCESSING_JOBS_THRESHOLD"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_failed_processing_jobs_threshold=0,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_failed_processing_jobs_window_seconds=59,
+            **PRODUCTION_REQUIRED,
+        )
+
     with pytest.raises(ValueError, match="MAX_SOURCE_ZIP_ENTRIES"):
         Settings(
             environment="production",

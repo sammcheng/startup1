@@ -56,6 +56,9 @@ Required production alert env vars:
 - `ALERT_WEBHOOK_TIMEOUT_SECONDS=5`
 - `ALERT_DEDUPE_TTL_SECONDS=900`
 - `ALERT_QUEUE_DEPTH_THRESHOLD=100`
+- `ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS=1800`
+- `ALERT_FAILED_PROCESSING_JOBS_THRESHOLD=3`
+- `ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS=900`
 - `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3`
 - `GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS=3600`
 - `MAX_ACTIVE_API_KEYS_PER_USER=10`
@@ -139,7 +142,7 @@ CLERK_SESSION_TOKEN=... python3 scripts/production_smoke_check.py \
 Watch these signals during the first launch window:
 - API `/health` and `/ready`
 - Worker health key reported by `/ready`
-- `/ready` must return `degraded` if the worker heartbeat is missing or queue depth is above threshold.
+- `/ready` must return `degraded` if the worker heartbeat is missing, queue depth is above threshold, processing jobs are stuck, or recent processing failures cross threshold.
 - Redis queue depth
 - Failed `tool_processing_jobs`
 - Alert webhook deliveries for worker failures, readiness degradation, and invalid provider webhooks
