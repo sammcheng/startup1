@@ -451,6 +451,15 @@ def check_repo_files(failures: list[str]) -> None:
         "production tool submissions must require a signed-in owner",
         failures,
     )
+    expect(
+        "_public_tool_response" in tools_router
+        and '"environment_variables": None' in tools_router
+        and '"api_endpoint": None' in tools_router
+        and '"source_s3_key": None' in tools_router
+        and '"config_s3_key": None' in tools_router,
+        "public tool APIs must redact seller secrets, storage keys, and raw endpoints",
+        failures,
+    )
     gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(encoding="utf-8")
     expect(
         "_ensure_gateway_entitlement" in gateway_router

@@ -1,6 +1,6 @@
 from app.models.tool import ToolStatus
 from app.routers import internal
-from app.services import repo_analyzer, tool_service
+from app.services import discovery_service, repo_analyzer, tool_service
 
 
 def test_create_tool(client, auth_overrides, seller, tool_factory, monkeypatch):
@@ -46,6 +46,12 @@ def test_create_tool_unauthenticated(client):
 
 
 def test_list_tools_only_live(client, seller, live_tool, draft_tool, monkeypatch):
+    live_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    live_tool.api_endpoint = "https://seller.example.com"
+    live_tool.source_s3_key = "tools/live/source.zip"
+    live_tool.config_s3_key = "tools/live/config.json"
+    live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+
     async def fake_list_live_tools(db, filters, page, limit):
         items = [tool for tool in [live_tool, draft_tool] if tool.status == ToolStatus.live]
         return items, len(items)
@@ -59,7 +65,13 @@ def test_list_tools_only_live(client, seller, live_tool, draft_tool, monkeypatch
     response = client.get("/v1/tools")
 
     assert response.status_code == 200
-    assert [item["slug"] for item in response.json()["items"]] == [live_tool.slug]
+    item = response.json()["items"][0]
+    assert item["slug"] == live_tool.slug
+    assert item["environment_variables"] is None
+    assert item["api_endpoint"] is None
+    assert item["source_s3_key"] is None
+    assert item["config_s3_key"] is None
+    assert item["docker_image_uri"] is None
 
 
 def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monkeypatch):
@@ -82,8 +94,33 @@ def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monke
     assert response.json()["items"][0]["slug"] == live_tool.slug
 
 
+def test_discovery_redacts_operational_fields(client, live_tool, monkeypatch):
+    live_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    live_tool.api_endpoint = "https://seller.example.com"
+    live_tool.source_s3_key = "tools/live/source.zip"
+    live_tool.config_s3_key = "tools/live/config.json"
+    live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+
+    async def fake_discover_tools(db, query, categories, limit):
+        return [(live_tool, 1.0, ["live"], "Strong match")]
+
+    monkeypatch.setattr(discovery_service, "discover_tools", fake_discover_tools)
+
+    response = client.post("/v1/tools/discover", json={"query": "live", "limit": 1})
+
+    assert response.status_code == 200
+    tool = response.json()["matches"][0]["tool"]
+    assert tool["environment_variables"] is None
+    assert tool["api_endpoint"] is None
+    assert tool["source_s3_key"] is None
+    assert tool["config_s3_key"] is None
+    assert tool["docker_image_uri"] is None
+
+
 def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(current_user=seller)
+    draft_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    draft_tool.source_s3_key = "tools/draft/source.zip"
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
         assert seller_id == seller.id
@@ -99,6 +136,36 @@ def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["id"] == str(draft_tool.id)
+    assert response.json()["environment_variables"] == [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    assert response.json()["source_s3_key"] == "tools/draft/source.zip"
+
+
+def test_public_tool_detail_redacts_operational_fields(client, live_tool, monkeypatch):
+    live_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    live_tool.api_endpoint = "https://seller.example.com"
+    live_tool.source_s3_key = "tools/live/source.zip"
+    live_tool.config_s3_key = "tools/live/config.json"
+    live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+
+    async def fake_get_tool_by_slug(db, slug):
+        assert slug == live_tool.slug
+        return live_tool
+
+    async def fake_increment_view_counter(redis, slug):
+        return 1
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(tool_service, "increment_view_counter", fake_increment_view_counter)
+
+    response = client.get(f"/v1/tools/{live_tool.slug}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["environment_variables"] is None
+    assert payload["api_endpoint"] is None
+    assert payload["source_s3_key"] is None
+    assert payload["config_s3_key"] is None
+    assert payload["docker_image_uri"] is None
 
 
 def test_get_my_tool_returns_not_found_for_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):

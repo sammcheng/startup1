@@ -47,6 +47,22 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 DEMO_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 
 
+def _tool_response(tool, *, view_count: int = 0) -> ToolResponse:
+    return ToolResponse.model_validate(tool).model_copy(update={"view_count": view_count})
+
+
+def _public_tool_response(tool, *, view_count: int = 0) -> ToolResponse:
+    return _tool_response(tool, view_count=view_count).model_copy(
+        update={
+            "environment_variables": None,
+            "api_endpoint": None,
+            "docker_image_uri": None,
+            "source_s3_key": None,
+            "config_s3_key": None,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dependency: parse ToolFilters from query params
 # ---------------------------------------------------------------------------
@@ -116,10 +132,7 @@ async def get_my_tools(
     slugs = [t.slug for t in tools]
     views = await tool_service.get_view_counts(redis, slugs)
 
-    return [
-        ToolResponse.model_validate(t).model_copy(update={"view_count": views.get(t.slug, 0)})
-        for t in tools
-    ]
+    return [_tool_response(t, view_count=views.get(t.slug, 0)) for t in tools]
 
 
 @router.get(
@@ -138,7 +151,7 @@ async def get_my_tool(
     if not tool:
         raise ToolNotFoundError(str(tool_id))
     view_count = await tool_service.get_view_count(redis, tool.slug)
-    return ToolResponse.model_validate(tool).model_copy(update={"view_count": view_count})
+    return _tool_response(tool, view_count=view_count)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +172,7 @@ async def create_tool(
 ) -> ToolResponse:
     """Create a tool in 'draft' status. Requires seller role."""
     tool = await tool_service.create_tool(db, current_user.id, body)
-    return ToolResponse.model_validate(tool)
+    return _tool_response(tool)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +206,7 @@ async def discover_tools(
     )
     matches = [
         ToolMatch(
-            tool=ToolResponse.model_validate(tool),
+            tool=_public_tool_response(tool),
             fit_line=fit,
             match_score=score,
             matched_keywords=matched,
@@ -310,7 +323,7 @@ async def submit_repo(
 
     tool = await tool_service.create_tool(db, seller.id, tool_data)
     return ToolSubmitResponse(
-        tool=ToolResponse.model_validate(tool),
+        tool=_tool_response(tool),
         analysis=ToolSubmitAnalysis(
             name=analysis.name,
             description=analysis.description,
@@ -360,10 +373,7 @@ async def list_tools(
     slugs = [t.slug for t in items]
     views = await tool_service.get_view_counts(redis, slugs)
 
-    tool_responses = [
-        ToolResponse.model_validate(t).model_copy(update={"view_count": views.get(t.slug, 0)})
-        for t in items
-    ]
+    tool_responses = [_public_tool_response(t, view_count=views.get(t.slug, 0)) for t in items]
 
     return ToolListResponse(
         items=tool_responses,
@@ -497,7 +507,7 @@ async def get_tool(
         raise ToolNotFoundError(slug)
 
     view_count = await tool_service.increment_view_counter(redis, slug)
-    return ToolResponse.model_validate(tool).model_copy(update={"view_count": view_count})
+    return _public_tool_response(tool, view_count=view_count)
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +540,7 @@ async def update_tool(
 
     updated = await tool_service.update_tool(db, tool, body, redis=redis)
     view_count = await tool_service.get_view_count(redis, updated.slug)
-    return ToolResponse.model_validate(updated).model_copy(update={"view_count": view_count})
+    return _tool_response(updated, view_count=view_count)
 
 
 # ---------------------------------------------------------------------------
