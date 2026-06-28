@@ -64,6 +64,8 @@ WEB_TOOL_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "tools" / "[slug]" 
 WEB_DOCS_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "docs" / "DocsClient.tsx"
 WEB_DEMO_RUNNER = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "DemoRunner.tsx"
 WEB_LIVE_BENCHMARK = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "LiveBenchmark.tsx"
+WEB_FILE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "FileOutput.tsx"
+WEB_IMAGE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "ImageOutput.tsx"
 WEB_PURCHASE_BUTTON = REPO_ROOT / "apps" / "web" / "src" / "components" / "billing" / "PurchaseToolButton.tsx"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
@@ -619,6 +621,8 @@ def check_repo_files(failures: list[str]) -> None:
     web_api_client = WEB_API_CLIENT.read_text(encoding="utf-8")
     web_demo_runner = WEB_DEMO_RUNNER.read_text(encoding="utf-8")
     web_live_benchmark = WEB_LIVE_BENCHMARK.read_text(encoding="utf-8")
+    web_file_output = WEB_FILE_OUTPUT.read_text(encoding="utf-8")
+    web_image_output = WEB_IMAGE_OUTPUT.read_text(encoding="utf-8")
     web_purchase_button = WEB_PURCHASE_BUTTON.read_text(encoding="utf-8")
     expect(
         'REQUEST_ID_HEADER = "X-HackMarket-Request-Id"' in web_api_client
@@ -641,6 +645,15 @@ def check_repo_files(failures: list[str]) -> None:
         and 'url.hostname === "checkout.stripe.com"' in web_purchase_button
         and "window.location.assign(purchase.checkout_url)" in web_purchase_button,
         "frontend checkout redirects must be restricted to Stripe Checkout HTTPS URLs",
+        failures,
+    )
+    expect(
+        "isSafeDownloadUrl" in web_file_output
+        and 'protocol === "https:"' in web_file_output
+        and "isSafeImageUrl" in web_image_output
+        and 'value.startsWith("data:image/")' in web_image_output
+        and 'protocol === "https:"' in web_image_output,
+        "frontend demo file and image outputs must reject unsafe URL schemes",
         failures,
     )
     expect(

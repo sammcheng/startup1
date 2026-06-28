@@ -4,6 +4,9 @@ export default function FileOutput({ value }: { value: string | null }) {
   if (!value) {
     return <EmptyState message="No downloadable file yet." />;
   }
+  if (!isSafeDownloadUrl(value)) {
+    return <EmptyState message="The tool returned an unsafe download URL." />;
+  }
 
   return (
     <div className="space-y-3">
@@ -24,4 +27,12 @@ export default function FileOutput({ value }: { value: string | null }) {
 
 function EmptyState({ message }: { message: string }) {
   return <p className="rounded-2xl border border-stone-800 bg-stone-900/60 p-4 text-sm text-stone-500">{message}</p>;
+}
+
+function isSafeDownloadUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
