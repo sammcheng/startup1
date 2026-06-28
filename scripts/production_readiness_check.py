@@ -36,6 +36,7 @@ REPO_HYGIENE_CHECK = REPO_ROOT / "scripts" / "repo_hygiene_check.py"
 MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
 ALEMBIC_MIGRATION_CHECK = REPO_ROOT / "scripts" / "check_alembic_migrations.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
+TOOL_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "tool_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_CONFIG = REPO_ROOT / "apps" / "api" / "app" / "config.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
@@ -331,6 +332,10 @@ def check_repo_files(failures: list[str]) -> None:
         "billing scheduler must guard seller payouts with DB-backed idempotency",
         failures,
     )
+
+    tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
+    expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)
+    expect('return slug[:90] or "tool"' in tool_service, "tool slug generation must have a safe fallback for non-sluggable names", failures)
 
     api_main = API_MAIN.read_text(encoding="utf-8")
     api_config = API_CONFIG.read_text(encoding="utf-8")

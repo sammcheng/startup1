@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from redis.asyncio import Redis
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +24,7 @@ _VIEW_KEY_PREFIX = "tool:views:"
 _VIEW_FLUSH_THRESHOLD = 50  # flush to DB every N increments (future background task hook)
 _REQUEST_COUNT_KEY_PREFIX = "tool:requests:"
 _REQUEST_FLUSH_THRESHOLD = 25
+_MAX_SLUG_CREATE_ATTEMPTS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +39,7 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"[\s_]+", "-", slug)
     slug = re.sub(r"-{2,}", "-", slug)
     slug = slug.strip("-")
-    return slug[:90]  # leave room for duplicate suffix
+    return slug[:90] or "tool"  # leave room for duplicate suffix
 
 
 async def _find_unique_slug(db: AsyncSession, base_slug: str) -> str:
@@ -50,6 +52,18 @@ async def _find_unique_slug(db: AsyncSession, base_slug: str) -> str:
             return candidate
         candidate = f"{base_slug}-{n}"
         n += 1
+
+
+async def _slug_exists(db: AsyncSession, slug: str) -> bool:
+    result = await db.execute(select(Tool.id).where(Tool.slug == slug))
+    return result.scalar_one_or_none() is not None
+
+
+def _slug_candidate(base_slug: str, attempt: int) -> str:
+    if attempt == 0:
+        return base_slug
+    suffix = f"-{attempt + 1}"
+    return f"{base_slug[:100 - len(suffix)]}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -140,24 +154,50 @@ async def create_tool(
     data: ToolCreate,
 ) -> Tool:
     base_slug = _slugify(data.name)
-    slug = await _find_unique_slug(db, base_slug)
+    first_available_slug = await _find_unique_slug(db, base_slug)
+    first_attempt = max(_slug_suffix_attempt(first_available_slug, base_slug), 0)
 
-    tool = Tool(
-        seller_id=seller_id,
-        slug=slug,
-        status=ToolStatus.draft,
-        **data.model_dump(),
-    )
-    db.add(tool)
-    await db.commit()
+    for offset in range(_MAX_SLUG_CREATE_ATTEMPTS):
+        attempt = first_attempt + offset
+        slug = _slug_candidate(base_slug, attempt)
+        if offset > 0 and await _slug_exists(db, slug):
+            continue
 
-    # Re-fetch with seller relationship loaded for response serialisation
-    result = await db.execute(
-        select(Tool)
-        .where(Tool.id == tool.id)
-        .options(selectinload(Tool.seller))
-    )
-    return result.scalar_one()
+        tool = Tool(
+            seller_id=seller_id,
+            slug=slug,
+            status=ToolStatus.draft,
+            **data.model_dump(),
+        )
+        db.add(tool)
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            if "slug" not in str(exc).lower() or offset == _MAX_SLUG_CREATE_ATTEMPTS - 1:
+                raise
+            logger.info("Retrying tool creation after slug conflict for slug=%s", slug)
+            continue
+
+        # Re-fetch with seller relationship loaded for response serialisation
+        result = await db.execute(
+            select(Tool)
+            .where(Tool.id == tool.id)
+            .options(selectinload(Tool.seller))
+        )
+        return result.scalar_one()
+
+    raise RuntimeError("Could not allocate a unique tool slug after retries.")
+
+
+def _slug_suffix_attempt(slug: str, base_slug: str) -> int:
+    if slug == base_slug:
+        return 0
+    prefix = f"{base_slug}-"
+    if not slug.startswith(prefix):
+        return 0
+    suffix = slug[len(prefix):]
+    return int(suffix) - 1 if suffix.isdigit() else 0
 
 
 async def get_tool_by_slug(db: AsyncSession, slug: str) -> Tool | None:
