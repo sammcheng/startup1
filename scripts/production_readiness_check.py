@@ -378,6 +378,11 @@ def check_repo_files(failures: list[str]) -> None:
         "frontend must disable converter catalog fallback in production",
         failures,
     )
+    expect(
+        'ALLOW_PUBLIC_DEMO_API_KEY = process.env.NODE_ENV !== "production"' in web_env,
+        "frontend must ignore public demo API keys in production",
+        failures,
+    )
     for path in [WEB_HOME_PAGE, WEB_MARKETPLACE_PAGE, WEB_MARKETPLACE_CLIENT, WEB_TOOL_PAGE]:
         source = path.read_text(encoding="utf-8")
         expect(
@@ -414,6 +419,13 @@ def check_repo_files(failures: list[str]) -> None:
     expect("npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures)
     expect("npm run test:security" in ci_workflow, "CI must test frontend security headers", failures)
     expect("npm run build" in ci_workflow, "CI must build the frontend", failures)
+
+    validate_env_test = (REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.test.mjs").read_text(encoding="utf-8")
+    expect(
+        "NEXT_PUBLIC_DEMO_API_KEY must not be set" in validate_env_test,
+        "frontend env tests must reject public demo API keys in deploy builds",
+        failures,
+    )
 
     launch_checklist = PRODUCTION_LAUNCH_CHECKLIST.read_text(encoding="utf-8")
     expect(

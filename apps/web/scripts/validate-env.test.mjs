@@ -93,3 +93,17 @@ test("rejects malformed Clerk secret key", () => {
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Clerk secret key/);
 });
+
+test("rejects public demo API key in deploy builds", () => {
+  const errors = validateEnv({
+    VERCEL: "1",
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
+    CLERK_SECRET_KEY: "sk_test_abc123",
+    NEXT_PUBLIC_DEMO_API_KEY: "hm_live_should_not_ship",
+  });
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /NEXT_PUBLIC_DEMO_API_KEY must not be set/);
+});

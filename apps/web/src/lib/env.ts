@@ -21,8 +21,9 @@ export const ALLOW_CONVERTER_CATALOG_FALLBACK =
   process.env.NODE_ENV !== "production" && CONVERTER_ENABLED;
 export const CLERK_PUBLISHABLE_KEY =
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim() || null;
+export const ALLOW_PUBLIC_DEMO_API_KEY = process.env.NODE_ENV !== "production";
 export const DEMO_API_KEY =
-  process.env.NEXT_PUBLIC_DEMO_API_KEY?.trim() || "";
+  ALLOW_PUBLIC_DEMO_API_KEY ? process.env.NEXT_PUBLIC_DEMO_API_KEY?.trim() || "" : "";
 
 export function isLocalServiceUrl(value: string): boolean {
   try {

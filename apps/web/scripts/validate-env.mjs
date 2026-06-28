@@ -94,6 +94,13 @@ function validateClerkSecretKey(value, errors, strictDeployEnv) {
   }
 }
 
+function validatePublicDemoApiKey(value, errors, strictDeployEnv) {
+  if (isBlank(value)) return;
+  if (strictDeployEnv) {
+    errors.push("NEXT_PUBLIC_DEMO_API_KEY must not be set in deploy builds because public env vars are exposed to browsers.");
+  }
+}
+
 export function validateEnv(env = process.env) {
   const errors = [];
   const strictDeployEnv = isStrictDeployEnv(env);
@@ -103,6 +110,7 @@ export function validateEnv(env = process.env) {
   validateOptionalPublicUrl("NEXT_PUBLIC_CONVERTER_URL", env.NEXT_PUBLIC_CONVERTER_URL, errors, strictDeployEnv);
   validatePublishableKey(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, errors, strictDeployEnv);
   validateClerkSecretKey(env.CLERK_SECRET_KEY, errors, strictDeployEnv);
+  validatePublicDemoApiKey(env.NEXT_PUBLIC_DEMO_API_KEY, errors, strictDeployEnv);
 
   return errors;
 }
