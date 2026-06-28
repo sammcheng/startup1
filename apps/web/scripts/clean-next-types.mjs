@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const ROOT = new URL("../.next", import.meta.url);
+const ROOT = new URL("../.next/", import.meta.url);
 const TS_BUILD_INFO = new URL("../tsconfig.tsbuildinfo", import.meta.url);
 const DUPLICATE_SUFFIX = / \d+\.(ts|json)$/;
 

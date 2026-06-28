@@ -94,8 +94,16 @@ Stripe:
 Run local repo checks:
 
 ```bash
+python3 scripts/security_scan.py
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
+```
+
+Confirm dependency audits pass before tagging launch:
+
+```bash
+(cd apps/web && npm audit --audit-level=high)
+(cd apps/seller-tools/home-accessibility-checker && npm audit --audit-level=high)
 ```
 
 Run the live smoke test after DNS and deploys are active:

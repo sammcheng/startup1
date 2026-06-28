@@ -24,6 +24,8 @@ JOBS_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0007_add_tool_processing_jobs.py"
 )
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
 
 
 API_REQUIRED_ENV = {
@@ -245,6 +247,11 @@ def check_repo_files(failures: list[str]) -> None:
     requirements = API_REQUIREMENTS.read_text(encoding="utf-8")
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
+    expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
+
+    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
+    expect("npm audit --audit-level=high" in ci_workflow, "CI must audit Node dependencies", failures)
 
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     for key in [
