@@ -1,7 +1,7 @@
 """
 Internal service-to-service endpoints.
 Secured by CONVERTER_SECRET header — never exposed via Clerk auth.
-Used by the converter service to register analyzed GitHub repos as tools.
+Used by the converter service to register analyzed GitHub repos as draft tools.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models.tool import ToolCategory, ToolStatus, OwnershipType
+from app.models.tool import OwnershipType, ToolCategory
 from app.models.user import UserRole
 from app.schemas.tool import ToolCreate
 from app.services import tool_service
@@ -69,6 +69,7 @@ async def _get_or_create_system_seller(db: AsyncSession):
     user = await sync_user_from_identity(db, identity)
     if user.role not in (UserRole.seller, UserRole.both, UserRole.admin):
         from sqlalchemy import update
+
         from app.models.user import User
         await db.execute(
             update(User)
@@ -148,11 +149,9 @@ async def import_converter_tool(
         documentation=_build_documentation(body),
     )
 
+    # Converter imports are drafts until a real endpoint is configured or the
+    # worker deploys the source. Public live tools must always be invokable.
     tool = await tool_service.create_tool(db, seller.id, tool_data)
-
-    # mark live immediately — the GitHub repo IS the source, no container needed
-    from app.schemas.tool import ToolUpdate
-    tool = await tool_service.update_tool(db, tool, ToolUpdate(status=ToolStatus.live))
 
     base = settings.public_api_base_url or "https://api.hackmarket.io/v1"
     marketplace_url = f"{base}/tools/{tool.slug}"

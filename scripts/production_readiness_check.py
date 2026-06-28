@@ -40,6 +40,7 @@ API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_CONFIG = REPO_ROOT / "apps" / "api" / "app" / "config.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
 API_TOOLS_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "tools.py"
+API_INTERNAL_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "internal.py"
 BOOTSTRAP_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "bootstrap_service.py"
 OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
 ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
@@ -377,6 +378,13 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "Sign in before submitting a tool for analysis" in tools_router,
         "anonymous production submissions must fail before creating system-owned drafts",
+        failures,
+    )
+    internal_router = API_INTERNAL_ROUTER.read_text(encoding="utf-8")
+    expect(
+        "Public live tools must always be invokable" in internal_router
+        and "ToolStatus.live" not in internal_router,
+        "internal converter imports must not mark tools live without an invokable endpoint",
         failures,
     )
     expect(OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures)

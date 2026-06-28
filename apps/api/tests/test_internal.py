@@ -10,8 +10,6 @@ from app.dependencies import get_db, get_redis
 from app.main import app
 from app.routers import internal
 from app.routers.internal import _verify_converter_secret
-from tests.conftest import FakeAsyncSession, FakeRedis
-
 
 VALID_PAYLOAD = {
     "repo_url": "https://github.com/test/repo",
@@ -102,13 +100,14 @@ def test_import_creates_tool(client_with_secret, fake_db, fake_redis):
         "id": created_tool_id,
         "slug": "test-repo",
         "seller_id": uuid.uuid4(),
-        "status": "live",
+        "status": "draft",
     })()
+    update_tool = AsyncMock()
 
     with (
         patch("app.routers.internal._get_or_create_system_seller", new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})())),
         patch("app.routers.internal.tool_service.create_tool", new=AsyncMock(return_value=mock_tool)),
-        patch("app.routers.internal.tool_service.update_tool", new=AsyncMock(return_value=mock_tool)),
+        patch("app.routers.internal.tool_service.update_tool", new=update_tool),
     ):
         resp = client_with_secret.post(
             "/v1/internal/tools/import",
@@ -121,6 +120,7 @@ def test_import_creates_tool(client_with_secret, fake_db, fake_redis):
     assert data["slug"] == "test-repo"
     assert "marketplace_url" in data
     assert "tool_id" in data
+    update_tool.assert_not_called()
 
 
 def test_import_with_multiple_endpoints(client_with_secret):
@@ -131,7 +131,7 @@ def test_import_with_multiple_endpoints(client_with_secret):
          "response_example": {"result": "analysis output"}},
     ]}
     created_id = uuid.uuid4()
-    mock_tool = type("Tool", (), {"id": created_id, "slug": "test-repo", "seller_id": uuid.uuid4(), "status": "live"})()
+    mock_tool = type("Tool", (), {"id": created_id, "slug": "test-repo", "seller_id": uuid.uuid4(), "status": "draft"})()
 
     with (
         patch("app.routers.internal._get_or_create_system_seller", new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})())),
