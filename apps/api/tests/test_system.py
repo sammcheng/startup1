@@ -75,7 +75,11 @@ def test_request_body_limit_rejects_invalid_content_length(client):
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_CONTENT_LENGTH"
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_CONTENT_LENGTH"
+    assert error["status"] == 400
+    assert error["request_id"] == response.headers["X-HackMarket-Request-Id"]
+    assert error["details"] == {}
 
 
 def test_request_body_limit_rejects_declared_oversized_body(client, monkeypatch):
@@ -88,7 +92,11 @@ def test_request_body_limit_rejects_declared_oversized_body(client, monkeypatch)
     )
 
     assert response.status_code == 413
-    assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
+    error = response.json()["error"]
+    assert error["code"] == "REQUEST_TOO_LARGE"
+    assert error["status"] == 413
+    assert error["request_id"] == response.headers["X-HackMarket-Request-Id"]
+    assert error["details"] == {"max_request_body_bytes": 4}
 
 
 def test_ready_returns_ready_when_dependencies_respond(client, monkeypatch):

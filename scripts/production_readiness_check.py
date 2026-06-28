@@ -478,6 +478,14 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "INVALID_CONTENT_LENGTH" in api_main
+        and "REQUEST_TOO_LARGE" in api_main
+        and '"request_id": getattr(request.state, "request_id", get_request_id())' in api_main
+        and '"details": {"max_request_body_bytes": settings.max_request_body_bytes}' in api_main,
+        "early request body limit errors must use the standard traceable error envelope",
+        failures,
+    )
+    expect(
         "degraded_high_depth" in operations_health_service,
         "shared operations health must degrade when worker queue depth is too high",
         failures,

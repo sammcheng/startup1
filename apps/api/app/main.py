@@ -165,6 +165,9 @@ async def enforce_request_body_limit(request: Request, call_next):
                 "error": {
                     "code": "INVALID_CONTENT_LENGTH",
                     "message": "Content-Length must be a valid integer.",
+                    "status": 400,
+                    "request_id": getattr(request.state, "request_id", get_request_id()),
+                    "details": {},
                 }
             },
         )
@@ -176,6 +179,9 @@ async def enforce_request_body_limit(request: Request, call_next):
                 "error": {
                     "code": "REQUEST_TOO_LARGE",
                     "message": f"Request body exceeds {settings.max_request_body_bytes // (1024 * 1024)}MB limit.",
+                    "status": 413,
+                    "request_id": getattr(request.state, "request_id", get_request_id()),
+                    "details": {"max_request_body_bytes": settings.max_request_body_bytes},
                 }
             },
         )
