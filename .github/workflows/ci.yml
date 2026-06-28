@@ -87,6 +87,15 @@ jobs:
           CLERK_JWKS_URL: https://example.com/.well-known/jwks.json
         run: pytest -v --tb=short --cov=app --cov-report=term-missing
 
+      - name: Validate Alembic migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test
+          REDIS_URL: redis://localhost:6379/15
+          ENVIRONMENT: test
+          STRIPE_SECRET_KEY: sk_test_ci
+          CLERK_JWKS_URL: https://example.com/.well-known/jwks.json
+        run: python ../../scripts/check_alembic_migrations.py --upgrade
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

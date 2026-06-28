@@ -194,6 +194,7 @@ Production readiness commands:
 ```bash
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test python3 scripts/check_alembic_migrations.py --upgrade
 python3 scripts/production_smoke_check.py --app-url https://hackmarket.io --api-url https://api.hackmarket.io
 ```
 

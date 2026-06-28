@@ -72,6 +72,12 @@ alembic upgrade head
 
 Confirm migration `0007_add_tool_processing_jobs.py` is applied so seller submissions have durable job status.
 
+Before running production migrations:
+- Confirm Render Postgres backups are enabled.
+- Take or identify a recent manual backup.
+- Run `python3 scripts/check_alembic_migrations.py --upgrade` against a disposable Postgres database.
+- Review `docs/database-operations-runbook.md`.
+
 ## 5. Configure Provider Webhooks
 
 Clerk:
