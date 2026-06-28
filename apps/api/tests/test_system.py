@@ -30,6 +30,30 @@ def test_responses_include_security_headers(client):
     assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
 
 
+def test_request_body_limit_rejects_invalid_content_length(client):
+    response = client.post(
+        "/v1/tools/discover",
+        content=b"{}",
+        headers={"Content-Length": "not-a-number"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_CONTENT_LENGTH"
+
+
+def test_request_body_limit_rejects_declared_oversized_body(client, monkeypatch):
+    monkeypatch.setattr("app.main.settings.max_request_body_bytes", 4)
+
+    response = client.post(
+        "/v1/tools/discover",
+        content=b"{}",
+        headers={"Content-Length": "5"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
+
+
 def test_ready_returns_ready_when_dependencies_respond(client, monkeypatch):
     class FakeReadySession:
         async def __aenter__(self):

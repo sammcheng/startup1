@@ -1,13 +1,13 @@
+import asyncio
 import json as _json
 import logging
-import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlalchemy import text as sql_text
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text as sql_text
 from starlette.requests import Request
 
 from app.config import settings
@@ -54,8 +54,8 @@ logger = logging.getLogger(__name__)
 
 async def _close_app_resources() -> None:
     from app.dependencies import _redis_client, engine
-    from app.services.queue_service import close_arq_pool
     from app.services.proxy_service import close_http_client
+    from app.services.queue_service import close_arq_pool
 
     try:
         await close_arq_pool()
@@ -136,7 +136,21 @@ app.add_middleware(
 @app.middleware("http")
 async def enforce_request_body_limit(request: Request, call_next):
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > settings.max_request_body_bytes:
+    try:
+        declared_length = int(content_length) if content_length else None
+    except ValueError:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "INVALID_CONTENT_LENGTH",
+                    "message": "Content-Length must be a valid integer.",
+                }
+            },
+        )
+    if declared_length is not None and declared_length > settings.max_request_body_bytes:
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=413,
@@ -187,7 +201,19 @@ setup_error_handlers(app)
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-from app.routers import admin, api_keys, auth, billing, dashboard, gateway, internal, seller, tools, upload, usage  # noqa: E402
+from app.routers import (  # noqa: E402
+    admin,
+    api_keys,
+    auth,
+    billing,
+    dashboard,
+    gateway,
+    internal,
+    seller,
+    tools,
+    upload,
+    usage,
+)
 
 app.include_router(auth.router, prefix="/v1")
 app.include_router(admin.router, prefix="/v1")
@@ -213,6 +239,7 @@ async def health():
 @app.get("/ready", tags=["system"])
 async def ready():
     from fastapi.responses import JSONResponse
+
     from app.dependencies import AsyncSessionLocal, _redis_client
 
     checks: dict = {"database": "ok", "redis": "ok"}

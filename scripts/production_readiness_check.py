@@ -368,6 +368,13 @@ def check_repo_files(failures: list[str]) -> None:
 
     api_main = API_MAIN.read_text(encoding="utf-8")
     api_config = API_CONFIG.read_text(encoding="utf-8")
+    expect(
+        "INVALID_CONTENT_LENGTH" in api_main
+        and "REQUEST_TOO_LARGE" in api_main
+        and "max_request_body_bytes" in api_main,
+        "API middleware must reject malformed and oversized request bodies before route handling",
+        failures,
+    )
     expect("enable_bootstrap_tool_seed: bool = False" in api_config, "bootstrap tool seed must default off", failures)
     expect("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config, "production must reject fixed bootstrap marketplace seeds", failures)
     expect(
