@@ -11,7 +11,7 @@ from app.models.base import Base
 class APIKey(Base):
     __tablename__ = "api_keys"
     __table_args__ = (
-        Index("ix_api_keys_key_hash", "key_hash"),
+        Index("ux_api_keys_key_hash", "key_hash", unique=True),
         Index("ix_api_keys_user_id", "user_id"),
     )
 

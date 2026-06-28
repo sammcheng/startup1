@@ -15,6 +15,7 @@ The check must prove:
 - Alembic has exactly one head.
 - `alembic upgrade head` succeeds on a real Postgres database.
 - The database reports the current revision as the head after upgrade.
+- Migration `0008_add_data_integrity_constraints.py` finds no duplicate API key hashes or duplicate open buyer/tool purchases before adding uniqueness constraints.
 
 Production deploy rule:
 - Run migrations before promoting traffic to code that depends on the new schema.
@@ -79,6 +80,7 @@ If a migration fails in production:
 
 Before public launch, record evidence for:
 - Latest Alembic revision.
+- Data-integrity migration duplicate preflight passing.
 - Render backup status and retention.
 - Manual backup timestamp.
 - Successful restore drill date.

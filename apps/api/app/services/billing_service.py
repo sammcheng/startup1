@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 import stripe
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -125,25 +126,9 @@ async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tu
     if tool.seller_id == buyer.id:
         raise Forbidden("You cannot purchase your own tool.")
 
-    existing_result = await db.execute(
-        select(ToolPurchase).where(
-            ToolPurchase.tool_id == tool.id,
-            ToolPurchase.buyer_id == buyer.id,
-            ToolPurchase.status == PurchaseStatus.active,
-        )
-    )
-    existing = existing_result.scalar_one_or_none()
+    existing, pending = await _get_existing_purchase_state(db, buyer.id, tool.id)
     if existing:
         return existing, None
-
-    pending_result = await db.execute(
-        select(ToolPurchase).where(
-            ToolPurchase.tool_id == tool.id,
-            ToolPurchase.buyer_id == buyer.id,
-            ToolPurchase.status == PurchaseStatus.pending,
-        )
-    )
-    pending = pending_result.scalar_one_or_none()
     if pending:
         return pending, await _get_pending_checkout_url(db, buyer, tool)
 
@@ -162,8 +147,8 @@ async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tu
     )
     db.add(purchase)
 
-    checkout_url: str | None = None
-    if requires_checkout:
+    transaction: Transaction | None = None
+    if purchase_price > 0:
         platform_fee = _quantize(purchase_price * PLATFORM_FEE_RATE)
         transaction = Transaction(
             id=uuid.uuid4(),
@@ -181,32 +166,52 @@ async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tu
             created_at=now,
         )
         db.add(transaction)
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing, pending = await _get_existing_purchase_state(db, buyer.id, tool.id)
+        if existing:
+            return existing, None
+        if pending:
+            return pending, await _get_pending_checkout_url(db, buyer, tool)
+        raise
+
+    checkout_url: str | None = None
+    if requires_checkout and transaction is not None:
         checkout_session = await _create_tool_checkout_session(buyer, tool, purchase, transaction)
         checkout_url = checkout_session.get("url")
         transaction.stripe_payment_intent_id = checkout_session.get("payment_intent") or checkout_session.get("id")
-    elif purchase_price > 0:
-        platform_fee = _quantize(purchase_price * PLATFORM_FEE_RATE)
-        db.add(
-            Transaction(
-                id=uuid.uuid4(),
-                buyer_id=buyer.id,
-                seller_id=tool.seller_id,
-                tool_id=tool.id,
-                amount=purchase_price,
-                platform_fee=platform_fee,
-                seller_payout=_quantize(purchase_price - platform_fee),
-                stripe_payment_intent_id=None,
-                type=TransactionType.full_purchase,
-                status=TransactionStatus.pending,
-                period_start=now,
-                period_end=now,
-                created_at=now,
-            )
-        )
+        await db.commit()
 
-    await db.commit()
     await db.refresh(purchase)
     return purchase, checkout_url
+
+
+async def _get_existing_purchase_state(
+    db: AsyncSession,
+    buyer_id: uuid.UUID,
+    tool_id: uuid.UUID,
+) -> tuple[ToolPurchase | None, ToolPurchase | None]:
+    existing_result = await db.execute(
+        select(ToolPurchase).where(
+            ToolPurchase.tool_id == tool_id,
+            ToolPurchase.buyer_id == buyer_id,
+            ToolPurchase.status == PurchaseStatus.active,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+
+    pending_result = await db.execute(
+        select(ToolPurchase).where(
+            ToolPurchase.tool_id == tool_id,
+            ToolPurchase.buyer_id == buyer_id,
+            ToolPurchase.status == PurchaseStatus.pending,
+        )
+    )
+    pending = pending_result.scalar_one_or_none()
+    return existing, pending
 
 
 async def _create_tool_checkout_session(

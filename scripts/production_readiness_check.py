@@ -23,6 +23,9 @@ API_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements.txt"
 JOBS_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0007_add_tool_processing_jobs.py"
 )
+DATA_INTEGRITY_MIGRATION = (
+    REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0008_add_data_integrity_constraints.py"
+)
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
@@ -248,6 +251,7 @@ def check_repo_files(failures: list[str]) -> None:
     requirements = API_REQUIREMENTS.read_text(encoding="utf-8")
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
+    expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import uuid
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.exceptions import Forbidden
 from app.models import ToolPurchase, Transaction
@@ -59,14 +60,29 @@ class FakeBillingSession:
 
 
 class FakePurchaseSession:
-    def __init__(self, tool, existing=None, pending=None, pending_transaction=None, by_id=None):
+    def __init__(
+        self,
+        tool,
+        existing=None,
+        pending=None,
+        pending_transaction=None,
+        by_id=None,
+        *,
+        commit_error=None,
+        existing_after_rollback=None,
+        pending_after_rollback=None,
+    ):
         self.tool = tool
         self.existing = existing
         self.pending = pending
         self.pending_transaction = pending_transaction
         self.by_id = by_id or {}
+        self.commit_error = commit_error
+        self.existing_after_rollback = existing_after_rollback
+        self.pending_after_rollback = pending_after_rollback
         self.added = []
         self.committed = 0
+        self.rollbacks = 0
         self.refreshed = []
         self.execute_calls = 0
 
@@ -81,13 +97,22 @@ class FakePurchaseSession:
             return SimpleNamespace(scalar_one_or_none=lambda: self.existing)
         if self.execute_calls == 2:
             return SimpleNamespace(scalar_one_or_none=lambda: self.pending)
+        if self.execute_calls == 3 and self.commit_error is not None:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.existing_after_rollback)
+        if self.execute_calls == 4 and self.commit_error is not None:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.pending_after_rollback)
         return SimpleNamespace(scalar_one_or_none=lambda: self.pending_transaction)
 
     def add(self, obj):
         self.added.append(obj)
 
     async def commit(self):
+        if self.commit_error is not None and self.committed == 0:
+            raise self.commit_error
         self.committed += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
@@ -280,13 +305,68 @@ async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer
     assert purchase.purchase_price == Decimal("100.00")
     assert purchase.purchase_type == OwnershipType.full_sale
     assert checkout_url == "https://checkout.stripe.test/session"
-    assert db.committed == 1
+    assert db.committed == 2
     assert any(isinstance(item, ToolPurchase) for item in db.added)
     transaction = next(item for item in db.added if isinstance(item, Transaction))
     assert transaction.amount == Decimal("100.00")
     assert transaction.platform_fee == Decimal("20.00")
     assert transaction.seller_payout == Decimal("80.00")
     assert transaction.stripe_payment_intent_id == "pi_test_purchase"
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer, live_tool, monkeypatch):
+    live_tool.ownership_type = OwnershipType.full_sale
+    live_tool.one_time_price = Decimal("100.00")
+    winning_pending = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=live_tool.id,
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        purchase_price=Decimal("100.00"),
+        purchase_type=live_tool.ownership_type,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(timezone.utc),
+    )
+    pending_transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="cs_test_winner",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(timezone.utc),
+        period_end=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakePurchaseSession(
+        live_tool,
+        commit_error=IntegrityError("insert", {}, Exception("unique violation")),
+        pending_after_rollback=winning_pending,
+        pending_transaction=pending_transaction,
+    )
+    stripe_calls = []
+
+    async def fake_checkout_session(*args, **kwargs):
+        stripe_calls.append((args, kwargs))
+        return {"id": "cs_should_not_be_created"}
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        return {"id": "cs_test_winner", "url": "https://checkout.stripe.test/winner"}
+
+    monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    purchase, checkout_url = await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    assert purchase is winning_pending
+    assert checkout_url == "https://checkout.stripe.test/winner"
+    assert stripe_calls == []
+    assert db.rollbacks == 1
 
 
 @pytest.mark.asyncio

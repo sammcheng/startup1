@@ -72,11 +72,13 @@ alembic upgrade head
 ```
 
 Confirm migration `0007_add_tool_processing_jobs.py` is applied so seller submissions have durable job status.
+Confirm migration `0008_add_data_integrity_constraints.py` is applied so API key hashes and open buyer/tool purchases are protected by database uniqueness.
 
 Before running production migrations:
 - Confirm Render Postgres backups are enabled.
 - Take or identify a recent manual backup.
 - Run `python3 scripts/check_alembic_migrations.py --upgrade` against a disposable Postgres database.
+- Confirm the data-integrity migration reports no duplicate API key hashes or duplicate open buyer/tool purchases.
 - Review `docs/database-operations-runbook.md`.
 
 ## 5. Configure Provider Webhooks

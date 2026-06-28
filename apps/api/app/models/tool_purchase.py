@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,15 @@ class PurchaseStatus(str, enum.Enum):
 
 class ToolPurchase(Base):
     __tablename__ = "tool_purchases"
+    __table_args__ = (
+        Index(
+            "ux_tool_purchases_buyer_tool_open",
+            "buyer_id",
+            "tool_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'active')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
