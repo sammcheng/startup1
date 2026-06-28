@@ -3,37 +3,41 @@
 import type { ReactNode } from "react";
 import { Component } from "react";
 
+import { toPublicErrorDisplay, type PublicErrorDisplay } from "@/lib/error-display";
+import { ErrorState } from "@/components/ui/ErrorState";
+
 interface Props { children: ReactNode }
-interface State { hasError: boolean; message: string }
+interface State { hasError: boolean; display: PublicErrorDisplay | null }
 
 export default class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false, message: "" };
+  state: State = { hasError: false, display: null };
 
   static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, message: error.message || "Something went wrong." };
+    return { hasError: true, display: toPublicErrorDisplay(error) };
   }
 
   componentDidCatch(error: Error, info: unknown) {
-    console.error("ErrorBoundary caught:", error, info);
+    console.error("Client render error", {
+      error,
+      info,
+      display: this.state.display,
+    });
   }
 
   render() {
     if (this.state.hasError) {
+      const display = this.state.display ?? toPublicErrorDisplay(null);
       return (
-        <div className="flex min-h-[50vh] items-center justify-center px-6 py-16">
-          <div className="w-full max-w-lg rounded-[28px] border border-red-400/20 bg-stone-950/90 p-8 text-center shadow-2xl shadow-black/20">
-            <div className="text-xs uppercase tracking-[0.25em] text-red-300/70">Render error</div>
-            <h2 className="mt-3 text-2xl font-semibold text-stone-100">We hit a snag loading this screen</h2>
-            <p className="mt-3 text-sm leading-6 text-stone-400">{this.state.message}</p>
-            <button
-              type="button"
-              onClick={() => this.setState({ hasError: false, message: "" })}
-              className="mt-6 rounded-full bg-red-300 px-5 py-3 text-sm font-semibold text-stone-950 transition hover:bg-red-200"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
+        <ErrorState
+          eyebrow="Client recovery"
+          title={display.title}
+          message={display.message}
+          code={display.code}
+          requestId={display.requestId}
+          status={display.status}
+          devDetails={display.devDetails}
+          onRetry={() => this.setState({ hasError: false, display: null })}
+        />
       );
     }
     return this.props.children;
