@@ -183,6 +183,7 @@ Recommended hosted env values:
 - Render `RENDER_TOOL_PLAN=starter` so dynamically hosted seller tools do not launch on free instances
 - Render `ALERT_WEBHOOK_URL`: optional but strongly recommended for production alerts from readiness checks, worker failures, billing scheduler failures, and invalid provider webhooks
 - Render `ALERT_DEDUPE_TTL_SECONDS=900` so repeated readiness probes do not flood the alert destination during one incident
+- Render `MAX_SOURCE_ZIP_ENTRIES=500` and `MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES=104857600` to reject zip bombs and unsafe source archives before storage or processing
 - Render `MAX_ACTIVE_API_KEYS_PER_USER=10` and `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3` so API-key abuse is bounded and visible
 
 Release verification after deploy:

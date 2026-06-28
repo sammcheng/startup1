@@ -15,6 +15,14 @@ def _zip_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def _zip_bytes_with_entries(entries: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
 def _apply_tool_updates(tool, updates):
     for key, value in updates.model_dump(exclude_unset=True).items():
         setattr(tool, key, value)
@@ -87,6 +95,80 @@ def test_upload_queues_processing_when_runtime_is_configured(client, auth_overri
     assert response.json()["status"] == ToolStatus.processing.value
     assert response.json()["job_id"] == str(queued_job_id)
     assert queue_calls == [f"source_upload:{draft_tool.id}"]
+
+
+def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_bytes(*args, **kwargs):
+        raise AssertionError("unsafe archive should not be stored")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/upload",
+        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"../secrets.env": "nope"}), "application/zip")},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "upload_failed"
+    assert response.json()["error"]["message"] == "The uploaded zip contains an unsafe file path."
+
+
+def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_bytes(*args, **kwargs):
+        raise AssertionError("oversized archive should not be stored")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
+    monkeypatch.setattr("app.routers.upload.settings.max_source_zip_entries", 1)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/upload",
+        files={
+            "source_zip": (
+                "tool.zip",
+                _zip_bytes_with_entries({"app.py": "print(1)", "worker.py": "print(2)"}),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "The uploaded zip contains too many files."
+    assert response.json()["error"]["details"]["limit"] == 1
+
+
+def test_upload_rejects_zip_with_large_uncompressed_size(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_bytes(*args, **kwargs):
+        raise AssertionError("zip bomb should not be stored")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
+    monkeypatch.setattr("app.routers.upload.settings.max_source_zip_uncompressed_bytes", 4)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/upload",
+        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"app.py": "print('large')"}), "application/zip")},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "The uploaded zip expands beyond the allowed source size."
+    assert response.json()["error"]["details"]["limit"] == 4
 
 
 def test_configure_starts_processing_when_source_exists(client, auth_overrides, seller, draft_tool, monkeypatch):

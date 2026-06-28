@@ -1,4 +1,5 @@
 import io
+from pathlib import PurePosixPath
 import uuid
 import zipfile
 from typing import Annotated
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db, require_seller
 from app.exceptions import AppError, Forbidden, ToolNotFoundError, UploadFailedError
 from app.models.tool import Tool, ToolStatus
@@ -74,7 +76,7 @@ async def upload_tool_source(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 error_code="invalid_file",
             )
-        source_file_tree = _list_zip_entries(file_bytes)
+        source_file_tree = _validate_and_list_zip_entries(file_bytes)
         source_s3_key = f"tools/{tool_id}/source.zip"
         await storage_service.upload_bytes(source_s3_key, file_bytes, "application/zip")
 
@@ -193,14 +195,47 @@ async def get_tool_status(
     )
 
 
-def _list_zip_entries(file_bytes: bytes) -> list[str]:
+def _validate_zip_entry_name(filename: str) -> None:
+    normalized = filename.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or any(part == ".." for part in path.parts):
+        raise UploadFailedError(
+            "The uploaded zip contains an unsafe file path.",
+            details={"filename": filename},
+        )
+
+
+def _validate_and_list_zip_entries(file_bytes: bytes) -> list[str]:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
-            entries = [
-                info.filename
+            infos = [
+                info
                 for info in archive.infolist()
                 if not info.filename.startswith("__MACOSX/") and info.filename.strip("/")
             ]
+            if len(infos) > settings.max_source_zip_entries:
+                raise UploadFailedError(
+                    "The uploaded zip contains too many files.",
+                    details={
+                        "entries": len(infos),
+                        "limit": settings.max_source_zip_entries,
+                    },
+                )
+
+            total_uncompressed_bytes = 0
+            entries: list[str] = []
+            for info in infos:
+                _validate_zip_entry_name(info.filename)
+                total_uncompressed_bytes += info.file_size
+                if total_uncompressed_bytes > settings.max_source_zip_uncompressed_bytes:
+                    raise UploadFailedError(
+                        "The uploaded zip expands beyond the allowed source size.",
+                        details={
+                            "uncompressed_bytes": total_uncompressed_bytes,
+                            "limit": settings.max_source_zip_uncompressed_bytes,
+                        },
+                    )
+                entries.append(info.filename)
         return entries[:200]
     except zipfile.BadZipFile as exc:
         raise UploadFailedError("The uploaded file is not a valid zip archive.") from exc

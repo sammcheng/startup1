@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     public_api_base_url: str = ""
     tool_request_timeout_seconds: int = 30
     max_request_body_bytes: int = 50 * 1024 * 1024  # 50MB
+    max_source_zip_entries: int = 500
+    max_source_zip_uncompressed_bytes: int = 100 * 1024 * 1024  # 100MB
 
     # Observability / alerting
     alert_webhook_url: str = ""
@@ -212,6 +214,12 @@ class Settings(BaseSettings):
 
         if self.run_billing_scheduler_in_api:
             raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")
+
+        if self.max_source_zip_entries < 1:
+            raise ValueError("MAX_SOURCE_ZIP_ENTRIES must be at least 1 in production.")
+
+        if self.max_source_zip_uncompressed_bytes < self.max_request_body_bytes:
+            raise ValueError("MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES must be at least MAX_REQUEST_BODY_BYTES in production.")
 
         insecure_urls = [
             key

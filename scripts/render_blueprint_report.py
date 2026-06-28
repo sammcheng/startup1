@@ -43,6 +43,8 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "CORS_ORIGINS",
             "CORS_ORIGIN_REGEX",
             "ALLOW_VERCEL_PREVIEW_ORIGINS",
+            "MAX_SOURCE_ZIP_ENTRIES",
+            "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES",
             "DATABASE_URL",
             "REDIS_URL",
             "WORKER_QUEUE_NAME",
@@ -100,6 +102,8 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             },
             "CORS_ORIGIN_REGEX": {"value": ""},
             "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
+            "MAX_SOURCE_ZIP_ENTRIES": {"value": "500"},
+            "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES": {"value": "104857600"},
             "DATABASE_URL": {
                 "fromDatabase": {"name": "hackmarket-db", "property": "connectionString"}
             },
@@ -173,6 +177,8 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "CORS_ORIGINS",
             "CORS_ORIGIN_REGEX",
             "ALLOW_VERCEL_PREVIEW_ORIGINS",
+            "MAX_SOURCE_ZIP_ENTRIES",
+            "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES",
             "DATABASE_URL",
             "REDIS_URL",
             "WORKER_QUEUE_NAME",
@@ -229,6 +235,8 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             },
             "CORS_ORIGIN_REGEX": {"value": ""},
             "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
+            "MAX_SOURCE_ZIP_ENTRIES": {"value": "500"},
+            "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES": {"value": "104857600"},
             "DATABASE_URL": {
                 "fromDatabase": {"name": "hackmarket-db", "property": "connectionString"}
             },

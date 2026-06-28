@@ -44,6 +44,8 @@ API_REQUIRED_ENV = {
     "CORS_ORIGINS",
     "CORS_ORIGIN_REGEX",
     "ALLOW_VERCEL_PREVIEW_ORIGINS",
+    "MAX_SOURCE_ZIP_ENTRIES",
+    "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES",
     "DATABASE_URL",
     "REDIS_URL",
     "WORKER_QUEUE_NAME",
@@ -221,6 +223,16 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            env.get("MAX_SOURCE_ZIP_ENTRIES", {}).get("value") == "500",
+            f"{name} must cap uploaded source zip entry count",
+            failures,
+        )
+        expect(
+            env.get("MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES", {}).get("value") == "104857600",
+            f"{name} must cap uploaded source zip uncompressed size",
+            failures,
+        )
+        expect(
             env.get("CORS_ORIGIN_REGEX", {}).get("value") == "",
             f"{name} must keep broad CORS regex disabled in production",
             failures,
@@ -322,6 +334,8 @@ def check_repo_files(failures: list[str]) -> None:
         "ALERT_WEBHOOK_URL",
         "ALERT_DEDUPE_TTL_SECONDS",
         "ALERT_QUEUE_DEPTH_THRESHOLD",
+        "MAX_SOURCE_ZIP_ENTRIES",
+        "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES",
         "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",
         "MAX_ACTIVE_API_KEYS_PER_USER",
         "OPENROUTER_API_KEY",
