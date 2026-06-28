@@ -374,6 +374,14 @@ def check_repo_files(failures: list[str]) -> None:
         "checkout session webhooks must not activate purchases before payment is confirmed",
         failures,
     )
+    billing_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "billing.py").read_text(encoding="utf-8")
+    expect(
+        "stripe_webhook_misconfigured" in billing_router
+        and "stripe_webhook_secret" in billing_router
+        and "Webhook secret not set" in billing_router,
+        "Stripe webhook route must fail closed when STRIPE_WEBHOOK_SECRET is missing",
+        failures,
+    )
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)

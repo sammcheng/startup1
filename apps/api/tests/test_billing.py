@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -11,6 +11,10 @@ from app.models import ToolPurchase, Transaction
 from app.models.tool import OwnershipType
 from app.models.tool_purchase import PurchaseStatus
 from app.services import billing_service
+
+
+def configure_stripe_webhook_secret(monkeypatch):
+    monkeypatch.setattr(billing_service.settings, "stripe_webhook_secret", "whsec_test")
 
 
 class FakeScalarResult:
@@ -161,7 +165,7 @@ class FakePayoutSession:
 
 @pytest.mark.asyncio
 async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
-    period_end = datetime.now(timezone.utc)
+    period_end = datetime.now(UTC)
     period_start = period_end - timedelta(days=7)
     usage_rows = [
         SimpleNamespace(tool_id=live_tool.id, name=live_tool.name, seller_id=live_tool.seller_id, amount=Decimal("1.25")),
@@ -189,7 +193,7 @@ async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_platform_fee_calculated(buyer, live_tool, monkeypatch):
-    period_end = datetime.now(timezone.utc)
+    period_end = datetime.now(UTC)
     period_start = period_end - timedelta(days=7)
     usage_rows = [
         SimpleNamespace(tool_id=live_tool.id, name=live_tool.name, seller_id=live_tool.seller_id, amount=Decimal("10.00")),
@@ -213,7 +217,7 @@ async def test_platform_fee_calculated(buyer, live_tool, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_usage_invoice_is_idempotent_for_existing_period(buyer, live_tool, monkeypatch):
-    period_end = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    period_end = datetime(2026, 6, 22, tzinfo=UTC)
     period_start = period_end - timedelta(days=7)
     existing = Transaction(
         id=uuid.uuid4(),
@@ -228,7 +232,7 @@ async def test_usage_invoice_is_idempotent_for_existing_period(buyer, live_tool,
         status=billing_service.TransactionStatus.completed,
         period_start=period_start,
         period_end=period_end,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db = FakeBillingSession(buyer, live_tool, [], existing_invoice=existing)
 
@@ -253,8 +257,8 @@ async def test_seller_payout_calculated(monkeypatch):
     payout = await billing_service.calculate_seller_payout(
         FakeRevenueSession(),
         tool_id="tool-id",
-        period_start=datetime.now(timezone.utc) - timedelta(days=30),
-        period_end=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC) - timedelta(days=30),
+        period_end=datetime.now(UTC),
     )
 
     assert payout == Decimal("8.00")
@@ -263,8 +267,8 @@ async def test_seller_payout_calculated(monkeypatch):
 @pytest.mark.asyncio
 async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool, monkeypatch):
     seller.stripe_connect_id = "acct_existing"
-    period_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
-    period_end = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    period_start = datetime(2026, 5, 1, tzinfo=UTC)
+    period_end = datetime(2026, 6, 1, tzinfo=UTC)
     existing = Transaction(
         id=uuid.uuid4(),
         buyer_id=seller.id,
@@ -278,7 +282,7 @@ async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool
         status=billing_service.TransactionStatus.completed,
         period_start=period_start,
         period_end=period_end,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db = FakePayoutSession(seller, live_tool, existing_payout=existing)
 
@@ -342,7 +346,7 @@ async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer
         purchase_price=Decimal("100.00"),
         purchase_type=live_tool.ownership_type,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     pending_transaction = Transaction(
         id=uuid.uuid4(),
@@ -355,9 +359,9 @@ async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer
         stripe_payment_intent_id="cs_test_winner",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(
         live_tool,
@@ -394,7 +398,7 @@ async def test_purchase_tool_is_idempotent_for_existing_active_purchase(buyer, l
         purchase_price=Decimal("0.00"),
         purchase_type=live_tool.ownership_type,
         status=PurchaseStatus.active,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(live_tool, existing=existing)
 
@@ -418,7 +422,7 @@ async def test_purchase_tool_reuses_pending_checkout_session(buyer, live_tool, m
         purchase_price=Decimal("100.00"),
         purchase_type=live_tool.ownership_type,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     pending_transaction = Transaction(
         id=uuid.uuid4(),
@@ -431,9 +435,9 @@ async def test_purchase_tool_reuses_pending_checkout_session(buyer, live_tool, m
         stripe_payment_intent_id="cs_test_existing",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(live_tool, pending=pending, pending_transaction=pending_transaction)
 
@@ -462,7 +466,7 @@ async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer
         purchase_price=Decimal("100.00"),
         purchase_type=live_tool.ownership_type,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     stale_transaction = Transaction(
         id=uuid.uuid4(),
@@ -475,9 +479,9 @@ async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer
         stripe_payment_intent_id=None,
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(
         None,
@@ -544,7 +548,7 @@ def test_purchase_tool_route_returns_checkout_url(client, auth_overrides, buyer,
         purchase_price=Decimal("100.00"),
         purchase_type=OwnershipType.full_sale,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     async def fake_purchase_tool(db, current_user, tool_id):
@@ -578,7 +582,7 @@ def test_purchase_tool_route_supports_existing_active_purchase(client, auth_over
         purchase_price=Decimal("0.00"),
         purchase_type=live_tool.ownership_type,
         status=PurchaseStatus.active,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     async def fake_purchase_tool(db, current_user, tool_id):
@@ -594,11 +598,34 @@ def test_purchase_tool_route_supports_existing_active_purchase(client, auth_over
     assert payload["checkout_url"] is None
 
 
-def test_stripe_webhook_requires_signature(client):
+def test_stripe_webhook_requires_signature(client, monkeypatch):
+    configure_stripe_webhook_secret(monkeypatch)
+
     response = client.post("/v1/billing/webhook", content=b"{}")
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "missing_signature"
+
+
+def test_stripe_webhook_requires_configured_secret(client, monkeypatch):
+    alerts = []
+
+    def fail_verify_webhook(*args, **kwargs):
+        raise AssertionError("misconfigured webhook must not attempt signature verification")
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(billing_service.settings, "stripe_webhook_secret", "")
+    monkeypatch.setattr(billing_service, "verify_webhook", fail_verify_webhook)
+    monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
+
+    response = client.post("/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "misconfiguration"
+    assert alerts[0]["event"] == "stripe_webhook_misconfigured"
 
 
 def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
@@ -611,6 +638,7 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
         alerts.append({"event": event, **kwargs})
         return True
 
+    configure_stripe_webhook_secret(monkeypatch)
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
     monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
 
@@ -632,6 +660,7 @@ def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
     async def fake_handle_webhook_event(db, event):
         handled.append(event)
 
+    configure_stripe_webhook_secret(monkeypatch)
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
     monkeypatch.setattr(billing_service, "handle_webhook_event", fake_handle_webhook_event)
 
@@ -658,6 +687,7 @@ def test_stripe_webhook_alerts_when_handler_fails(client, monkeypatch):
         alerts.append({"event": event, **kwargs})
         return True
 
+    configure_stripe_webhook_secret(monkeypatch)
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
     monkeypatch.setattr(billing_service, "handle_webhook_event", fake_handle_webhook_event)
     monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
@@ -682,7 +712,7 @@ async def test_checkout_webhook_activates_pending_purchase_and_transaction():
         purchase_price=Decimal("100.00"),
         purchase_type=OwnershipType.full_sale,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     transaction = Transaction(
         id=uuid.uuid4(),
@@ -695,9 +725,9 @@ async def test_checkout_webhook_activates_pending_purchase_and_transaction():
         stripe_payment_intent_id="cs_test_purchase",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
 
@@ -735,7 +765,7 @@ async def test_checkout_webhook_defers_unpaid_session_until_async_success():
         purchase_price=Decimal("100.00"),
         purchase_type=OwnershipType.full_sale,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     transaction = Transaction(
         id=uuid.uuid4(),
@@ -748,9 +778,9 @@ async def test_checkout_webhook_defers_unpaid_session_until_async_success():
         stripe_payment_intent_id="cs_test_async",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
 
@@ -804,7 +834,7 @@ async def test_checkout_async_payment_failed_terminates_pending_purchase():
         purchase_price=Decimal("100.00"),
         purchase_type=OwnershipType.full_sale,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     transaction = Transaction(
         id=uuid.uuid4(),
@@ -817,9 +847,9 @@ async def test_checkout_async_payment_failed_terminates_pending_purchase():
         stripe_payment_intent_id="cs_test_async",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
 
@@ -853,7 +883,7 @@ async def test_expired_checkout_terminates_pending_purchase():
         purchase_price=Decimal("100.00"),
         purchase_type=OwnershipType.full_sale,
         status=PurchaseStatus.pending,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     transaction = Transaction(
         id=uuid.uuid4(),
@@ -866,9 +896,9 @@ async def test_expired_checkout_terminates_pending_purchase():
         stripe_payment_intent_id="cs_test_purchase",
         type=billing_service.TransactionType.full_purchase,
         status=billing_service.TransactionStatus.pending,
-        period_start=datetime.now(timezone.utc),
-        period_end=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
     )
     db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
 

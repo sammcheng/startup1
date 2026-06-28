@@ -23,7 +23,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 @router.post("/setup-payment", response_model=SetupPaymentResponse)
 async def setup_payment_method(
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SetupPaymentResponse:
     client_secret = await billing_service.create_setup_intent(db, current_user)
     return SetupPaymentResponse(client_secret=client_secret)
@@ -39,7 +39,7 @@ async def get_payment_methods(
 @router.post("/onboard-seller", response_model=SellerOnboardingResponse)
 async def onboard_seller(
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SellerOnboardingResponse:
     onboarding_url = await billing_service.create_stripe_connect_account(db, current_user)
     return SellerOnboardingResponse(onboarding_url=onboarding_url)
@@ -48,7 +48,7 @@ async def onboard_seller(
 @router.get("/seller-balance", response_model=SellerBalanceResponse)
 async def get_seller_balance(
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SellerBalanceResponse:
     return await billing_service.get_seller_balance(db, current_user)
 
@@ -64,7 +64,7 @@ async def get_invoices(
 async def purchase_tool(
     tool_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ToolPurchaseResponse:
     purchase, checkout_url = await billing_service.purchase_tool(db, current_user, tool_id)
     return ToolPurchaseResponse(
@@ -83,9 +83,22 @@ async def purchase_tool(
 @router.post("/webhook", status_code=status.HTTP_204_NO_CONTENT)
 async def stripe_webhook(
     request: Request,
-    stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    stripe_signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
 ) -> None:
+    if not billing_service.settings.stripe_webhook_secret:
+        await alert_service.send_alert(
+            "stripe_webhook_misconfigured",
+            severity="critical",
+            summary="Stripe webhook secret is missing.",
+            details={"path": str(request.url.path)},
+        )
+        raise AppError(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="misconfiguration",
+            message="Webhook secret not set.",
+        )
+
     if not stripe_signature:
         await alert_service.send_alert(
             "stripe_webhook_missing_signature",
