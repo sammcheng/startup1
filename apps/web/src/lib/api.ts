@@ -6,6 +6,7 @@ import {
 } from "@/lib/env";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+const REQUEST_ID_HEADER = "X-HackMarket-Request-Id";
 export { API_BASE, getGatewayBaseUrl, isLocalServiceUrl, shouldSkipBuildTimeFetch };
 
 export class ApiError extends Error {
@@ -26,6 +27,7 @@ export interface RequestOptions {
   cache?: RequestCache;
   next?: { revalidate?: number | false; tags?: string[] };
   timeoutMs?: number;
+  requestId?: string;
 }
 
 type ErrorPayload = {
@@ -65,8 +67,16 @@ function toApiError(res: Response, data: unknown): ApiError {
     err?.code ?? (res.status >= 500 ? "UPSTREAM_ERROR" : "UNKNOWN_ERROR"),
     err?.message ?? rawText ?? "Request failed",
     err?.details ?? {},
-    err?.request_id ?? res.headers.get("X-HackMarket-Request-Id")
+    err?.request_id ?? res.headers.get(REQUEST_ID_HEADER)
   );
+}
+
+function createRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `web_${crypto.randomUUID().replaceAll("-", "")}`;
+  }
+
+  return `web_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -130,7 +140,9 @@ async function request<T>(
   body?: unknown,
   options: RequestOptions = {}
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    [REQUEST_ID_HEADER]: options.requestId ?? createRequestId(),
+  };
 
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -160,7 +172,9 @@ async function requestFormData<T>(
   body: FormData,
   options: RequestOptions = {}
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    [REQUEST_ID_HEADER]: options.requestId ?? createRequestId(),
+  };
 
   if (options.token) {
     headers["Authorization"] = `Bearer ${options.token}`;

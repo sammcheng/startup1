@@ -56,6 +56,7 @@ CONTAINER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "container
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
 WEB_ENV = REPO_ROOT / "apps" / "web" / "src" / "lib" / "env.ts"
 WEB_SECURITY_HEADERS = REPO_ROOT / "apps" / "web" / "security-headers.mjs"
+WEB_API_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "lib" / "api.ts"
 WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
 WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
 WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
@@ -597,6 +598,14 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     docs_client = WEB_DOCS_CLIENT.read_text(encoding="utf-8")
+    web_api_client = WEB_API_CLIENT.read_text(encoding="utf-8")
+    expect(
+        'REQUEST_ID_HEADER = "X-HackMarket-Request-Id"' in web_api_client
+        and "createRequestId" in web_api_client
+        and "options.requestId ?? createRequestId()" in web_api_client,
+        "frontend API client must attach traceable request IDs to outbound API calls",
+        failures,
+    )
     expect(
         "/v1/account/webhooks" not in docs_client,
         "public docs must not advertise the unimplemented account webhooks API",
