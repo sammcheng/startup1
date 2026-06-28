@@ -358,6 +358,14 @@ def check_repo_files(failures: list[str]) -> None:
         "production tool submissions must require a signed-in owner",
         failures,
     )
+    gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(encoding="utf-8")
+    expect(
+        "_ensure_gateway_entitlement" in gateway_router
+        and "OwnershipType.full_sale" in gateway_router
+        and "PurchaseStatus.active" in gateway_router,
+        "gateway must require active purchases before invoking full-sale tools",
+        failures,
+    )
     expect(
         "Sign in before submitting a tool for analysis" in tools_router,
         "anonymous production submissions must fail before creating system-owned drafts",

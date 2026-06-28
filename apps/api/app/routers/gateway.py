@@ -6,13 +6,15 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db, get_redis, validate_api_key
-from app.exceptions import AppError, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
-from app.models import APIKey, Tool, User
-from app.models.tool import ToolStatus
+from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
+from app.models import APIKey, Tool, ToolPurchase, User
+from app.models.tool import OwnershipType, ToolStatus
+from app.models.tool_purchase import PurchaseStatus
 from app.schemas.usage import UsageLogCreate
 from app.services import alert_service, proxy_service, tool_service, usage_service
 
@@ -69,6 +71,7 @@ async def _proxy_tool_request_impl(
         raise ToolNotFoundError(tool_slug)
     if tool.status != ToolStatus.live or not tool.api_endpoint:
         raise ToolNotLiveError(tool_slug)
+    await _ensure_gateway_entitlement(db, buyer, tool)
 
     limit, remaining = await _check_rate_limit(redis, api_key)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
@@ -153,6 +156,25 @@ async def _check_rate_limit(redis: Redis, api_key: APIKey) -> tuple[int, int]:
         await _record_rate_limit_violation(redis, api_key, current)
         raise RateLimitExceededError(limit, 0, RATE_LIMIT_WINDOW_SECONDS)
     return limit, limit - current
+
+
+async def _ensure_gateway_entitlement(db: AsyncSession, buyer: User, tool: Tool) -> None:
+    if tool.ownership_type != OwnershipType.full_sale:
+        return
+    if tool.seller_id == buyer.id:
+        return
+
+    result = await db.execute(
+        select(ToolPurchase.id)
+        .where(
+            ToolPurchase.buyer_id == buyer.id,
+            ToolPurchase.tool_id == tool.id,
+            ToolPurchase.status == PurchaseStatus.active,
+        )
+        .limit(1)
+    )
+    if result.scalar_one_or_none() is None:
+        raise Forbidden("Purchase this tool before invoking it with an API key.")
 
 
 async def _record_rate_limit_violation(redis: Redis, api_key: APIKey, current_window_count: int) -> None:

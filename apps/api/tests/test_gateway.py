@@ -7,6 +7,7 @@ from app.dependencies import validate_api_key
 from app.exceptions import InvalidAPIKeyError
 from app.main import app
 from app.routers import gateway
+from app.models.tool import OwnershipType
 from app.services import tool_service, url_safety, usage_service
 
 
@@ -167,6 +168,87 @@ def test_tool_not_live(client, auth_overrides, buyer, api_key, draft_tool, monke
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "tool_not_live"
+
+
+def test_full_sale_gateway_requires_active_purchase(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+    auth_overrides(api_key_context=(buyer, api_key))
+    live_tool.ownership_type = OwnershipType.full_sale
+    forwarded = []
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fake_entitlement(db, current_buyer, tool):
+        raise gateway.Forbidden("Purchase this tool before invoking it with an API key.")
+
+    async def fake_forward_request(*args, **kwargs):
+        forwarded.append((args, kwargs))
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(gateway, "_ensure_gateway_entitlement", fake_entitlement)
+    monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
+
+    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+    assert forwarded == []
+
+
+def test_full_sale_gateway_allows_active_purchase(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+    auth_overrides(api_key_context=(buyer, api_key))
+    live_tool.ownership_type = OwnershipType.full_sale
+    entitlement_checks = []
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fake_entitlement(db, current_buyer, tool):
+        entitlement_checks.append((current_buyer.id, tool.id))
+
+    async def fake_forward_request(tool, request, body, request_id, tool_path=""):
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(gateway, "_ensure_gateway_entitlement", fake_entitlement)
+    monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
+    monkeypatch.setattr(tool_service, "increment_total_requests", noop)
+    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
+    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+
+    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert entitlement_checks == [(buyer.id, live_tool.id)]
+
+
+@pytest.mark.asyncio
+async def test_gateway_entitlement_allows_only_active_full_sale_purchase(buyer, live_tool):
+    live_tool.ownership_type = OwnershipType.full_sale
+
+    class FakeEntitlementResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class FakeEntitlementDb:
+        def __init__(self, value):
+            self.value = value
+
+        async def execute(self, statement):
+            return FakeEntitlementResult(self.value)
+
+    await gateway._ensure_gateway_entitlement(FakeEntitlementDb(live_tool.id), buyer, live_tool)
+
+    with pytest.raises(gateway.Forbidden):
+        await gateway._ensure_gateway_entitlement(FakeEntitlementDb(None), buyer, live_tool)
 
 
 def test_gateway_forwards_subpaths(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
