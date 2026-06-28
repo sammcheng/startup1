@@ -38,6 +38,7 @@ class ClerkSettings(BaseModel):
     secret_key: str
     webhook_secret: str
     jwks_url: str
+    issuer_url: str
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ class Settings(BaseSettings):
     clerk_secret_key: str = ""
     clerk_webhook_secret: str = ""  # from Clerk dashboard → Webhooks → Signing Secret
     clerk_jwks_url: str = ""  # e.g. https://<your-clerk-domain>/.well-known/jwks.json
+    clerk_issuer_url: str = ""  # e.g. https://<your-clerk-domain>
 
     # AWS
     aws_access_key_id: str = ""
@@ -184,6 +186,7 @@ class Settings(BaseSettings):
                 "CONVERTER_SECRET": self.converter_secret,
                 "CLERK_SECRET_KEY": self.clerk_secret_key,
                 "CLERK_WEBHOOK_SECRET": self.clerk_webhook_secret,
+                "CLERK_ISSUER_URL": self.clerk_issuer_url,
                 "STRIPE_SECRET_KEY": self.stripe_secret_key,
                 "STRIPE_WEBHOOK_SECRET": self.stripe_webhook_secret,
                 "AWS_ACCESS_KEY_ID": self.aws_access_key_id,
@@ -261,6 +264,7 @@ class Settings(BaseSettings):
             for key, value in {
                 "APP_BASE_URL": self.app_base_url,
                 "PUBLIC_API_BASE_URL": self.public_api_base_url,
+                "CLERK_ISSUER_URL": self.clerk_issuer_url,
             }.items()
             if not value.startswith("https://")
         ]
@@ -322,6 +326,7 @@ class Settings(BaseSettings):
             secret_key=self.clerk_secret_key,
             webhook_secret=self.clerk_webhook_secret,
             jwks_url=self.clerk_jwks_url,
+            issuer_url=self.clerk_issuer_url,
         )
 
 

@@ -127,6 +127,7 @@ def test_clerk_webhook_dispatches_verified_user_created_event(client, monkeypatc
 
 def test_resolve_jwks_url_falls_back_to_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
+    monkeypatch.setattr(auth_dependencies.settings, "clerk_issuer_url", "")
     monkeypatch.setattr(
         auth_dependencies.jwt,
         "get_unverified_claims",
@@ -140,6 +141,7 @@ def test_resolve_jwks_url_falls_back_to_issuer(monkeypatch):
 
 def test_resolve_jwks_url_rejects_untrusted_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
+    monkeypatch.setattr(auth_dependencies.settings, "clerk_issuer_url", "")
     monkeypatch.setattr(
         auth_dependencies.jwt,
         "get_unverified_claims",
@@ -148,6 +150,53 @@ def test_resolve_jwks_url_rejects_untrusted_issuer(monkeypatch):
 
     with pytest.raises(Unauthorized):
         auth_dependencies._resolve_jwks_url("fake-token")
+
+
+def test_resolve_jwks_url_prefers_configured_clerk_issuer(monkeypatch):
+    monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "clerk_issuer_url",
+        "https://pleasing-racer-55.clerk.accounts.dev/",
+    )
+
+    jwks_url = auth_dependencies._resolve_jwks_url("fake-token")
+
+    assert jwks_url == "https://pleasing-racer-55.clerk.accounts.dev/.well-known/jwks.json"
+
+
+@pytest.mark.asyncio
+async def test_verify_clerk_identity_validates_configured_issuer(monkeypatch):
+    async def fake_get_jwks(jwks_url):
+        assert jwks_url == "https://pleasing-racer-55.clerk.accounts.dev/.well-known/jwks.json"
+        return [{"kid": "kid_123"}]
+
+    def fake_decode(token, jwk, *, algorithms, issuer):
+        assert token == "fake-token"
+        assert jwk == {"kid": "kid_123"}
+        assert algorithms == ["RS256"]
+        assert issuer == "https://pleasing-racer-55.clerk.accounts.dev"
+        return {
+            "sub": "clerk_verified",
+            "email": "verified@example.com",
+            "username": "verified",
+            "name": "Verified User",
+        }
+
+    monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "clerk_issuer_url",
+        "https://pleasing-racer-55.clerk.accounts.dev/",
+    )
+    monkeypatch.setattr(auth_dependencies.jwt, "get_unverified_header", lambda token: {"kid": "kid_123"})
+    monkeypatch.setattr(auth_dependencies, "_get_jwks", fake_get_jwks)
+    monkeypatch.setattr(auth_dependencies.jwt, "decode", fake_decode)
+
+    identity = await auth_dependencies.verify_clerk_identity("fake-token")
+
+    assert identity.clerk_id == "clerk_verified"
+    assert identity.email == "verified@example.com"
 
 
 class _FakeAuthResult:

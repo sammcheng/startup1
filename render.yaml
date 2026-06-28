@@ -82,6 +82,8 @@ services:
         sync: false
       - key: CLERK_JWKS_URL
         sync: false
+      - key: CLERK_ISSUER_URL
+        sync: false
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
@@ -218,6 +220,8 @@ services:
       - key: CLERK_WEBHOOK_SECRET
         sync: false
       - key: CLERK_JWKS_URL
+        sync: false
+      - key: CLERK_ISSUER_URL
         sync: false
       - key: AWS_ACCESS_KEY_ID
         sync: false

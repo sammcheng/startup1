@@ -98,6 +98,7 @@ API_REQUIRED_ENV = {
     "CLERK_SECRET_KEY",
     "CLERK_WEBHOOK_SECRET",
     "CLERK_JWKS_URL",
+    "CLERK_ISSUER_URL",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_REGION",
@@ -656,6 +657,15 @@ def check_repo_files(failures: list[str]) -> None:
 
     auth_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "auth_service.py").read_text(encoding="utf-8")
     auth_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "auth.py").read_text(encoding="utf-8")
+    auth_dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(encoding="utf-8")
+    api_config = API_CONFIG.read_text(encoding="utf-8")
+    expect(
+        "clerk_issuer_url" in api_config
+        and "CLERK_ISSUER_URL" in api_config
+        and "issuer=settings.clerk_issuer_url.rstrip" in auth_dependencies,
+        "Clerk JWT validation must be pinned to the configured production issuer",
+        failures,
+    )
     expect(
         'settings.environment != "production"' in auth_service and "profile.email" in auth_service,
         "client-provided auth sync email must only be a non-production fallback",

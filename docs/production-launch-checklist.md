@@ -9,6 +9,7 @@ Rotate the Clerk secret key that was pasted into chat before launch. Treat it as
 Rotate or create production values for:
 - `CLERK_SECRET_KEY`
 - `CLERK_WEBHOOK_SECRET`
+- `CLERK_ISSUER_URL`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `OPENROUTER_API_KEY`
@@ -91,8 +92,9 @@ Before running production migrations:
 ## 5. Configure Provider Webhooks
 
 Clerk:
-- Set webhook target to `https://api.hackmarket.io/v1/auth/clerk/webhook`
+- Set webhook target to `https://api.hackmarket.io/v1/auth/webhook`
 - Store the signing secret as `CLERK_WEBHOOK_SECRET`
+- Store the issuer URL as `CLERK_ISSUER_URL` so API JWT validation is pinned to the production Clerk instance.
 
 Stripe:
 - Set webhook target to `https://api.hackmarket.io/v1/billing/webhook`

@@ -6,6 +6,7 @@ PRODUCTION_REQUIRED = {
     "converter_secret": "converter-secret",
     "clerk_secret_key": "sk_live_value",
     "clerk_webhook_secret": "whsec_value",
+    "clerk_issuer_url": "https://pleasing-racer-55.clerk.accounts.dev",
     "stripe_secret_key": "sk_live_value",
     "stripe_webhook_secret": "whsec_value",
     "aws_access_key_id": "AKIA_TEST",
@@ -52,6 +53,20 @@ def test_production_requires_https_public_urls() -> None:
             database_url="postgresql://user:secret@db.internal:5432/hackmarket",
             redis_url="redis://redis.internal:6379",
             **PRODUCTION_REQUIRED,
+        )
+
+
+def test_production_requires_https_clerk_issuer_url() -> None:
+    with pytest.raises(ValueError, match="Production public URLs must use https"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            **{**PRODUCTION_REQUIRED, "clerk_issuer_url": "http://pleasing-racer-55.clerk.accounts.dev"},
         )
 
 

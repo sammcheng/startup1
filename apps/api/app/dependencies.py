@@ -90,6 +90,8 @@ def _jwks_url_from_issuer(issuer: str) -> str:
 def _resolve_jwks_url(token: str) -> str:
     if settings.clerk_jwks_url:
         return settings.clerk_jwks_url
+    if settings.clerk_issuer_url:
+        return f"{settings.clerk_issuer_url.rstrip('/')}/.well-known/jwks.json"
 
     try:
         claims = jwt.get_unverified_claims(token)
@@ -140,7 +142,12 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
         raise Unauthorized("Token signing key not found.")
 
     try:
-        claims: dict = jwt.decode(token, jwk, algorithms=["RS256"])
+        claims: dict = jwt.decode(
+            token,
+            jwk,
+            algorithms=["RS256"],
+            issuer=settings.clerk_issuer_url.rstrip("/") or None,
+        )
     except JWTError as exc:
         raise Unauthorized("Token verification failed.") from exc
 
