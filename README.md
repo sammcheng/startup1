@@ -203,6 +203,10 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_te
 python3 scripts/production_smoke_check.py --app-url https://hackmarket.io --api-url https://api.hackmarket.io
 ```
 
+The production smoke check verifies public frontend pages, auth redirects,
+frontend/API security headers, API readiness, production CORS, public discovery,
+structured API auth errors with request IDs, and the submission status page.
+
 Launch checklist:
 - See `docs/production-launch-checklist.md` before publishing to real users.
 - Rotate the Clerk secret key that was pasted into chat before launch.

@@ -120,6 +120,11 @@ python3 scripts/production_smoke_check.py \
   --api-url https://api.hackmarket.io
 ```
 
+This must pass public page checks, dashboard/admin/approver auth boundaries,
+frontend/API security headers, `/health`, `/ready`, production CORS, public tool
+discovery, structured protected-route API errors with request IDs, and the
+submission status page.
+
 Optional signed-in smoke checks:
 
 ```bash

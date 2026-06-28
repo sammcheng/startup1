@@ -32,6 +32,7 @@ SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
 REPO_HYGIENE_CHECK = REPO_ROOT / "scripts" / "repo_hygiene_check.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
+PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 
 
 API_REQUIRED_ENV = {
@@ -262,6 +263,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
     expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
+    expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
     expect(
@@ -286,6 +288,12 @@ def check_repo_files(failures: list[str]) -> None:
         "API readiness must degrade when worker queue depth is too high",
         failures,
     )
+
+    smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
+    expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)
+    expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
+    expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
+    expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)

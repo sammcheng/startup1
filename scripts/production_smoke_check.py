@@ -33,6 +33,7 @@ DEFAULT_FRONTEND_PATHS = [
     "/sign-up",
 ]
 AUTH_BOUNDARY_PATHS = ["/dashboard", "/admin", "/approver"]
+API_AUTH_BOUNDARY_PATHS = ["v1/dashboard", "v1/api-keys", "v1/seller/dashboard"]
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
@@ -137,6 +138,76 @@ def check_discovery(api_root: str, timeout: int) -> CheckResult:
     )
 
 
+def check_api_cors(api_root: str, app_root: str, timeout: int) -> CheckResult:
+    origin = app_root.rstrip("/")
+    try:
+        status, body, headers = request(
+            "OPTIONS",
+            urljoin(api_root, "v1/tools/discover"),
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return CheckResult("api CORS production origin", False, f"request failed: {exc}")
+
+    normalized = {key.lower(): value for key, value in headers.items()}
+    allowed_origin = normalized.get("access-control-allow-origin")
+    if status != 200:
+        return CheckResult("api CORS production origin", False, f"unexpected {status}: {body[:240]}")
+    if allowed_origin != origin:
+        return CheckResult(
+            "api CORS production origin",
+            False,
+            f"expected allow-origin {origin!r}, got {allowed_origin!r}",
+        )
+    return CheckResult("api CORS production origin", True, f"allows {origin}")
+
+
+def parse_json_error(status: int, body: str, headers: dict[str, str]) -> str | None:
+    try:
+        payload: dict[str, Any] = json.loads(body)
+    except json.JSONDecodeError:
+        return f"non-JSON response {status}: {body[:240]}"
+
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return f"missing error object in payload={payload}"
+
+    request_id = error.get("request_id")
+    header_request_id = headers.get("X-HackMarket-Request-Id") or headers.get("x-hackmarket-request-id")
+    if not request_id:
+        return f"missing error.request_id in payload={payload}"
+    if header_request_id and request_id != header_request_id:
+        return f"request id mismatch body={request_id!r} header={header_request_id!r}"
+    if not error.get("code") or not error.get("message"):
+        return f"missing stable code/message in payload={payload}"
+    return None
+
+
+def check_api_auth_boundary(api_root: str, path: str, timeout: int) -> CheckResult:
+    name = f"api auth boundary /{path}"
+    try:
+        status, body, headers = request("GET", urljoin(api_root, path), timeout=timeout)
+    except HTTPError as exc:
+        status = exc.code
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        headers = dict(exc.headers)
+    except Exception as exc:
+        return CheckResult(name, False, f"request failed: {exc}")
+
+    if status not in {401, 403}:
+        return CheckResult(name, False, f"unexpected public status {status}: {body[:240]}")
+
+    error = parse_json_error(status, body, headers)
+    if error:
+        return CheckResult(name, False, error)
+    return CheckResult(name, True, f"protected with structured {status}")
+
+
 def check_frontend_security_headers(app_root: str, timeout: int) -> CheckResult:
     required = {
         "content-security-policy",
@@ -206,6 +277,17 @@ def check_auth_boundary(app_root: str, path: str, timeout: int) -> CheckResult:
     return CheckResult(f"auth boundary {path}", False, f"unexpected public status {status}")
 
 
+def check_submission_status_page(app_root: str, timeout: int) -> CheckResult:
+    placeholder_id = "00000000-0000-4000-8000-000000000000"
+    return run_http_check(
+        "frontend submission status page",
+        "GET",
+        urljoin(app_root, f"submit/{placeholder_id}/status"),
+        expected_statuses={200, 404},
+        timeout=timeout,
+    )
+
+
 def check_authenticated_dashboard(app_root: str, clerk_session_token: str, timeout: int) -> CheckResult:
     return run_http_check(
         "signed-in dashboard",
@@ -250,6 +332,7 @@ def main() -> int:
                 timeout=args.timeout,
             )
         )
+    results.append(check_submission_status_page(app_root, args.timeout))
     results.append(check_frontend_security_headers(app_root, args.timeout))
 
     for path in AUTH_BOUNDARY_PATHS:
@@ -266,7 +349,10 @@ def main() -> int:
     )
     results.append(check_ready(api_root, args.timeout))
     results.append(check_api_security_headers(api_root, args.timeout))
+    results.append(check_api_cors(api_root, app_root, args.timeout))
     results.append(check_discovery(api_root, args.timeout))
+    for path in API_AUTH_BOUNDARY_PATHS:
+        results.append(check_api_auth_boundary(api_root, path, args.timeout))
 
     if args.clerk_session_token:
         results.append(check_authenticated_dashboard(app_root, args.clerk_session_token, args.timeout))
