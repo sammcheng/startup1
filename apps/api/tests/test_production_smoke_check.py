@@ -100,6 +100,43 @@ def test_frontend_security_headers_require_hsts_for_https(monkeypatch):
     assert result.detail == "missing strict-transport-security"
 
 
+def test_api_debug_routes_closed_accepts_404s(monkeypatch):
+    class FakeHeaders(dict):
+        def get(self, key, default=None):
+            return super().get(key, default)
+
+    class FakeHTTPError(HTTPError):
+        def __init__(self, url):
+            super().__init__(url, 404, "Not Found", FakeHeaders({}), None)
+
+        def read(self, amt=None):
+            return b'{"error":{"code":"not_found"}}'
+
+    def fake_request(method, url, **kwargs):
+        raise FakeHTTPError(url)
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_api_debug_routes_closed("https://api.example.com/", 5)
+
+    assert result.ok is True
+    assert result.detail == "OpenAPI and interactive docs are disabled"
+
+
+def test_api_debug_routes_closed_rejects_exposed_schema(monkeypatch):
+    def fake_request(method, url, **kwargs):
+        if url.endswith("/openapi.json"):
+            return 200, '{"openapi":"3.1.0"}', {}
+        raise HTTPError(url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_api_debug_routes_closed("https://api.example.com/", 5)
+
+    assert result.ok is False
+    assert "/openapi.json -> 200" in result.detail
+
+
 def test_admin_operations_health_smoke_requires_expected_sections(monkeypatch):
     body = """
     {

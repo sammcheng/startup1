@@ -269,6 +269,26 @@ def check_api_security_headers(api_root: str, timeout: int) -> CheckResult:
     return CheckResult("api security headers", True, "required headers present")
 
 
+def check_api_debug_routes_closed(api_root: str, timeout: int) -> CheckResult:
+    exposed: list[str] = []
+    for path in ("openapi.json", "docs", "redoc"):
+        url = urljoin(api_root, path)
+        try:
+            status, body, _headers = request("GET", url, timeout=timeout)
+        except HTTPError as exc:
+            status = exc.code
+            body = exc.read(4096).decode("utf-8", errors="replace")
+        except Exception as exc:
+            return CheckResult("api debug routes closed", False, f"/{path} request failed: {exc}")
+
+        if status != 404:
+            exposed.append(f"/{path} -> {status}: {body[:120]}")
+
+    if exposed:
+        return CheckResult("api debug routes closed", False, "; ".join(exposed))
+    return CheckResult("api debug routes closed", True, "OpenAPI and interactive docs are disabled")
+
+
 def check_auth_boundary(app_root: str, path: str, timeout: int) -> CheckResult:
     try:
         status, _body, headers = request(
@@ -412,6 +432,7 @@ def main() -> int:
     )
     results.append(check_ready(api_root, args.timeout))
     results.append(check_api_security_headers(api_root, args.timeout))
+    results.append(check_api_debug_routes_closed(api_root, args.timeout))
     results.append(check_api_cors(api_root, app_root, args.timeout))
     results.append(check_discovery(api_root, args.timeout))
     for path in API_AUTH_BOUNDARY_PATHS:

@@ -541,6 +541,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)
     expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
     expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
+    expect("check_api_debug_routes_closed" in smoke_check, "smoke checks must verify production API docs and OpenAPI schema are disabled", failures)
     expect(
         "production CSP includes unsafe directives" in smoke_check
         and "strict-transport-security" in smoke_check,
