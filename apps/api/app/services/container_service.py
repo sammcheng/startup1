@@ -1,14 +1,11 @@
 import asyncio
-import json
 import logging
 import re
 import shutil
 import tempfile
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any
 from uuid import UUID
 
 import httpx
@@ -19,6 +16,7 @@ from app.models import Tool
 from app.models.tool import ToolStatus
 from app.services import render_service, storage_service, tool_service
 from app.services.port_manager import PortManager
+from app.services.source_archive import SourceArchiveError, extract_safe_zip
 
 logger = logging.getLogger(__name__)
 
@@ -301,9 +299,17 @@ class ContainerBuilder:
             archive_path.write_bytes(archive_bytes)
 
             def _extract() -> None:
-                shutil.unpack_archive(str(archive_path), str(worktree))
+                extract_safe_zip(
+                    archive_path,
+                    worktree,
+                    max_entries=settings.max_source_zip_entries,
+                    max_uncompressed_bytes=settings.max_source_zip_uncompressed_bytes,
+                )
 
-            await asyncio.to_thread(_extract)
+            try:
+                await asyncio.to_thread(_extract)
+            except SourceArchiveError as exc:
+                raise ContainerBuildError(str(exc)) from exc
             return self._normalize_source_root(worktree)
 
         if tool.github_url:
@@ -360,8 +366,12 @@ class ContainerBuilder:
             archive_path.write_bytes(response.content)
 
             def _extract() -> None:
-                with zipfile.ZipFile(archive_path) as archive:
-                    archive.extractall(destination)
+                extract_safe_zip(
+                    archive_path,
+                    destination,
+                    max_entries=settings.max_source_zip_entries,
+                    max_uncompressed_bytes=settings.max_source_zip_uncompressed_bytes,
+                )
 
             await asyncio.to_thread(_extract)
             normalized = self._normalize_source_root(destination)
@@ -377,7 +387,7 @@ class ContainerBuilder:
                     shutil.move(str(child), destination / child.name)
                 shutil.rmtree(normalized, ignore_errors=True)
             return True
-        except (httpx.HTTPError, OSError, zipfile.BadZipFile):
+        except (httpx.HTTPError, OSError, SourceArchiveError):
             return False
 
     async def _github_default_branch(self, owner: str, repo: str) -> str:

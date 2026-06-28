@@ -1,7 +1,8 @@
 import io
+import stat
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.models import ToolProcessingJob, ToolProcessingJobStatus
 from app.models.tool import ToolStatus
@@ -20,6 +21,15 @@ def _zip_bytes_with_entries(entries: dict[str, str]) -> bytes:
     with zipfile.ZipFile(buffer, "w") as archive:
         for name, content in entries.items():
             archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def _zip_bytes_with_symlink(name: str = "app-link") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        info = zipfile.ZipInfo(name)
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(info, "target")
     return buffer.getvalue()
 
 
@@ -117,6 +127,50 @@ def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "upload_failed"
     assert response.json()["error"]["message"] == "The uploaded zip contains an unsafe file path."
+
+
+def test_upload_rejects_zip_windows_path_traversal(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_bytes(*args, **kwargs):
+        raise AssertionError("unsafe archive should not be stored")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/upload",
+        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"src\\..\\secrets.env": "nope"}), "application/zip")},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "upload_failed"
+    assert response.json()["error"]["message"] == "The uploaded zip contains an unsafe file path."
+
+
+def test_upload_rejects_zip_symlink(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_bytes(*args, **kwargs):
+        raise AssertionError("unsafe archive should not be stored")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_bytes", fail_upload_bytes)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/upload",
+        files={"source_zip": ("tool.zip", _zip_bytes_with_symlink(), "application/zip")},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "upload_failed"
+    assert response.json()["error"]["message"] == "The uploaded zip contains a symbolic link, which is not supported."
 
 
 def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller, draft_tool, monkeypatch):
@@ -297,7 +351,7 @@ def test_configure_requires_entry_command_or_deployment_url(client, auth_overrid
 
 def test_seller_submission_status_returns_latest_processing_job(client, auth_overrides, seller, draft_tool, monkeypatch):
     auth_overrides(seller_user=seller)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job = ToolProcessingJob(
         id=uuid.uuid4(),
         tool_id=draft_tool.id,

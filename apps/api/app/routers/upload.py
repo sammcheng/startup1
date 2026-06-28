@@ -1,11 +1,8 @@
-import io
-from pathlib import PurePosixPath
 import uuid
-import zipfile
 from typing import Annotated
 
-from pydantic import ValidationError
 from fastapi import APIRouter, Depends, File, Request, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -17,11 +14,12 @@ from app.schemas.tool import (
     ToolConfigureRequest,
     ToolResponse,
     ToolStatusResponse,
+    ToolUpdate,
     ToolUploadGithubRequest,
     ToolUploadResponse,
-    ToolUpdate,
 )
 from app.services import endpoint_service, job_service, storage_service, tool_service
+from app.services.source_archive import SourceArchiveError, list_safe_zip_entries
 
 router = APIRouter(prefix="/tools", tags=["tool-upload"])
 
@@ -195,50 +193,20 @@ async def get_tool_status(
     )
 
 
-def _validate_zip_entry_name(filename: str) -> None:
-    normalized = filename.replace("\\", "/")
-    path = PurePosixPath(normalized)
-    if path.is_absolute() or any(part == ".." for part in path.parts):
-        raise UploadFailedError(
-            "The uploaded zip contains an unsafe file path.",
-            details={"filename": filename},
-        )
-
-
 def _validate_and_list_zip_entries(file_bytes: bytes) -> list[str]:
     try:
-        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
-            infos = [
-                info
-                for info in archive.infolist()
-                if not info.filename.startswith("__MACOSX/") and info.filename.strip("/")
-            ]
-            if len(infos) > settings.max_source_zip_entries:
-                raise UploadFailedError(
-                    "The uploaded zip contains too many files.",
-                    details={
-                        "entries": len(infos),
-                        "limit": settings.max_source_zip_entries,
-                    },
-                )
-
-            total_uncompressed_bytes = 0
-            entries: list[str] = []
-            for info in infos:
-                _validate_zip_entry_name(info.filename)
-                total_uncompressed_bytes += info.file_size
-                if total_uncompressed_bytes > settings.max_source_zip_uncompressed_bytes:
-                    raise UploadFailedError(
-                        "The uploaded zip expands beyond the allowed source size.",
-                        details={
-                            "uncompressed_bytes": total_uncompressed_bytes,
-                            "limit": settings.max_source_zip_uncompressed_bytes,
-                        },
-                    )
-                entries.append(info.filename)
-        return entries[:200]
-    except zipfile.BadZipFile as exc:
-        raise UploadFailedError("The uploaded file is not a valid zip archive.") from exc
+        return list_safe_zip_entries(
+            file_bytes,
+            max_entries=settings.max_source_zip_entries,
+            max_uncompressed_bytes=settings.max_source_zip_uncompressed_bytes,
+        )
+    except SourceArchiveError as exc:
+        details = {"filename": exc.filename} if exc.filename else {}
+        if "too many files" in str(exc):
+            details["limit"] = settings.max_source_zip_entries
+        if "allowed source size" in str(exc):
+            details["limit"] = settings.max_source_zip_uncompressed_bytes
+        raise UploadFailedError(str(exc), details=details) from exc
 
 
 def _github_preview_label(github_url: str | object) -> str:
