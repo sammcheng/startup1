@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { AlertTriangle, RefreshCcw, ShieldCheck, UserX } from "lucide-react";
+import { Activity, AlertTriangle, RefreshCcw, ShieldCheck, UserX } from "lucide-react";
 
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
@@ -45,6 +45,25 @@ interface AdminProcessingJob {
 interface AdminProcessingJobListResponse {
   items: AdminProcessingJob[];
   total: number;
+}
+
+interface AdminOperationsHealth {
+  status: "healthy" | "degraded";
+  checks: Record<string, string>;
+  queue: {
+    name: string;
+    depth: number | null;
+    depth_threshold: number;
+    worker_heartbeat: boolean;
+    worker_health_check_key: string;
+  };
+  processing_jobs: {
+    stuck_active: number;
+    failed_recent: number;
+    stale_after_seconds: number;
+    failed_threshold: number;
+    failed_window_seconds: number;
+  };
 }
 
 type AccessState = "checking" | "ready" | "signed_out" | "forbidden" | "not_configured" | "error";
@@ -112,6 +131,7 @@ export default function AdminPage() {
 function AdminOperations({ token }: { token: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [jobs, setJobs] = useState<AdminProcessingJob[]>([]);
+  const [health, setHealth] = useState<AdminOperationsHealth | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -119,10 +139,12 @@ function AdminOperations({ token }: { token: string }) {
     setStatus("loading");
     setNotice(null);
     try {
-      const [userResponse, jobResponse] = await Promise.all([
+      const [healthResponse, userResponse, jobResponse] = await Promise.all([
+        api.get<AdminOperationsHealth>("/admin/operations-health", { token }),
         api.get<AdminUserListResponse>("/admin/users?limit=25", { token }),
         api.get<AdminProcessingJobListResponse>("/admin/processing-jobs?limit=25", { token }),
       ]);
+      setHealth(healthResponse);
       setUsers(userResponse.items);
       setJobs(jobResponse.items);
       setStatus("ready");
@@ -189,6 +211,8 @@ function AdminOperations({ token }: { token: string }) {
       {notice ? <div style={noticeStyle}>{notice}</div> : null}
       {status === "error" ? <div style={errorStyle}>{notice ?? "Admin data failed to load."}</div> : null}
 
+      <OperationsHealthPanel health={health} status={status} onRefresh={load} />
+
       <section style={gridStyle}>
         <Panel
           title="Processing jobs"
@@ -250,6 +274,72 @@ function AdminOperations({ token }: { token: string }) {
   );
 }
 
+function OperationsHealthPanel({
+  health,
+  status,
+  onRefresh,
+}: {
+  health: AdminOperationsHealth | null;
+  status: "loading" | "ready" | "error";
+  onRefresh: () => Promise<void>;
+}) {
+  const degraded = health?.status === "degraded";
+  return (
+    <section style={healthPanelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <p style={eyebrowStyle}>Live operations</p>
+          <h2 style={panelTitleStyle}>Production health</h2>
+        </div>
+        <button type="button" onClick={() => void onRefresh()} style={ghostButtonStyle}>
+          <RefreshCcw size={15} />
+          Refresh
+        </button>
+      </div>
+      {status === "loading" ? <EmptyState text="Loading operations health…" /> : null}
+      {status !== "loading" && !health ? <EmptyState text="Health summary is unavailable." /> : null}
+      {health ? (
+        <>
+          <div style={healthBannerStyle(degraded)}>
+            <Activity size={18} />
+            <strong>{degraded ? "Needs attention" : "Healthy"}</strong>
+            <span>
+              Queue {health.checks.queue}, worker {health.checks.worker}, processing jobs{" "}
+              {health.checks.processing_jobs}.
+            </span>
+          </div>
+          <div style={healthGridStyle}>
+            <HealthCard
+              label="Queue depth"
+              value={health.queue.depth === null ? "unknown" : `${health.queue.depth}/${health.queue.depth_threshold}`}
+              tone={health.checks.queue === "ok" ? "ok" : "danger"}
+            />
+            <HealthCard
+              label="Worker heartbeat"
+              value={health.queue.worker_heartbeat ? "online" : "missing"}
+              tone={health.checks.worker === "ok" ? "ok" : "danger"}
+            />
+            <HealthCard
+              label="Stuck jobs"
+              value={`${health.processing_jobs.stuck_active}`}
+              tone={health.processing_jobs.stuck_active ? "danger" : "ok"}
+            />
+            <HealthCard
+              label="Recent failures"
+              value={`${health.processing_jobs.failed_recent}/${health.processing_jobs.failed_threshold}`}
+              tone={health.processing_jobs.failed_recent >= health.processing_jobs.failed_threshold ? "danger" : "ok"}
+            />
+          </div>
+          <p style={mutedStyle}>
+            Stuck threshold: {Math.round(health.processing_jobs.stale_after_seconds / 60)} minutes. Failure window:{" "}
+            {Math.round(health.processing_jobs.failed_window_seconds / 60)} minutes.
+          </p>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function AccessGate({ access, message }: { access: AccessState; message: string | null }) {
   const copy: Record<AccessState, { title: string; body: string }> = {
     checking: { title: "Checking admin access", body: "Verifying your signed-in account." },
@@ -292,6 +382,16 @@ function Metric({ label, value, tone }: { label: string; value: number; tone: "o
     <div style={metricStyle}>
       <span style={{ ...mutedStyle, fontSize: 12 }}>{label}</span>
       <strong style={{ color, fontSize: 28 }}>{value}</strong>
+    </div>
+  );
+}
+
+function HealthCard({ label, value, tone }: { label: string; value: string; tone: "ok" | "danger" }) {
+  const color = tone === "danger" ? "#dc2626" : "#16a34a";
+  return (
+    <div style={metricStyle}>
+      <span style={{ ...mutedStyle, fontSize: 12 }}>{label}</span>
+      <strong style={{ color, fontSize: 22 }}>{value}</strong>
     </div>
   );
 }
@@ -367,6 +467,36 @@ const gridStyle: CSSProperties = {
   gap: 20,
   marginTop: 20,
 };
+
+const healthPanelStyle: CSSProperties = {
+  padding: 20,
+  borderRadius: 24,
+  border: "1px solid rgba(15,23,42,.1)",
+  background: "rgba(255,255,255,.82)",
+  boxShadow: "0 18px 50px rgba(15,23,42,.09)",
+  marginTop: 20,
+};
+
+const healthGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: 12,
+};
+
+function healthBannerStyle(degraded: boolean): CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    marginBottom: 14,
+    padding: 14,
+    borderRadius: 16,
+    border: degraded ? "1px solid rgba(220,38,38,.22)" : "1px solid rgba(22,163,74,.2)",
+    background: degraded ? "rgba(254,242,242,.92)" : "rgba(240,253,244,.9)",
+    color: degraded ? "#b91c1c" : "#15803d",
+  };
+}
 
 const panelStyle: CSSProperties = {
   padding: 20,

@@ -68,6 +68,29 @@ class AdminProcessingJobListResponse(BaseModel):
     pages: int
 
 
+class AdminQueueHealthResponse(BaseModel):
+    name: str
+    depth: int | None
+    depth_threshold: int
+    worker_heartbeat: bool
+    worker_health_check_key: str
+
+
+class AdminProcessingJobHealthResponse(BaseModel):
+    stuck_active: int
+    failed_recent: int
+    stale_after_seconds: int
+    failed_threshold: int
+    failed_window_seconds: int
+
+
+class AdminOperationsHealthResponse(BaseModel):
+    status: Literal["healthy", "degraded"]
+    checks: dict[str, str]
+    queue: AdminQueueHealthResponse
+    processing_jobs: AdminProcessingJobHealthResponse
+
+
 class AdminProcessingJobRetryRequest(BaseModel):
     reason: str = Field(default="Admin retry", min_length=1, max_length=500)
 

@@ -137,6 +137,14 @@ CLERK_SESSION_TOKEN=... python3 scripts/production_smoke_check.py \
   --api-url https://api.hackmarket.io
 ```
 
+Optional admin smoke checks:
+
+```bash
+ADMIN_SESSION_TOKEN=... python3 scripts/production_smoke_check.py \
+  --app-url https://hackmarket.io \
+  --api-url https://api.hackmarket.io
+```
+
 ## 7. Monitor Before Inviting Users
 
 Watch these signals during the first launch window:
@@ -158,7 +166,7 @@ Do not invite real users until uploads, dashboard status updates, buyer API key 
 ## 8. Operator Readiness
 
 Before opening the marketplace, sign in with an admin account and verify:
-- `/admin` loads users and processing jobs.
+- `/admin` loads the production health panel, users, and processing jobs.
 - Suspended users can no longer access authenticated API paths.
 - Failed processing jobs can be retried from `/admin`.
 - `/approver` can approve, reject, pause, and feature submitted tools.

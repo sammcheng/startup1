@@ -35,6 +35,7 @@ BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_ser
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
+WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
 
 
 API_REQUIRED_ENV = {
@@ -328,6 +329,11 @@ def check_repo_files(failures: list[str]) -> None:
     expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
     expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
     expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
+    expect("check_admin_operations_health" in smoke_check, "smoke checks must verify admin operations health when an admin token is provided", failures)
+
+    admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
+    expect("/admin/operations-health" in admin_page, "admin dashboard must load production operations health", failures)
+    expect("Production health" in admin_page, "admin dashboard must render production health status", failures)
 
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
     expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)

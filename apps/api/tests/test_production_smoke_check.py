@@ -61,3 +61,41 @@ def test_api_cors_requires_exact_production_origin(monkeypatch):
 
     assert result.ok is True
     assert result.detail == "allows https://hackmarket.io"
+
+
+def test_admin_operations_health_smoke_requires_expected_sections(monkeypatch):
+    body = """
+    {
+      "status": "healthy",
+      "checks": {"queue": "ok", "worker": "ok", "processing_jobs": "ok"},
+      "queue": {"depth": 0, "worker_heartbeat": true},
+      "processing_jobs": {"stuck_active": 0, "failed_recent": 0}
+    }
+    """
+
+    def fake_request(*args, **kwargs):
+        assert kwargs["headers"] == {"Authorization": "Bearer admin-token"}
+        return 200, body, {}
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_admin_operations_health("https://api.example.com/", "admin-token", 5)
+
+    assert result.ok is True
+    assert result.detail.startswith("healthy; checks=")
+
+
+def test_admin_operations_health_smoke_rejects_incomplete_payload(monkeypatch):
+    def fake_request(*args, **kwargs):
+        return 200, '{"status":"healthy","checks":{}}', {}
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_admin_operations_health("https://api.example.com/", "admin-token", 5)
+
+    assert result.ok is False
+    assert "missing operations health sections" in result.detail
+
+
+def test_admin_operations_health_is_part_of_api_auth_boundaries():
+    assert "v1/admin/operations-health" in smoke.API_AUTH_BOUNDARY_PATHS

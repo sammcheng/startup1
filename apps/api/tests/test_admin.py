@@ -239,6 +239,68 @@ def test_admin_processing_jobs_lists_failed_jobs(client, auth_overrides, admin_u
     assert payload["items"][0]["seller_email"] == draft_tool.seller.email
 
 
+def test_admin_operations_health_returns_healthy_summary(client, auth_overrides, admin_user, fake_redis, monkeypatch):
+    auth_overrides(current_user=admin_user)
+    fake_redis.values["hackmarket:jobs:health"] = "1"
+
+    async def fake_queue_depth(redis):
+        return 2
+
+    async def fake_processing_job_health(db):
+        return {
+            "stuck_active": 0,
+            "failed_recent": 0,
+            "stale_after_seconds": 1800,
+            "failed_threshold": 3,
+            "failed_window_seconds": 900,
+        }
+
+    monkeypatch.setattr(job_service, "processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr("app.routers.admin.queue_service.queue_depth", fake_queue_depth)
+    monkeypatch.setattr("app.routers.admin.settings.alert_queue_depth_threshold", 100)
+
+    response = client.get("/v1/admin/operations-health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "healthy"
+    assert payload["checks"] == {"queue": "ok", "worker": "ok", "processing_jobs": "ok"}
+    assert payload["queue"]["depth"] == 2
+    assert payload["queue"]["worker_heartbeat"] is True
+    assert payload["processing_jobs"]["stuck_active"] == 0
+
+
+def test_admin_operations_health_returns_degraded_summary(client, auth_overrides, admin_user, fake_redis, monkeypatch):
+    auth_overrides(current_user=admin_user)
+
+    async def fake_queue_depth(redis):
+        return 120
+
+    async def fake_processing_job_health(db):
+        return {
+            "stuck_active": 1,
+            "failed_recent": 4,
+            "stale_after_seconds": 1800,
+            "failed_threshold": 3,
+            "failed_window_seconds": 900,
+        }
+
+    monkeypatch.setattr(job_service, "processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr("app.routers.admin.queue_service.queue_depth", fake_queue_depth)
+    monkeypatch.setattr("app.routers.admin.settings.alert_queue_depth_threshold", 100)
+
+    response = client.get("/v1/admin/operations-health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["queue"] == "degraded_high_depth"
+    assert payload["checks"]["worker"] == "missing_heartbeat"
+    assert payload["checks"]["processing_jobs"] == "degraded_stuck_active_and_failed_recent"
+    assert payload["queue"]["depth"] == 120
+    assert payload["processing_jobs"]["failed_recent"] == 4
+
+
 def test_admin_processing_job_retry_creates_new_job(client, auth_overrides, admin_user, draft_tool, monkeypatch):
     auth_overrides(current_user=admin_user)
     failed_job = make_processing_job(draft_tool)

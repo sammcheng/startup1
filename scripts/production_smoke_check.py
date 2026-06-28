@@ -33,7 +33,7 @@ DEFAULT_FRONTEND_PATHS = [
     "/sign-up",
 ]
 AUTH_BOUNDARY_PATHS = ["/dashboard", "/admin", "/approver"]
-API_AUTH_BOUNDARY_PATHS = ["v1/dashboard", "v1/api-keys", "v1/seller/dashboard"]
+API_AUTH_BOUNDARY_PATHS = ["v1/dashboard", "v1/api-keys", "v1/seller/dashboard", "v1/admin/operations-health"]
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
@@ -299,6 +299,46 @@ def check_authenticated_dashboard(app_root: str, clerk_session_token: str, timeo
     )
 
 
+def check_admin_operations_health(api_root: str, admin_session_token: str, timeout: int) -> CheckResult:
+    name = "admin operations health"
+    try:
+        status, body, _headers = request(
+            "GET",
+            urljoin(api_root, "v1/admin/operations-health"),
+            headers={"Authorization": f"Bearer {admin_session_token}"},
+            timeout=timeout,
+        )
+    except HTTPError as exc:
+        body_text = exc.read(4096).decode("utf-8", errors="replace")
+        return CheckResult(name, False, f"HTTP {exc.code}: {body_text[:240]}")
+    except Exception as exc:
+        return CheckResult(name, False, f"request failed: {exc}")
+
+    if status != 200:
+        return CheckResult(name, False, f"unexpected {status}: {body[:240]}")
+
+    try:
+        payload: dict[str, Any] = json.loads(body)
+    except json.JSONDecodeError:
+        return CheckResult(name, False, f"non-JSON response {status}: {body[:240]}")
+
+    if payload.get("status") not in {"healthy", "degraded"}:
+        return CheckResult(name, False, f"missing health status: {payload}")
+    checks = payload.get("checks")
+    queue = payload.get("queue")
+    processing_jobs = payload.get("processing_jobs")
+    if not isinstance(checks, dict) or not isinstance(queue, dict) or not isinstance(processing_jobs, dict):
+        return CheckResult(name, False, f"missing operations health sections: {payload}")
+    for key in ("queue", "worker", "processing_jobs"):
+        if key not in checks:
+            return CheckResult(name, False, f"missing check {key}: {payload}")
+    if "depth" not in queue or "worker_heartbeat" not in queue:
+        return CheckResult(name, False, f"missing queue details: {payload}")
+    if "stuck_active" not in processing_jobs or "failed_recent" not in processing_jobs:
+        return CheckResult(name, False, f"missing processing job details: {payload}")
+    return CheckResult(name, True, f"{payload['status']}; checks={checks}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app-url", default=os.getenv("APP_BASE_URL"), help="Frontend base URL")
@@ -308,6 +348,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--clerk-session-token",
         default=os.getenv("CLERK_SESSION_TOKEN"),
         help="Optional Clerk session token for signed-in smoke checks",
+    )
+    parser.add_argument(
+        "--admin-session-token",
+        default=os.getenv("ADMIN_SESSION_TOKEN"),
+        help="Optional admin Clerk session token for admin operations smoke checks",
     )
     return parser
 
@@ -356,6 +401,8 @@ def main() -> int:
 
     if args.clerk_session_token:
         results.append(check_authenticated_dashboard(app_root, args.clerk_session_token, args.timeout))
+    if args.admin_session_token:
+        results.append(check_admin_operations_health(api_root, args.admin_session_token, args.timeout))
 
     failed = [result for result in results if not result.ok]
     for result in results:
