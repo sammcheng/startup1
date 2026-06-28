@@ -111,6 +111,9 @@ jobs:
           CLERK_JWKS_URL: https://example.com/.well-known/jwks.json
         run: python ../../scripts/check_alembic_migrations.py --upgrade
 
+      - name: Validate migration safety
+        run: python ../../scripts/check_migration_safety.py
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

@@ -197,6 +197,7 @@ Production readiness commands:
 ```bash
 python3 scripts/security_scan.py
 python3 scripts/repo_hygiene_check.py
+python3 scripts/check_migration_safety.py
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test python3 scripts/check_alembic_migrations.py --upgrade

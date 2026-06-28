@@ -9,12 +9,14 @@ Before merging schema changes:
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test \
   python3 scripts/check_alembic_migrations.py --upgrade
+python3 scripts/check_migration_safety.py
 ```
 
 The check must prove:
 - Alembic has exactly one head.
 - `alembic upgrade head` succeeds on a real Postgres database.
 - The database reports the current revision as the head after upgrade.
+- New `upgrade()` bodies do not include destructive Alembic operations or raw destructive SQL unless the migration is explicitly marked reviewed with `MIGRATION_SAFETY_REVIEWED = True`.
 - Migration `0008_add_data_integrity_constraints.py` finds no duplicate API key hashes or duplicate open buyer/tool purchases before adding uniqueness constraints.
 
 Production deploy rule:

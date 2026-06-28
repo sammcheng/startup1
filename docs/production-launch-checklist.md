@@ -79,6 +79,7 @@ Before running production migrations:
 - Confirm Render Postgres backups are enabled.
 - Take or identify a recent manual backup.
 - Run `python3 scripts/check_alembic_migrations.py --upgrade` against a disposable Postgres database.
+- Run `python3 scripts/check_migration_safety.py` and explicitly review any migration that uses destructive upgrade operations.
 - Confirm the data-integrity migration reports no duplicate API key hashes or duplicate open buyer/tool purchases.
 - Review `docs/database-operations-runbook.md`.
 
