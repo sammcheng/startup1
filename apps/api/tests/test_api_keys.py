@@ -40,20 +40,44 @@ def test_list_keys_no_raw(client, auth_overrides, buyer, api_key, monkeypatch):
 def test_deactivate_key(client, auth_overrides, buyer, api_key, monkeypatch):
     auth_overrides(current_user=buyer)
 
-    async def fake_get_api_key_by_id(db, key_id):
+    async def fake_get_api_key_for_user(db, key_id, user_id):
+        assert user_id == buyer.id
         return api_key
 
     async def fake_deactivate_api_key(db, key):
         key.is_active = False
         return key
 
-    monkeypatch.setattr(api_key_service, "get_api_key_by_id", fake_get_api_key_by_id)
+    monkeypatch.setattr(api_key_service, "get_api_key_for_user", fake_get_api_key_for_user)
     monkeypatch.setattr(api_key_service, "deactivate_api_key", fake_deactivate_api_key)
 
     response = client.delete(f"/v1/api-keys/{api_key.id}")
 
     assert response.status_code == 204
     assert api_key.is_active is False
+
+
+def test_deactivate_key_returns_not_found_for_missing_or_not_owned_key(client, auth_overrides, buyer, api_key, monkeypatch):
+    auth_overrides(current_user=buyer)
+    deactivated = []
+
+    async def fake_get_api_key_for_user(db, key_id, user_id):
+        assert key_id == api_key.id
+        assert user_id == buyer.id
+        return None
+
+    async def fake_deactivate_api_key(db, key):
+        deactivated.append(key)
+        return key
+
+    monkeypatch.setattr(api_key_service, "get_api_key_for_user", fake_get_api_key_for_user)
+    monkeypatch.setattr(api_key_service, "deactivate_api_key", fake_deactivate_api_key)
+
+    response = client.delete(f"/v1/api-keys/{api_key.id}")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "api_key_not_found"
+    assert deactivated == []
 
 
 @pytest.mark.asyncio

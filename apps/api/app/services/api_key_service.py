@@ -67,6 +67,16 @@ async def get_api_key_by_id(db: AsyncSession, key_id: uuid.UUID) -> APIKey | Non
     return result.scalar_one_or_none()
 
 
+async def get_api_key_for_user(db: AsyncSession, key_id: uuid.UUID, user_id: uuid.UUID) -> APIKey | None:
+    result = await db.execute(
+        select(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def deactivate_api_key(db: AsyncSession, api_key: APIKey) -> APIKey:
     api_key.is_active = False
     await db.commit()

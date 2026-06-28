@@ -366,6 +366,15 @@ def check_repo_files(failures: list[str]) -> None:
         "API key creation must serialize per user before enforcing the active-key cap",
         failures,
     )
+    api_keys_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "api_keys.py").read_text(encoding="utf-8")
+    expect(
+        "get_api_key_for_user" in api_key_service
+        and "APIKey.user_id == user_id" in api_key_service
+        and "get_api_key_for_user" in api_keys_router
+        and "You do not own this API key" not in api_keys_router,
+        "API key revocation must not reveal whether another user's key ID exists",
+        failures,
+    )
 
     api_main = API_MAIN.read_text(encoding="utf-8")
     api_config = API_CONFIG.read_text(encoding="utf-8")
