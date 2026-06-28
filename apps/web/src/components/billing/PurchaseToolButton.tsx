@@ -11,6 +11,15 @@ interface PurchaseToolButtonProps {
   toolId: string;
 }
 
+function isTrustedStripeCheckoutUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "checkout.stripe.com";
+  } catch {
+    return false;
+  }
+}
+
 export default function PurchaseToolButton({ toolId }: PurchaseToolButtonProps) {
   const account = useCurrentAccount();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -36,6 +45,11 @@ export default function PurchaseToolButton({ toolId }: PurchaseToolButtonProps) 
       const token = await account.getToken();
       const purchase = await api.post<ToolPurchaseResponse>(`/billing/tools/${toolId}/purchase`, undefined, { token });
       if (purchase.checkout_url) {
+        if (!isTrustedStripeCheckoutUrl(purchase.checkout_url)) {
+          setStatus("error");
+          setMessage("Checkout could not be opened safely. Please contact support.");
+          return;
+        }
         window.location.assign(purchase.checkout_url);
         return;
       }
