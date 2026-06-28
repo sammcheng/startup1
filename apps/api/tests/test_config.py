@@ -169,6 +169,19 @@ def test_production_rejects_invalid_gateway_abuse_settings() -> None:
             **PRODUCTION_REQUIRED,
         )
 
+    with pytest.raises(ValueError, match="ALERT_DEDUPE_TTL_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_dedupe_ttl_seconds=30,
+            **PRODUCTION_REQUIRED,
+        )
+
 
 def test_production_rejects_debug_mode() -> None:
     with pytest.raises(ValueError, match="DEBUG must be false"):

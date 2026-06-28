@@ -54,6 +54,7 @@ API_REQUIRED_ENV = {
     "RUN_BILLING_SCHEDULER_IN_API",
     "ALERT_WEBHOOK_URL",
     "ALERT_WEBHOOK_TIMEOUT_SECONDS",
+    "ALERT_DEDUPE_TTL_SECONDS",
     "ALERT_QUEUE_DEPTH_THRESHOLD",
     "CONVERTER_SECRET",
     "STRIPE_SECRET_KEY",
@@ -193,6 +194,11 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            env.get("ALERT_DEDUPE_TTL_SECONDS", {}).get("value") == "900",
+            f"{name} must define the production alert dedupe window",
+            failures,
+        )
+        expect(
             env.get("GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD", {}).get("value") == "3",
             f"{name} must define gateway rate-limit abuse alert threshold",
             failures,
@@ -299,6 +305,7 @@ def check_repo_files(failures: list[str]) -> None:
         "WORKER_HEALTH_CHECK_KEY",
         "RUN_BILLING_SCHEDULER_IN_API",
         "ALERT_WEBHOOK_URL",
+        "ALERT_DEDUPE_TTL_SECONDS",
         "ALERT_QUEUE_DEPTH_THRESHOLD",
         "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",
         "MAX_ACTIVE_API_KEYS_PER_USER",

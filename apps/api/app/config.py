@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # Observability / alerting
     alert_webhook_url: str = ""
     alert_webhook_timeout_seconds: int = 5
+    alert_dedupe_ttl_seconds: int = 900
     alert_queue_depth_threshold: int = 100
 
     # Rate limiting
@@ -193,6 +194,9 @@ class Settings(BaseSettings):
 
         if self.alert_webhook_timeout_seconds <= 0:
             raise ValueError("ALERT_WEBHOOK_TIMEOUT_SECONDS must be positive in production.")
+
+        if self.alert_dedupe_ttl_seconds < 60:
+            raise ValueError("ALERT_DEDUPE_TTL_SECONDS must be at least 60 in production.")
 
         if self.alert_queue_depth_threshold < 1:
             raise ValueError("ALERT_QUEUE_DEPTH_THRESHOLD must be at least 1 in production.")

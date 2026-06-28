@@ -54,6 +54,7 @@ Do not launch production on free tiers. The repository readiness check enforces 
 Required production alert env vars:
 - `ALERT_WEBHOOK_URL`
 - `ALERT_WEBHOOK_TIMEOUT_SECONDS=5`
+- `ALERT_DEDUPE_TTL_SECONDS=900`
 - `ALERT_QUEUE_DEPTH_THRESHOLD=100`
 - `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3`
 - `GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS=3600`

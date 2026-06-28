@@ -56,6 +56,8 @@ services:
         sync: false
       - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
         value: "5"
+      - key: ALERT_DEDUPE_TTL_SECONDS
+        value: "900"
       - key: ALERT_QUEUE_DEPTH_THRESHOLD
         value: "100"
       - key: CONVERTER_SECRET
@@ -181,6 +183,8 @@ services:
         sync: false
       - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
         value: "5"
+      - key: ALERT_DEDUPE_TTL_SECONDS
+        value: "900"
       - key: ALERT_QUEUE_DEPTH_THRESHOLD
         value: "100"
       - key: CONVERTER_SECRET

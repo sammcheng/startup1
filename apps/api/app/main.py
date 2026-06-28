@@ -243,8 +243,11 @@ async def ready():
             checks["queue"] = "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
             checks["worker"] = "ok" if worker_healthy else "missing_heartbeat"
             if depth >= settings.alert_queue_depth_threshold:
-                await alert_service.send_alert(
+                await alert_service.send_alert_once(
+                    _redis_client,
                     "queue_depth_high",
+                    dedupe_key=settings.worker_queue_name,
+                    ttl_seconds=settings.alert_dedupe_ttl_seconds,
                     severity="warning",
                     summary=f"Worker queue depth is {depth}.",
                     details={
@@ -254,8 +257,11 @@ async def ready():
                     },
                 )
             if not worker_health:
-                await alert_service.send_alert(
+                await alert_service.send_alert_once(
+                    _redis_client,
                     "worker_heartbeat_missing",
+                    dedupe_key=settings.worker_health_check_key,
+                    ttl_seconds=settings.alert_dedupe_ttl_seconds,
                     severity="critical",
                     summary="Worker heartbeat is missing from Redis.",
                     details={"health_check_key": settings.worker_health_check_key},
@@ -272,8 +278,11 @@ async def ready():
 
     all_ok = all(value == "ok" for value in checks.values())
     if not all_ok and settings.environment == "production":
-        await alert_service.send_alert(
+        await alert_service.send_alert_once(
+            _redis_client,
             "api_readiness_degraded",
+            dedupe_key=",".join(f"{key}:{value}" for key, value in sorted(checks.items())),
+            ttl_seconds=settings.alert_dedupe_ttl_seconds,
             severity="critical",
             summary="API readiness check is degraded.",
             details={"checks": checks},

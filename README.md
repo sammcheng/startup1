@@ -182,6 +182,7 @@ Recommended hosted env values:
 - Render `RUN_BILLING_SCHEDULER_IN_API=false`; billing schedules run from the worker cron job
 - Render `RENDER_TOOL_PLAN=starter` so dynamically hosted seller tools do not launch on free instances
 - Render `ALERT_WEBHOOK_URL`: optional but strongly recommended for production alerts from readiness checks, worker failures, billing scheduler failures, and invalid provider webhooks
+- Render `ALERT_DEDUPE_TTL_SECONDS=900` so repeated readiness probes do not flood the alert destination during one incident
 - Render `MAX_ACTIVE_API_KEYS_PER_USER=10` and `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3` so API-key abuse is bounded and visible
 
 Release verification after deploy:

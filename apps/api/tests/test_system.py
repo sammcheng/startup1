@@ -72,6 +72,7 @@ def test_ready_returns_degraded_when_dependency_fails(client, monkeypatch):
 
 def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     alerts = []
+    dedupe_keys = []
 
     class FakeReadySession:
         async def __aenter__(self):
@@ -93,7 +94,8 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
         async def get(self, key):
             return None
 
-    async def fake_send_alert(event, **kwargs):
+    async def fake_send_alert_once(redis, event, **kwargs):
+        dedupe_keys.append(kwargs["dedupe_key"])
         alerts.append({"event": event, **kwargs})
         return True
 
@@ -101,7 +103,7 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
     monkeypatch.setattr("app.main.settings.environment", "production")
     monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
-    monkeypatch.setattr("app.main.alert_service.send_alert", fake_send_alert)
+    monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
 
     response = client.get("/ready")
 
@@ -121,6 +123,11 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
         "queue_depth_high",
         "worker_heartbeat_missing",
         "api_readiness_degraded",
+    ]
+    assert dedupe_keys == [
+        "hackmarket:jobs",
+        "hackmarket:jobs:health",
+        "database:ok,queue:degraded_high_depth,redis:ok,worker:missing_heartbeat",
     ]
 
 
