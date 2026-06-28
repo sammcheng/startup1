@@ -15,6 +15,18 @@ test("accepts valid deploy URLs and Clerk key", () => {
   assert.deepEqual(errors, []);
 });
 
+test("accepts live Clerk keys in deploy builds", () => {
+  const errors = validateEnv({
+    VERCEL: "1",
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_YS5iJA==",
+    CLERK_SECRET_KEY: "sk_live_abc123",
+  });
+
+  assert.deepEqual(errors, []);
+});
+
 test("rejects missing required deploy URLs", () => {
   const errors = validateEnv({
     NEXT_PUBLIC_API_URL: "",
@@ -64,7 +76,7 @@ test("requires Clerk publishable key for deploy builds", () => {
     VERCEL: "1",
     NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
     NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
-    CLERK_SECRET_KEY: "sk_test_abc123",
+    CLERK_SECRET_KEY: "sk_live_abc123",
   });
 
   assert.equal(errors.length, 1);
@@ -76,7 +88,7 @@ test("requires Clerk secret key for deploy builds", () => {
     VERCEL: "1",
     NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
     NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_YS5iJA==",
   });
 
   assert.equal(errors.length, 1);
@@ -99,11 +111,25 @@ test("rejects public demo API key in deploy builds", () => {
     VERCEL: "1",
     NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
     NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
-    CLERK_SECRET_KEY: "sk_test_abc123",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_YS5iJA==",
+    CLERK_SECRET_KEY: "sk_live_abc123",
     NEXT_PUBLIC_DEMO_API_KEY: "hm_live_should_not_ship",
   });
 
   assert.equal(errors.length, 1);
   assert.match(errors[0], /NEXT_PUBLIC_DEMO_API_KEY must not be set/);
+});
+
+test("rejects test Clerk keys in deploy builds", () => {
+  const errors = validateEnv({
+    VERCEL: "1",
+    NEXT_PUBLIC_API_URL: "https://api.hackmarket.io/v1",
+    NEXT_PUBLIC_APP_URL: "https://hackmarket.io",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS5kZXYk",
+    CLERK_SECRET_KEY: "sk_test_abc123",
+  });
+
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.*live Clerk key/);
+  assert.match(errors[1], /CLERK_SECRET_KEY.*live Clerk key/);
 });

@@ -513,6 +513,12 @@ def check_repo_files(failures: list[str]) -> None:
         "frontend env tests must reject public demo API keys in deploy builds",
         failures,
     )
+    expect(
+        "rejects test Clerk keys in deploy builds" in validate_env_test
+        and "must use a live Clerk key in deploy builds" in (REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.mjs").read_text(encoding="utf-8"),
+        "frontend deploy env validation must reject test-mode Clerk keys",
+        failures,
+    )
 
     launch_checklist = PRODUCTION_LAUNCH_CHECKLIST.read_text(encoding="utf-8")
     expect(

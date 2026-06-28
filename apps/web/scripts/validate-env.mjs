@@ -75,6 +75,9 @@ function validatePublishableKey(value, errors, strictDeployEnv) {
     errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must look like a Clerk publishable key.");
     return;
   }
+  if (strictDeployEnv && match[1] !== "live") {
+    errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must use a live Clerk key in deploy builds.");
+  }
 
   const decoded = Buffer.from(match[2], "base64").toString("utf8");
   if (!decoded.endsWith("$") || !decoded.includes(".")) {
@@ -91,6 +94,10 @@ function validateClerkSecretKey(value, errors, strictDeployEnv) {
   }
   if (!/^sk_(test|live)_[A-Za-z0-9]+$/.test(value.trim())) {
     errors.push("CLERK_SECRET_KEY must look like a Clerk secret key.");
+    return;
+  }
+  if (strictDeployEnv && !value.trim().startsWith("sk_live_")) {
+    errors.push("CLERK_SECRET_KEY must use a live Clerk key in deploy builds.");
   }
 }
 
