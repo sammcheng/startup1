@@ -2,12 +2,11 @@ import pytest
 
 from app.config import Settings
 
-
 PRODUCTION_REQUIRED = {
     "converter_secret": "converter-secret",
-    "clerk_secret_key": "sk_test_value",
+    "clerk_secret_key": "sk_live_value",
     "clerk_webhook_secret": "whsec_value",
-    "stripe_secret_key": "sk_test_value",
+    "stripe_secret_key": "sk_live_value",
     "stripe_webhook_secret": "whsec_value",
     "aws_access_key_id": "AKIA_TEST",
     "aws_secret_access_key": "aws-secret",
@@ -99,6 +98,28 @@ def test_production_settings_accept_required_values() -> None:
     )
 
     assert settings.database_url.startswith("postgresql+asyncpg://")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("clerk_secret_key", "sk_test_value"),
+        ("stripe_secret_key", "sk_test_value"),
+        ("stripe_secret_key", "rk_test_value"),
+    ],
+)
+def test_production_rejects_test_mode_provider_keys(key: str, value: str) -> None:
+    with pytest.raises(ValueError, match="Production provider keys must use live mode"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            **{**PRODUCTION_REQUIRED, key: value},
+        )
 
 
 def test_production_rejects_invalid_alert_settings() -> None:

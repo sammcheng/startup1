@@ -353,6 +353,12 @@ def check_repo_files(failures: list[str]) -> None:
     api_config = API_CONFIG.read_text(encoding="utf-8")
     expect("enable_bootstrap_tool_seed: bool = False" in api_config, "bootstrap tool seed must default off", failures)
     expect("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config, "production must reject fixed bootstrap marketplace seeds", failures)
+    expect(
+        "Production provider keys must use live mode" in api_config
+        and "_is_test_mode_provider_key" in api_config,
+        "production config must reject test-mode Clerk and Stripe provider keys",
+        failures,
+    )
     expect(BOOTSTRAP_SERVICE.exists(), "bootstrap seed service is missing", failures)
     tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
     expect(

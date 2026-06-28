@@ -4,7 +4,6 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 APP_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -199,6 +198,20 @@ class Settings(BaseSettings):
         if missing:
             raise ValueError(f"Missing required production settings: {', '.join(missing)}")
 
+        test_mode_keys = [
+            key
+            for key, value in {
+                "CLERK_SECRET_KEY": self.clerk_secret_key,
+                "STRIPE_SECRET_KEY": self.stripe_secret_key,
+            }.items()
+            if _is_test_mode_provider_key(value)
+        ]
+        if test_mode_keys:
+            raise ValueError(
+                "Production provider keys must use live mode: "
+                + ", ".join(test_mode_keys)
+            )
+
         if self.debug:
             raise ValueError("DEBUG must be false in production.")
 
@@ -318,6 +331,10 @@ def _is_local_url(value: str) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_test_mode_provider_key(value: str) -> bool:
+    return value.strip().startswith(("sk_test_", "rk_test_"))
 
 
 settings = Settings()
