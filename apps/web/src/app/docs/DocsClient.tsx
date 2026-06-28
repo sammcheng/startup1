@@ -74,8 +74,7 @@ const SIDEBAR: SidebarSection[] = [
     children: [
       { id: "embedding", label: "Embedding a tool" },
       { id: "sdks", label: "SDKs" },
-      { id: "idempotency", label: "Idempotency" },
-      { id: "webhooks", label: "Webhooks" },
+      { id: "request-ids", label: "Request IDs" },
     ],
   },
   {
@@ -219,7 +218,7 @@ const integrationExamples = [
     label: "cURL",
     code: `curl -X POST https://api.hackmarket.io/v1/tools/sentiment-classifier \\
   -H "X-API-Key: $HACKMARKET_KEY" \\
-  -H "X-Request-Id: 9f3d-write-2026-05-17-001" \\
+  -H "X-HackMarket-Request-Id: req_9f3d_write_2026_05_17_001" \\
   -H "Content-Type: application/json" \\
   -d '{"text": "Honestly the best burrito I have had this year."}'`,
   },
@@ -233,7 +232,7 @@ def classify(text: str) -> dict:
         "https://api.hackmarket.io/v1/tools/sentiment-classifier",
         headers={
             "X-API-Key": os.environ["HACKMARKET_KEY"],
-            "X-Request-Id": str(uuid.uuid4()),
+            "X-HackMarket-Request-Id": f"req_{uuid.uuid4().hex}",
         },
         json={"text": text},
         timeout=10,
@@ -251,7 +250,7 @@ print(classify("Honestly the best burrito I have had this year."))`,
       method: "POST",
       headers: {
         "X-API-Key": process.env.HACKMARKET_KEY,
-        "X-Request-Id": crypto.randomUUID(),
+        "X-HackMarket-Request-Id": "req_" + crypto.randomUUID().replaceAll("-", ""),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ text }),
@@ -261,22 +260,6 @@ print(classify("Honestly the best burrito I have had this year."))`,
   const { data } = await res.json();
   return data;
 }`,
-  },
-];
-
-const webhookExamples = [
-  {
-    language: "curl" as const,
-    label: "cURL",
-    code: `# Configure a webhook target
-curl -X PUT https://api.hackmarket.io/v1/account/webhooks \\
-  -H "X-API-Key: $HACKMARKET_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "url": "https://example.com/hackmarket/events",
-    "events": ["tool.invoked", "tool.error", "usage.threshold"],
-    "secret": "whsec_b5e8c0..."
-  }'`,
   },
 ];
 
@@ -1109,7 +1092,7 @@ export default function DocsContent() {
             <EndpointCard
               method="POST"
               path="/v1/tools/sentiment-classifier"
-              description="A representative integration: classify a string as positive / neutral / negative. Notice the X-Request-Id header — pass a unique value per logical operation if you want idempotent retries on write-side tools."
+              description="A representative integration: classify a string as positive / neutral / negative. Pass X-HackMarket-Request-Id so your logs, gateway responses, and support tickets line up across the platform."
               examples={integrationExamples}
             />
 
@@ -1123,35 +1106,15 @@ export default function DocsContent() {
               client.
             </p>
 
-            <SubHeader id="idempotency">Idempotency</SubHeader>
+            <SubHeader id="request-ids">Request IDs</SubHeader>
             <p style={bodyText}>
-              Write-side endpoints (anything that creates or mutates state — submissions,
-              configuration changes, certain tool invocations declared as <Code>mutating</Code> in
-              their manifest) support idempotency via the <Code>X-Request-Id</Code> header. If you
-              send the same request ID within a 24-hour window, Hackmarket returns the cached
-              response from the original call rather than re-executing. This makes retries
-              safe even across network partitions: pick a UUID per logical operation, store it
-              with the operation, and re-send the same UUID on retry. Read-only invocations
-              ignore the header — they are inherently idempotent.
+              Send <Code>X-HackMarket-Request-Id</Code> with a stable, URL-safe value when you call
+              a tool. Hackmarket echoes it in API responses, forwards it to seller tools, and
+              includes it in logs and alerts so buyer support, seller debugging, and platform
+              operations can trace the same request. It is a tracing key, not an idempotency key:
+              if your client retries a mutating tool call, make sure that tool&apos;s own API is safe
+              to retry before sending the request again.
             </p>
-
-            <SubHeader id="webhooks">Webhooks</SubHeader>
-            <p style={bodyText}>
-              Hackmarket emits webhook events to a URL you configure. Three event types ship in
-              the v1 API: <Code>tool.invoked</Code> fires after every successful invocation and is
-              useful for downstream usage logging; <Code>tool.error</Code> fires when an
-              invocation fails (4xx or 5xx) and is useful for alerting; <Code>usage.threshold</Code>{" "}
-              fires when your account crosses a spending threshold you set, so you can be
-              notified before the monthly invoice surprises you. Webhook deliveries are signed
-              with HMAC-SHA256; the signature is in the <Code>X-Hackmarket-Signature</Code>{" "}
-              header and verifies against the secret you set when configuring the endpoint.
-            </p>
-            <EndpointCard
-              method="PUT"
-              path="/v1/account/webhooks"
-              description="Register or replace your webhook configuration. The endpoint must respond with a 2xx within 5 seconds; failed deliveries retry with exponential backoff for up to 24 hours."
-              examples={webhookExamples}
-            />
           </section>
 
           {/* ============================================================ */}

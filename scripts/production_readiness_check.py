@@ -59,6 +59,7 @@ WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
 WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
 WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
 WEB_TOOL_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "tools" / "[slug]" / "page.tsx"
+WEB_DOCS_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "docs" / "DocsClient.tsx"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
@@ -542,6 +543,22 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "ALLOW_CONVERTER_CATALOG_FALLBACK && isConverterTool" in tool_page,
         "direct demo endpoints must stay limited to the development-only converter fallback",
+        failures,
+    )
+    docs_client = WEB_DOCS_CLIENT.read_text(encoding="utf-8")
+    expect(
+        "/v1/account/webhooks" not in docs_client,
+        "public docs must not advertise the unimplemented account webhooks API",
+        failures,
+    )
+    expect(
+        "X-Request-Id" not in docs_client and "X-HackMarket-Request-Id" in docs_client,
+        "public docs must use the implemented X-HackMarket-Request-Id tracing header",
+        failures,
+    )
+    expect(
+        "It is a tracing key, not an idempotency key" in docs_client,
+        "public docs must not promise unsupported idempotent retry caching",
         failures,
     )
 
