@@ -33,6 +33,8 @@ REPO_HYGIENE_CHECK = REPO_ROOT / "scripts" / "repo_hygiene_check.py"
 MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
+API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
+OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
@@ -313,16 +315,24 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     api_main = API_MAIN.read_text(encoding="utf-8")
+    expect(OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures)
+    operations_health_service = OPERATIONS_HEALTH_SERVICE.read_text(encoding="utf-8")
+    expect("get_operations_health" in operations_health_service, "operations health service must expose shared health summary", failures)
+    expect("processing_job_check" in operations_health_service, "operations health service must centralize processing-job risk classification", failures)
     expect(
         "worker_heartbeat" in api_main and "missing_heartbeat" in api_main,
         "API readiness must expose worker heartbeat status",
         failures,
     )
     expect(
-        "degraded_high_depth" in api_main,
-        "API readiness must degrade when worker queue depth is too high",
+        "degraded_high_depth" in operations_health_service,
+        "shared operations health must degrade when worker queue depth is too high",
         failures,
     )
+    expect("operations_health_service.get_operations_health" in api_main, "API readiness must use the shared operations health service", failures)
+
+    admin_router = API_ADMIN_ROUTER.read_text(encoding="utf-8")
+    expect("operations_health_service.get_operations_health" in admin_router, "admin health endpoint must use the shared operations health service", failures)
 
     smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
     expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)

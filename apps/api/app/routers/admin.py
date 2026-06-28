@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Query, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.dependencies import get_db, get_redis, require_admin
 from app.exceptions import AppError, ToolNotFoundError
 from app.models.tool import ToolStatus
@@ -18,14 +17,12 @@ from app.schemas.admin import (
     AdminProcessingJobListResponse,
     AdminProcessingJobResponse,
     AdminProcessingJobRetryRequest,
-    AdminProcessingJobHealthResponse,
-    AdminQueueHealthResponse,
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdate,
 )
 from app.schemas.tool import AdminToolReviewUpdate, ToolListResponse, ToolResponse
-from app.services import job_service, queue_service, tool_service, user_service
+from app.services import job_service, operations_health_service, tool_service, user_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -67,46 +64,7 @@ async def get_admin_operations_health(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> AdminOperationsHealthResponse:
-    checks: dict[str, str] = {}
-
-    try:
-        depth = await queue_service.queue_depth(redis)
-        worker_health = await redis.get(settings.worker_health_check_key)
-        worker_healthy = bool(worker_health)
-        queue = AdminQueueHealthResponse(
-            name=settings.worker_queue_name,
-            depth=depth,
-            depth_threshold=settings.alert_queue_depth_threshold,
-            worker_heartbeat=worker_healthy,
-            worker_health_check_key=settings.worker_health_check_key,
-        )
-        checks["queue"] = "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
-        checks["worker"] = "ok" if worker_healthy else "missing_heartbeat"
-    except Exception:
-        queue = AdminQueueHealthResponse(
-            name=settings.worker_queue_name,
-            depth=None,
-            depth_threshold=settings.alert_queue_depth_threshold,
-            worker_heartbeat=False,
-            worker_health_check_key=settings.worker_health_check_key,
-        )
-        checks["queue"] = "error"
-        checks["worker"] = "unknown"
-
-    processing_jobs = AdminProcessingJobHealthResponse(**await job_service.processing_job_health(db))
-    processing_risks = []
-    if processing_jobs.stuck_active:
-        processing_risks.append("stuck_active")
-    if processing_jobs.failed_recent >= processing_jobs.failed_threshold:
-        processing_risks.append("failed_recent")
-    checks["processing_jobs"] = "ok" if not processing_risks else "degraded_" + "_and_".join(processing_risks)
-
-    return AdminOperationsHealthResponse(
-        status="healthy" if all(value == "ok" for value in checks.values()) else "degraded",
-        checks=checks,
-        queue=queue,
-        processing_jobs=processing_jobs,
-    )
+    return AdminOperationsHealthResponse.model_validate(await operations_health_service.get_operations_health(db, redis))
 
 
 @router.get(

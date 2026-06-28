@@ -255,9 +255,9 @@ def test_admin_operations_health_returns_healthy_summary(client, auth_overrides,
             "failed_window_seconds": 900,
         }
 
-    monkeypatch.setattr(job_service, "processing_job_health", fake_processing_job_health)
-    monkeypatch.setattr("app.routers.admin.queue_service.queue_depth", fake_queue_depth)
-    monkeypatch.setattr("app.routers.admin.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr("app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth)
+    monkeypatch.setattr("app.services.operations_health_service.settings.alert_queue_depth_threshold", 100)
 
     response = client.get("/v1/admin/operations-health")
 
@@ -285,9 +285,9 @@ def test_admin_operations_health_returns_degraded_summary(client, auth_overrides
             "failed_window_seconds": 900,
         }
 
-    monkeypatch.setattr(job_service, "processing_job_health", fake_processing_job_health)
-    monkeypatch.setattr("app.routers.admin.queue_service.queue_depth", fake_queue_depth)
-    monkeypatch.setattr("app.routers.admin.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr("app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth)
+    monkeypatch.setattr("app.services.operations_health_service.settings.alert_queue_depth_threshold", 100)
 
     response = client.get("/v1/admin/operations-health")
 

@@ -113,7 +113,7 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
     monkeypatch.setattr("app.main.settings.environment", "production")
     monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
-    monkeypatch.setattr("app.main.job_service.processing_job_health", fake_healthy_processing_jobs)
+    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_healthy_processing_jobs)
     monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
 
     response = client.get("/ready")
@@ -168,7 +168,7 @@ def test_ready_returns_production_queue_details_when_worker_is_healthy(client, m
     monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
     monkeypatch.setattr("app.main.settings.environment", "production")
     monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
-    monkeypatch.setattr("app.main.job_service.processing_job_health", fake_healthy_processing_jobs)
+    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_healthy_processing_jobs)
 
     response = client.get("/ready")
 
@@ -227,7 +227,7 @@ def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
     monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
     monkeypatch.setattr("app.main.settings.alert_processing_job_stale_after_seconds", 1800)
     monkeypatch.setattr("app.main.settings.alert_failed_processing_jobs_window_seconds", 900)
-    monkeypatch.setattr("app.main.job_service.processing_job_health", fake_processing_jobs)
+    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_processing_jobs)
     monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
 
     response = client.get("/ready")

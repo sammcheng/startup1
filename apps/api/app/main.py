@@ -13,7 +13,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.middleware.error_handler import setup_error_handlers
 from app.request_context import get_request_id, reset_request_id, set_request_id
-from app.services import alert_service, billing_service, job_service, queue_service
+from app.services import alert_service, billing_service, operations_health_service
 
 
 class RequestIdFilter(logging.Filter):
@@ -222,16 +222,10 @@ async def ready():
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
             if settings.environment == "production":
-                processing_job_details = await job_service.processing_job_health(session)
-                stuck_active = processing_job_details["stuck_active"]
-                failed_recent = processing_job_details["failed_recent"]
-                failed_threshold = processing_job_details["failed_threshold"]
-                processing_risks = []
-                if stuck_active:
-                    processing_risks.append("stuck_active")
-                if failed_recent >= failed_threshold:
-                    processing_risks.append("failed_recent")
-                checks["processing_jobs"] = "ok" if not processing_risks else "degraded_" + "_and_".join(processing_risks)
+                operations_health = await operations_health_service.get_operations_health(session, _redis_client)
+                checks.update(operations_health["checks"])
+                queue_details = operations_health["queue"]
+                processing_job_details = operations_health["processing_jobs"]
     except Exception as exc:
         checks["database"] = f"error: {type(exc).__name__}"
     try:
@@ -239,53 +233,32 @@ async def ready():
     except Exception as exc:
         checks["redis"] = f"error: {type(exc).__name__}"
 
-    if settings.environment == "production" and checks["redis"] == "ok":
-        try:
-            depth = await queue_service.queue_depth(_redis_client)
-            worker_health = await _redis_client.get(settings.worker_health_check_key)
-            worker_healthy = bool(worker_health)
-            queue_details = {
-                "name": settings.worker_queue_name,
-                "depth": depth,
-                "depth_threshold": settings.alert_queue_depth_threshold,
-                "worker_heartbeat": worker_healthy,
-                "worker_health_check_key": settings.worker_health_check_key,
-            }
-            checks["queue"] = "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
-            checks["worker"] = "ok" if worker_healthy else "missing_heartbeat"
-            if depth >= settings.alert_queue_depth_threshold:
-                await alert_service.send_alert_once(
-                    _redis_client,
-                    "queue_depth_high",
-                    dedupe_key=settings.worker_queue_name,
-                    ttl_seconds=settings.alert_dedupe_ttl_seconds,
-                    severity="warning",
-                    summary=f"Worker queue depth is {depth}.",
-                    details={
-                        "queue": settings.worker_queue_name,
-                        "depth": depth,
-                        "threshold": settings.alert_queue_depth_threshold,
-                    },
-                )
-            if not worker_health:
-                await alert_service.send_alert_once(
-                    _redis_client,
-                    "worker_heartbeat_missing",
-                    dedupe_key=settings.worker_health_check_key,
-                    ttl_seconds=settings.alert_dedupe_ttl_seconds,
-                    severity="critical",
-                    summary="Worker heartbeat is missing from Redis.",
-                    details={"health_check_key": settings.worker_health_check_key},
-                )
-        except Exception as exc:
-            checks["queue"] = f"error: {type(exc).__name__}"
-            queue_details = {
-                "name": settings.worker_queue_name,
-                "depth": None,
-                "depth_threshold": settings.alert_queue_depth_threshold,
-                "worker_heartbeat": False,
-                "worker_health_check_key": settings.worker_health_check_key,
-            }
+    if settings.environment == "production" and queue_details is not None:
+        depth = queue_details["depth"]
+        if depth is not None and depth >= settings.alert_queue_depth_threshold:
+            await alert_service.send_alert_once(
+                _redis_client,
+                "queue_depth_high",
+                dedupe_key=settings.worker_queue_name,
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="warning",
+                summary=f"Worker queue depth is {depth}.",
+                details={
+                    "queue": settings.worker_queue_name,
+                    "depth": depth,
+                    "threshold": settings.alert_queue_depth_threshold,
+                },
+            )
+        if checks.get("worker") == "missing_heartbeat":
+            await alert_service.send_alert_once(
+                _redis_client,
+                "worker_heartbeat_missing",
+                dedupe_key=settings.worker_health_check_key,
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="critical",
+                summary="Worker heartbeat is missing from Redis.",
+                details={"health_check_key": settings.worker_health_check_key},
+            )
 
     if settings.environment == "production" and processing_job_details is not None and checks.get("processing_jobs") != "ok":
         stuck_active = processing_job_details["stuck_active"]
