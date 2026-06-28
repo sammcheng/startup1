@@ -113,3 +113,11 @@ Watch these signals during the first launch window:
 - Gateway latency and failed buyer invocations
 
 Do not invite real users until uploads, dashboard status updates, buyer API key creation, tool discovery, and gateway invocation pass against production.
+
+## 8. Operator Readiness
+
+Before opening the marketplace, sign in with an admin account and verify:
+- `/admin` loads users and processing jobs.
+- Suspended users can no longer access authenticated API paths.
+- Failed processing jobs can be retried from `/admin`.
+- `/approver` can approve, reject, pause, and feature submitted tools.

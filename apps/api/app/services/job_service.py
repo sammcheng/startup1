@@ -4,11 +4,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models import Tool, ToolProcessingJob, ToolProcessingJobStatus
+from app.models import Tool, ToolProcessingJob, ToolProcessingJobStatus, ToolStatus
 from app.services import queue_service
 
 ACTIVE_JOB_STATUSES = {
@@ -21,6 +22,54 @@ ACTIVE_JOB_STATUSES = {
 async def get_job(db: AsyncSession, job_id: uuid.UUID) -> ToolProcessingJob | None:
     result = await db.execute(select(ToolProcessingJob).where(ToolProcessingJob.id == job_id))
     return result.scalar_one_or_none()
+
+
+async def get_job_with_details(db: AsyncSession, job_id: uuid.UUID) -> ToolProcessingJob | None:
+    result = await db.execute(
+        select(ToolProcessingJob)
+        .where(ToolProcessingJob.id == job_id)
+        .options(
+            selectinload(ToolProcessingJob.tool),
+            selectinload(ToolProcessingJob.seller),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_admin_processing_jobs(
+    db: AsyncSession,
+    *,
+    status_filter: ToolProcessingJobStatus | None,
+    tool_id: uuid.UUID | None,
+    seller_id: uuid.UUID | None,
+    page: int,
+    limit: int,
+) -> tuple[list[ToolProcessingJob], int]:
+    """Return processing jobs for admin operations, newest first."""
+    base_query = select(ToolProcessingJob).options(
+        selectinload(ToolProcessingJob.tool),
+        selectinload(ToolProcessingJob.seller),
+    )
+    count_query = select(func.count()).select_from(ToolProcessingJob)
+
+    filters = []
+    if status_filter is not None:
+        filters.append(ToolProcessingJob.status == status_filter)
+    if tool_id is not None:
+        filters.append(ToolProcessingJob.tool_id == tool_id)
+    if seller_id is not None:
+        filters.append(ToolProcessingJob.seller_id == seller_id)
+
+    for condition in filters:
+        base_query = base_query.where(condition)
+        count_query = count_query.where(condition)
+
+    offset = (page - 1) * limit
+    items_result = await db.execute(
+        base_query.order_by(ToolProcessingJob.created_at.desc()).offset(offset).limit(limit)
+    )
+    total_result = await db.execute(count_query)
+    return list(items_result.scalars()), total_result.scalar_one()
 
 
 async def get_latest_tool_job(db: AsyncSession, tool_id: uuid.UUID) -> ToolProcessingJob | None:
@@ -109,6 +158,39 @@ async def enqueue_tool_processing(
     await db.commit()
     await db.refresh(job)
     return job
+
+
+async def retry_failed_tool_processing_job(
+    db: AsyncSession,
+    job: ToolProcessingJob,
+    *,
+    admin_id: uuid.UUID,
+    reason: str,
+) -> ToolProcessingJob:
+    """Create a fresh queued job for a failed submission retry."""
+    if job.status != ToolProcessingJobStatus.failed:
+        raise ValueError("Only failed processing jobs can be retried.")
+
+    tool = job.tool
+    if tool is None:
+        result = await db.execute(select(Tool).where(Tool.id == job.tool_id))
+        tool = result.scalar_one_or_none()
+    if tool is None:
+        raise ValueError("Cannot retry a processing job whose tool no longer exists.")
+
+    tool.status = ToolStatus.processing
+    tool.processing_error = None
+    retry_job = await enqueue_tool_processing(
+        db,
+        tool,
+        trigger="admin_retry",
+        payload={
+            "retried_from_job_id": str(job.id),
+            "retried_by_admin_id": str(admin_id),
+            "reason": reason,
+        },
+    )
+    return retry_job
 
 
 async def mark_job_running(db: AsyncSession, job: ToolProcessingJob, *, attempt: int) -> ToolProcessingJob:
