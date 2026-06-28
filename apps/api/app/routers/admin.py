@@ -8,11 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_redis, require_admin
 from app.exceptions import AppError, ToolNotFoundError
-from app.models.tool import ToolStatus
 from app.models.admin_audit_log import AdminAuditLog
+from app.models.tool import ToolStatus
 from app.models.tool_processing_job import ToolProcessingJob, ToolProcessingJobStatus
-from app.models.user import User
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.admin import (
     AdminAuditLogListResponse,
     AdminAuditLogResponse,
@@ -25,7 +24,13 @@ from app.schemas.admin import (
     AdminUserUpdate,
 )
 from app.schemas.tool import AdminToolReviewUpdate, ToolListResponse, ToolResponse
-from app.services import admin_audit_service, job_service, operations_health_service, tool_service, user_service
+from app.services import (
+    admin_audit_service,
+    job_service,
+    operations_health_service,
+    tool_service,
+    user_service,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -78,8 +83,8 @@ def _audit_log_response(log: AdminAuditLog) -> AdminAuditLogResponse:
 )
 async def get_admin_operations_health(
     _admin: Annotated[User, Depends(require_admin)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> AdminOperationsHealthResponse:
     return AdminOperationsHealthResponse.model_validate(await operations_health_service.get_operations_health(db, redis))
 
@@ -91,11 +96,11 @@ async def get_admin_operations_health(
 )
 async def list_admin_tools(
     _admin: Annotated[User, Depends(require_admin)],
-    status_filter: ToolStatus | None = Query(None, alias="status"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    status_filter: Annotated[ToolStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> ToolListResponse:
     tools, total = await tool_service.list_admin_tools(db, status_filter, page, limit)
     slugs = [tool.slug for tool in tools]
@@ -122,8 +127,8 @@ async def update_admin_tool_review(
     tool_id: uuid.UUID,
     body: AdminToolReviewUpdate,
     _admin: Annotated[User, Depends(require_admin)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> ToolResponse:
     tool = await tool_service.get_tool_by_id(db, tool_id)
     if not tool:
@@ -135,6 +140,9 @@ async def update_admin_tool_review(
             message="A tool must have a deployed API endpoint before it can be approved live.",
         )
 
+    previous_status = tool.status.value
+    previous_is_featured = tool.is_featured
+    previous_processing_error = tool.processing_error
     updated = await tool_service.update_tool_review_status(
         db,
         tool,
@@ -150,9 +158,16 @@ async def update_admin_tool_review(
         target_type="tool",
         target_id=updated.id,
         details={
-            "status": updated.status.value,
-            "is_featured": updated.is_featured,
-            "processing_error": updated.processing_error,
+            "previous": {
+                "status": previous_status,
+                "is_featured": previous_is_featured,
+                "processing_error": previous_processing_error,
+            },
+            "new": {
+                "status": updated.status.value,
+                "is_featured": updated.is_featured,
+                "processing_error": updated.processing_error,
+            },
         },
     )
     view_count = await tool_service.get_view_count(redis, updated.slug)
@@ -166,12 +181,12 @@ async def update_admin_tool_review(
 )
 async def list_admin_users(
     _admin: Annotated[User, Depends(require_admin)],
-    search: str | None = Query(None, min_length=1, max_length=100),
-    role_filter: UserRole | None = Query(None, alias="role"),
-    is_active: bool | None = Query(None),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    search: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    role_filter: Annotated[UserRole | None, Query(alias="role")] = None,
+    is_active: Annotated[bool | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> AdminUserListResponse:
     users, total = await user_service.list_admin_users(
         db,
@@ -199,7 +214,7 @@ async def update_admin_user(
     user_id: uuid.UUID,
     body: AdminUserUpdate,
     admin: Annotated[User, Depends(require_admin)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AdminUserResponse:
     user = await user_service.get_user_by_id(db, user_id)
     if not user:
@@ -216,6 +231,8 @@ async def update_admin_user(
             message="Admins cannot remove their own admin access or deactivate their own account.",
         )
 
+    previous_role = user.role.value
+    previous_is_active = user.is_active
     updated = await user_service.update_user_admin_state(
         db,
         user,
@@ -229,8 +246,14 @@ async def update_admin_user(
         target_type="user",
         target_id=updated.id,
         details={
-            "role": updated.role.value,
-            "is_active": updated.is_active,
+            "previous": {
+                "role": previous_role,
+                "is_active": previous_is_active,
+            },
+            "new": {
+                "role": updated.role.value,
+                "is_active": updated.is_active,
+            },
         },
     )
     return AdminUserResponse.model_validate(updated)
@@ -243,9 +266,9 @@ async def update_admin_user(
 )
 async def list_admin_audit_logs(
     _admin: Annotated[User, Depends(require_admin)],
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> AdminAuditLogListResponse:
     logs, total = await admin_audit_service.list_admin_audit_logs(db, page=page, limit=limit)
     return AdminAuditLogListResponse(
@@ -264,12 +287,12 @@ async def list_admin_audit_logs(
 )
 async def list_admin_processing_jobs(
     _admin: Annotated[User, Depends(require_admin)],
-    status_filter: ToolProcessingJobStatus | None = Query(None, alias="status"),
-    tool_id: uuid.UUID | None = Query(None),
-    seller_id: uuid.UUID | None = Query(None),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[ToolProcessingJobStatus | None, Query(alias="status")] = None,
+    tool_id: Annotated[uuid.UUID | None, Query()] = None,
+    seller_id: Annotated[uuid.UUID | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> AdminProcessingJobListResponse:
     jobs, total = await job_service.list_admin_processing_jobs(
         db,
@@ -298,7 +321,7 @@ async def retry_admin_processing_job(
     job_id: uuid.UUID,
     body: AdminProcessingJobRetryRequest,
     admin: Annotated[User, Depends(require_admin)],
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AdminProcessingJobResponse:
     job = await job_service.get_job_with_details(db, job_id)
     if not job:

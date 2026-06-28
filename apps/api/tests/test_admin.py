@@ -1,15 +1,19 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from app.models.tool import ToolStatus
 from app.models.admin_audit_log import AdminAuditLog
-from app.models.tool_processing_job import ToolProcessingJob, ToolProcessingJobKind, ToolProcessingJobStatus
+from app.models.tool import ToolStatus
+from app.models.tool_processing_job import (
+    ToolProcessingJob,
+    ToolProcessingJobKind,
+    ToolProcessingJobStatus,
+)
 from app.models.user import UserRole
 from app.services import admin_audit_service, job_service, tool_service, user_service
 
 
 def make_processing_job(draft_tool, *, status=ToolProcessingJobStatus.failed):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job_id = uuid.uuid4()
     job = ToolProcessingJob(
         id=job_id,
@@ -32,7 +36,7 @@ def make_processing_job(draft_tool, *, status=ToolProcessingJobStatus.failed):
 
 
 def make_audit_log(admin_user, *, action="tool_review_updated", target_type="tool", target_id=None):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     log = AdminAuditLog(
         id=uuid.uuid4(),
         admin_id=admin_user.id,
@@ -145,7 +149,18 @@ def test_admin_review_updates_tool_status(
     }
     assert audit_calls[0]["action"] == "tool_review_updated"
     assert audit_calls[0]["target_id"] == draft_tool.id
-    assert audit_calls[0]["details"]["status"] == "rejected"
+    assert audit_calls[0]["details"] == {
+        "previous": {
+            "status": "draft",
+            "is_featured": False,
+            "processing_error": None,
+        },
+        "new": {
+            "status": "rejected",
+            "is_featured": False,
+            "processing_error": "Needs clearer setup docs.",
+        },
+    }
 
 
 def test_admin_review_rejects_live_without_endpoint(
@@ -227,7 +242,16 @@ def test_admin_user_update_can_suspend_account(client, auth_overrides, admin_use
     assert captured == {"role": UserRole.both, "is_active": False}
     assert audit_calls[0]["action"] == "user_moderation_updated"
     assert audit_calls[0]["target_id"] == buyer.id
-    assert audit_calls[0]["details"] == {"role": "both", "is_active": False}
+    assert audit_calls[0]["details"] == {
+        "previous": {
+            "role": "buyer",
+            "is_active": True,
+        },
+        "new": {
+            "role": "both",
+            "is_active": False,
+        },
+    }
 
 
 def test_admin_user_update_rejects_self_lockout(client, auth_overrides, admin_user, monkeypatch):

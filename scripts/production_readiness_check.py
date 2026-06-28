@@ -508,6 +508,14 @@ def check_repo_files(failures: list[str]) -> None:
     expect("record_admin_action" in admin_audit_service, "admin mutations must have a durable audit recorder", failures)
     expect("list_admin_audit_logs" in admin_audit_service, "admin dashboard must expose audit history", failures)
     expect("record_admin_action" in admin_router, "admin mutation routes must record audit actions", failures)
+    expect(
+        '"previous"' in admin_router
+        and '"new"' in admin_router
+        and "previous_status" in admin_router
+        and "previous_role" in admin_router,
+        "admin moderation audit logs must capture before and after state",
+        failures,
+    )
     expect("/audit-logs" in admin_router, "admin API must expose audit logs to admins", failures)
 
     smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
