@@ -163,6 +163,56 @@ class FakePayoutSession:
         self.committed += 1
 
 
+class FakeConnectSession:
+    def __init__(self):
+        self.committed = 0
+
+    async def commit(self):
+        self.committed += 1
+
+
+@pytest.mark.asyncio
+async def test_create_stripe_connect_account_returns_trusted_onboarding_url(seller, monkeypatch):
+    db = FakeConnectSession()
+    calls = []
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        calls.append({"func": func, "kwargs": kwargs})
+        if len(calls) == 1:
+            return {"id": "acct_test"}
+        return {"url": "https://connect.stripe.com/setup/s/acct_test"}
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+    monkeypatch.setattr(billing_service.settings, "app_base_url", "https://hackmarket.io")
+
+    onboarding_url = await billing_service.create_stripe_connect_account(db, seller)
+
+    assert onboarding_url == "https://connect.stripe.com/setup/s/acct_test"
+    assert seller.stripe_connect_id == "acct_test"
+    assert db.committed == 1
+    assert calls[1]["kwargs"]["refresh_url"] == "https://hackmarket.io/dashboard/billing?refresh=1"
+    assert calls[1]["kwargs"]["return_url"] == "https://hackmarket.io/dashboard/billing?connected=1"
+
+
+@pytest.mark.asyncio
+async def test_create_stripe_connect_account_rejects_untrusted_onboarding_url(seller, monkeypatch):
+    db = FakeConnectSession()
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        if not seller.stripe_connect_id:
+            return {"id": "acct_test"}
+        return {"url": "https://attacker.example/setup/s/acct_test"}
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    with pytest.raises(billing_service.AppError, match="trusted onboarding URL") as exc_info:
+        await billing_service.create_stripe_connect_account(db, seller)
+
+    assert exc_info.value.error_code == "stripe_onboarding_unavailable"
+    assert seller.stripe_connect_id == "acct_test"
+    assert db.committed == 1
+
+
 @pytest.mark.asyncio
 async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
     period_end = datetime.now(UTC)

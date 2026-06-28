@@ -53,6 +53,16 @@ def _is_trusted_stripe_checkout_url(value: str | None) -> bool:
     return parsed.scheme == "https" and parsed.hostname == "checkout.stripe.com"
 
 
+def _is_trusted_stripe_connect_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme == "https" and parsed.hostname == "connect.stripe.com"
+
+
 async def _call_stripe(func, *args, **kwargs):
     for attempt in range(3):
         try:
@@ -99,7 +109,14 @@ async def create_stripe_connect_account(db: AsyncSession, user: User) -> str:
         return_url=f"{settings.app_base_url.rstrip('/')}/dashboard/billing?connected=1",
         type="account_onboarding",
     )
-    return account_link["url"]
+    onboarding_url = account_link.get("url")
+    if not _is_trusted_stripe_connect_url(onboarding_url):
+        raise AppError(
+            status_code=502,
+            error_code="stripe_onboarding_unavailable",
+            message="Stripe onboarding did not return a trusted onboarding URL. Please retry in a moment.",
+        )
+    return onboarding_url
 
 
 async def create_setup_intent(db: AsyncSession, user: User) -> str:

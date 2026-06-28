@@ -377,6 +377,13 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_is_trusted_stripe_connect_url" in billing_service
+        and 'parsed.hostname == "connect.stripe.com"' in billing_service
+        and "trusted onboarding URL" in billing_service,
+        "backend billing must only return trusted Stripe Connect onboarding URLs",
+        failures,
+    )
+    expect(
         'checkout_session.get("id") or checkout_session.get("payment_intent")' in billing_service,
         "pending tool purchases must store checkout session IDs so checkout URLs can be recovered",
         failures,
