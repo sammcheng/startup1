@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { fetchConverterTool } from "@/lib/converterTools";
+import { ALLOW_CONVERTER_CATALOG_FALLBACK } from "@/lib/env";
 import ToolDocs from "@/components/docs/ToolDocs";
 import type { Tool } from "@/types/tool";
 import type { ToolDocumentation } from "@/types/docs";
@@ -23,12 +24,14 @@ async function fetchTool(slug: string): Promise<Tool | null> {
     // fall through
   }
 
-  // 2) Converter service
-  try {
-    const converted = await fetchConverterTool(slug);
-    if (converted) return converted;
-  } catch {
-    // fall through
+  // 2) Development-only converter fallback for local demos.
+  if (ALLOW_CONVERTER_CATALOG_FALLBACK) {
+    try {
+      const converted = await fetchConverterTool(slug);
+      if (converted) return converted;
+    } catch {
+      // fall through
+    }
   }
 
   return null;

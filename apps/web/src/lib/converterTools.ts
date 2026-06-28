@@ -1,6 +1,6 @@
 import type { Tool, ToolListResponse } from "@/types/tool";
 import { shouldSkipBuildTimeFetch } from "@/lib/api";
-import { CONVERTER_ENABLED, CONVERTER_URL } from "@/lib/env";
+import { ALLOW_CONVERTER_CATALOG_FALLBACK, CONVERTER_URL } from "@/lib/env";
 
 interface ConverterTool {
   id: string;
@@ -102,8 +102,8 @@ export async function fetchConverterTools(
   limit = 20,
   offset = 0
 ): Promise<ToolListResponse> {
-  if (!CONVERTER_ENABLED) {
-    throw new Error("Converter service is not configured.");
+  if (!ALLOW_CONVERTER_CATALOG_FALLBACK) {
+    throw new Error("Converter catalog fallback is disabled.");
   }
   if (shouldSkipBuildTimeFetch(CONVERTER_URL)) {
     throw new Error("Skipping local converter fetch during production build.");
@@ -125,7 +125,7 @@ export async function fetchConverterTools(
 }
 
 export async function fetchConverterTool(slug: string): Promise<Tool | null> {
-  if (!CONVERTER_ENABLED) {
+  if (!ALLOW_CONVERTER_CATALOG_FALLBACK) {
     return null;
   }
   if (shouldSkipBuildTimeFetch(CONVERTER_URL)) {

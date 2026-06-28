@@ -17,6 +17,8 @@ export const CONVERTER_URL = readPublicEnv(
 );
 export const CONVERTER_ENABLED =
   CONFIGURED_CONVERTER_URL.length > 0 || process.env.NODE_ENV !== "production";
+export const ALLOW_CONVERTER_CATALOG_FALLBACK =
+  process.env.NODE_ENV !== "production" && CONVERTER_ENABLED;
 export const CLERK_PUBLISHABLE_KEY =
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim() || null;
 export const DEMO_API_KEY =

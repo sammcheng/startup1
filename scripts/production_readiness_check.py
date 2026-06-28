@@ -44,6 +44,11 @@ PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 PRODUCTION_LOAD_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_load_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
+WEB_ENV = REPO_ROOT / "apps" / "web" / "src" / "lib" / "env.ts"
+WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
+WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
+WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
+WEB_TOOL_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "tools" / "[slug]" / "page.tsx"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
@@ -366,6 +371,20 @@ def check_repo_files(failures: list[str]) -> None:
     expect("/admin/audit-logs" in admin_page, "admin dashboard must load audit logs", failures)
     expect("Production health" in admin_page, "admin dashboard must render production health status", failures)
     expect("Audit trail" in admin_page, "admin dashboard must render admin audit trail", failures)
+
+    web_env = WEB_ENV.read_text(encoding="utf-8")
+    expect(
+        'process.env.NODE_ENV !== "production" && CONVERTER_ENABLED' in web_env,
+        "frontend must disable converter catalog fallback in production",
+        failures,
+    )
+    for path in [WEB_HOME_PAGE, WEB_MARKETPLACE_PAGE, WEB_MARKETPLACE_CLIENT, WEB_TOOL_PAGE]:
+        source = path.read_text(encoding="utf-8")
+        expect(
+            "ALLOW_CONVERTER_CATALOG_FALLBACK" in source,
+            f"{path.relative_to(REPO_ROOT)} must guard converter catalog fallback",
+            failures,
+        )
 
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
     expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)

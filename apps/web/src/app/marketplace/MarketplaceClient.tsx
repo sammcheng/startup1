@@ -7,7 +7,7 @@ import { tokenize, matchTools, segmentsToText } from "@/lib/nlpSearch";
 import type { Segment, ScoredTool } from "@/lib/nlpSearch";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
-import { CONVERTER_ENABLED, CONVERTER_URL } from "@/lib/env";
+import { ALLOW_CONVERTER_CATALOG_FALLBACK, CONVERTER_URL } from "@/lib/env";
 
 // ── Converter adapter ──────────────────────────────────────────────────────
 
@@ -76,8 +76,8 @@ function converterToTool(c: ConverterTool): Tool {
 }
 
 async function fetchFromConverter(limit: number, offset: number): Promise<ToolListResponse> {
-  if (!CONVERTER_ENABLED) {
-    throw new Error("Converter service is not configured.");
+  if (!ALLOW_CONVERTER_CATALOG_FALLBACK) {
+    throw new Error("Converter catalog fallback is disabled.");
   }
   const res = await fetch(`${CONVERTER_URL}/api/tools?limit=${limit}&offset=${offset}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Converter unavailable");
@@ -351,6 +351,7 @@ type Phase = "input" | "thinking" | "results";
 
 export default function MarketplaceClient({
   initialData,
+  initialFetchFailed = false,
 }: {
   initialData: ToolListResponse | null;
   initialFetchFailed?: boolean;
@@ -358,7 +359,9 @@ export default function MarketplaceClient({
   // Browse state
   const [data, setData] = useState<ToolListResponse | null>(initialData);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    initialFetchFailed ? "The live marketplace catalog is unavailable right now." : null,
+  );
   const [category, setCategory] = useState<ToolCategory | "all">("all");
   const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [page, setPage] = useState(1);
@@ -456,7 +459,7 @@ export default function MarketplaceClient({
         }));
       }
     } catch {
-      // discover endpoint unreachable; try the legacy live paths
+      // discover endpoint unreachable; try the live list path
     }
 
     if (verified.length === 0) {
@@ -468,6 +471,9 @@ export default function MarketplaceClient({
           );
           tools = result.items;
         } catch {
+          if (!ALLOW_CONVERTER_CATALOG_FALLBACK) {
+            throw new Error("Live catalog unavailable.");
+          }
           const params = new URLSearchParams({ q: plainText, limit: "100" });
           const res = await fetch(`${CONVERTER_URL}/api/tools?${params}`, { cache: "no-store" });
           if (res.ok) {
@@ -525,20 +531,15 @@ export default function MarketplaceClient({
         const filters: Record<string, unknown> = { sort_by: sort, page: pg, limit: 20 };
         if (cat !== "all") filters.category = cat;
 
-        // 1) live API
-        try {
-          const apiResp = await api.get<ToolListResponse>(
-            `/tools${buildQuery(filters)}`,
-          );
-          if (apiResp.items.length > 0) {
-            setData(apiResp);
-            return;
-          }
-        } catch {
-          // fall through
+        const apiResp = await api.get<ToolListResponse>(
+          `/tools${buildQuery(filters)}`,
+        );
+        if (apiResp.items.length > 0 || !ALLOW_CONVERTER_CATALOG_FALLBACK) {
+          setData(apiResp);
+          return;
         }
 
-        // 2) converter
+        // Development-only converter fallback for local demos.
         try {
           const conv = await fetchFromConverter(20, (pg - 1) * 20);
           if (conv.items.length > 0) {
