@@ -41,6 +41,7 @@ export default function SiteNav() {
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {[
           { href: "/marketplace", label: "Marketplace" },
+          { href: "/pricing", label: "Pricing" },
           { href: "/dashboard", label: "Dashboard" },
           { href: "/docs", label: "Docs" },
         ].map((l) => (

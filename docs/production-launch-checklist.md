@@ -128,3 +128,12 @@ Before opening the marketplace, sign in with an admin account and verify:
 - Suspended users can no longer access authenticated API paths.
 - Failed processing jobs can be retried from `/admin`.
 - `/approver` can approve, reject, pause, and feature submitted tools.
+
+## 9. Trust Pages
+
+Review these pages before public launch and replace product-copy placeholders with counsel-approved language:
+- `/pricing`
+- `/terms`
+- `/privacy`
+- `/seller-agreement`
+- `/support`

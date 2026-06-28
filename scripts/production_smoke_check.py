@@ -20,7 +20,20 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 
-DEFAULT_FRONTEND_PATHS = ["/", "/marketplace", "/docs", "/admin", "/approver", "/sign-in", "/sign-up"]
+DEFAULT_FRONTEND_PATHS = [
+    "/",
+    "/marketplace",
+    "/pricing",
+    "/docs",
+    "/support",
+    "/terms",
+    "/privacy",
+    "/seller-agreement",
+    "/admin",
+    "/approver",
+    "/sign-in",
+    "/sign-up",
+]
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
