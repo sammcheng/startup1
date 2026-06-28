@@ -41,8 +41,10 @@ API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
 OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
 ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
+PRODUCTION_LOAD_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_load_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
+PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
 API_REQUIRED_ENV = {
@@ -307,6 +309,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect(MIGRATION_SAFETY_CHECK.exists(), "migration safety check is missing", failures)
     expect(ALEMBIC_MIGRATION_CHECK.exists(), "Alembic upgrade validation check is missing", failures)
     expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
+    expect(PRODUCTION_LOAD_SMOKE_CHECK.exists(), "production load smoke check is missing", failures)
     expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
@@ -353,6 +356,10 @@ def check_repo_files(failures: list[str]) -> None:
     expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
     expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
     expect("check_admin_operations_health" in smoke_check, "smoke checks must verify admin operations health when an admin token is provided", failures)
+    load_smoke_check = PRODUCTION_LOAD_SMOKE_CHECK.read_text(encoding="utf-8")
+    expect("ThreadPoolExecutor" in load_smoke_check, "load smoke check must exercise concurrent requests", failures)
+    expect("gateway invocation" in load_smoke_check, "load smoke check must support gateway invocation checks", failures)
+    expect("public discovery" in load_smoke_check, "load smoke check must cover tool discovery under load", failures)
 
     admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
     expect("/admin/operations-health" in admin_page, "admin dashboard must load production operations health", failures)
@@ -388,6 +395,13 @@ def check_repo_files(failures: list[str]) -> None:
     expect("npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures)
     expect("npm run test:security" in ci_workflow, "CI must test frontend security headers", failures)
     expect("npm run build" in ci_workflow, "CI must build the frontend", failures)
+
+    launch_checklist = PRODUCTION_LAUNCH_CHECKLIST.read_text(encoding="utf-8")
+    expect(
+        "production_load_smoke_check.py" in launch_checklist,
+        "launch checklist must require the production load smoke check",
+        failures,
+    )
 
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     for key in [

@@ -131,6 +131,29 @@ frontend/API security headers, `/health`, `/ready`, production CORS, public tool
 discovery, structured protected-route API errors with request IDs, and the
 submission status page.
 
+Run the launch load smoke after the basic smoke test passes:
+
+```bash
+python3 scripts/production_load_smoke_check.py \
+  --api-url https://api.hackmarket.io \
+  --requests 40 \
+  --concurrency 8 \
+  --max-error-rate 0.02 \
+  --max-p95-ms 1500 \
+  --max-ms 5000
+```
+
+If a test buyer API key and live test tool are available, include a gateway
+invocation load smoke before inviting users:
+
+```bash
+GATEWAY_API_KEY=hm_live_... GATEWAY_TOOL_SLUG=home-accessibility-checker \
+  python3 scripts/production_load_smoke_check.py \
+  --api-url https://api.hackmarket.io \
+  --requests 40 \
+  --concurrency 8
+```
+
 Optional signed-in smoke checks:
 
 ```bash
