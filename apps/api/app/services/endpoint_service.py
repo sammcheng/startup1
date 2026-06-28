@@ -4,12 +4,13 @@ import httpx
 
 from app.exceptions import AppError
 from app.services.proxy_service import get_http_client
+from app.services.url_safety import validate_public_tool_endpoint
 
 
 async def verify_live_endpoint(endpoint_url: str) -> str:
-    normalized = endpoint_url.rstrip("/")
+    normalized = validate_public_tool_endpoint(endpoint_url)
     parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if not parsed.netloc:
         raise AppError(
             message="Enter a valid deployed API URL.",
             status_code=422,

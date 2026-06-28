@@ -34,6 +34,7 @@ MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
+URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 
 
 API_REQUIRED_ENV = {
@@ -278,6 +279,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
     expect(MIGRATION_SAFETY_CHECK.exists(), "migration safety check is missing", failures)
     expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
+    expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
     expect(
@@ -308,6 +310,11 @@ def check_repo_files(failures: list[str]) -> None:
     expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
     expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
     expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
+
+    url_safety = URL_SAFETY.read_text(encoding="utf-8")
+    expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)
+    expect("is_private" in url_safety and "is_loopback" in url_safety, "URL safety must reject private/loopback IPs", failures)
+    expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)

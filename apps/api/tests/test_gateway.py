@@ -7,7 +7,7 @@ from app.dependencies import validate_api_key
 from app.exceptions import InvalidAPIKeyError
 from app.main import app
 from app.routers import gateway
-from app.services import tool_service, usage_service
+from app.services import tool_service, url_safety, usage_service
 
 
 def test_valid_api_key_forwards_request(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
@@ -282,3 +282,23 @@ def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api
     assert response.json()["error"]["code"] == "TOOL_UNAVAILABLE"
     assert response.json()["error"]["platform"] == "Render"
     assert response.json()["error"]["platform_request_id"] == "abc123-PDX"
+
+
+def test_gateway_rejects_private_tool_endpoint_in_production(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+    auth_overrides(api_key_context=(buyer, api_key))
+    live_tool.api_endpoint = "https://127.0.0.1:8080"
+
+    async def fake_get_tool_by_slug(db, redis, slug):
+        return live_tool
+
+    async def fail_create_usage_log(*args, **kwargs):
+        raise AssertionError("unsafe endpoint should not create usage")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug_cached", fake_get_tool_by_slug)
+    monkeypatch.setattr(url_safety.settings, "environment", "production")
+    monkeypatch.setattr(usage_service, "create_usage_log", fail_create_usage_log)
+
+    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsafe_deployment_url"

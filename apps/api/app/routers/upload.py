@@ -141,13 +141,13 @@ async def configure_tool(
             error_code="runtime_configuration_incomplete",
         )
 
-    config_payload = body.model_dump()
-    config_s3_key = f"tools/{tool_id}/config.json"
-    await storage_service.upload_json(config_s3_key, config_payload)
-
     normalized_deployment_url = None
     if body.deployment_url:
         normalized_deployment_url = await endpoint_service.verify_live_endpoint(str(body.deployment_url))
+
+    config_payload = body.model_dump()
+    config_s3_key = f"tools/{tool_id}/config.json"
+    await storage_service.upload_json(config_s3_key, config_payload)
 
     updated = await tool_service.update_tool(
         db,

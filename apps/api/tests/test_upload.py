@@ -367,3 +367,32 @@ def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, d
     assert response.json()["status"] == ToolStatus.live.value
     assert draft_tool.status == ToolStatus.live
     assert draft_tool.api_endpoint == "https://api.example.com"
+
+
+def test_configure_rejects_local_deployment_url_in_production(client, auth_overrides, seller, draft_tool, monkeypatch):
+    auth_overrides(seller_user=seller)
+
+    async def fake_get_tool_by_id(db, tool_id):
+        return draft_tool
+
+    async def fail_upload_json(*args, **kwargs):
+        raise AssertionError("unsafe endpoint should be rejected before storing config")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_id", fake_get_tool_by_id)
+    monkeypatch.setattr(storage_service, "upload_json", fail_upload_json)
+    monkeypatch.setattr("app.services.url_safety.settings.environment", "production")
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/configure",
+        json={
+            "input_schema": {},
+            "output_schema": {},
+            "environment_variables": [],
+            "entry_command": None,
+            "port": 8080,
+            "deployment_url": "http://127.0.0.1:8080",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "insecure_deployment_url"

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db, get_redis, validate_api_key
-from app.exceptions import RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
+from app.exceptions import AppError, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
 from app.models import APIKey, Tool, User
 from app.models.tool import ToolStatus
 from app.schemas.usage import UsageLogCreate
@@ -91,6 +91,8 @@ async def _proxy_tool_request_impl(
         if normalized_gateway_error:
             upstream_status_code, upstream_content, upstream_headers, upstream_media_type = normalized_gateway_error
             error_message = "The tool service was temporarily unavailable."
+    except AppError:
+        raise
     except httpx.TimeoutException:
         error_message = "The tool took too long to respond."
         upstream_status_code = status.HTTP_504_GATEWAY_TIMEOUT
