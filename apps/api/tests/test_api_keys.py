@@ -1,7 +1,9 @@
 import pytest
 
-from app.exceptions import AppError
+from app.dependencies import validate_api_key
+from app.exceptions import AppError, InvalidAPIKeyError
 from app.services import api_key_service
+from app.utils import hashing
 from app.utils.hashing import hash_api_key
 
 
@@ -82,14 +84,40 @@ def test_deactivate_key_returns_not_found_for_missing_or_not_owned_key(client, a
 
 @pytest.mark.asyncio
 async def test_key_hashing(fake_db, buyer, monkeypatch):
-    from app.utils import hashing
-
     monkeypatch.setattr(hashing, "generate_api_key", lambda: "hm_live_static_secret")
 
     api_key, raw_key = await api_key_service.create_api_key(fake_db, buyer.id, "testing")
 
     assert raw_key == "hm_live_static_secret"
     assert api_key.key_hash == hash_api_key(raw_key)
+
+
+def test_generated_api_key_matches_expected_gateway_format():
+    assert hashing.is_api_key_format(hashing.generate_api_key()) is True
+
+
+@pytest.mark.parametrize(
+    "raw_key",
+    [
+        "bad",
+        "hm_test_abcdefghijklmnopqrstuvwxyz123456",
+        "hm_live_short",
+        "hm_live_has space inside value",
+        "hm_live_" + ("a" * 120),
+    ],
+)
+def test_api_key_format_rejects_malformed_values(raw_key):
+    assert hashing.is_api_key_format(raw_key) is False
+
+
+@pytest.mark.asyncio
+async def test_validate_api_key_rejects_malformed_key_before_database_lookup():
+    class FailOnQueryDb:
+        async def execute(self, statement):
+            raise AssertionError("malformed API keys must not query the database")
+
+    with pytest.raises(InvalidAPIKeyError):
+        await validate_api_key(FailOnQueryDb(), x_api_key="not-a-real-key")
 
 
 @pytest.mark.asyncio

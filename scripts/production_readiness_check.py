@@ -37,6 +37,7 @@ MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
 ALEMBIC_MIGRATION_CHECK = REPO_ROOT / "scripts" / "check_alembic_migrations.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_KEY_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "api_key_service.py"
+HASHING_UTILS = REPO_ROOT / "apps" / "api" / "app" / "utils" / "hashing.py"
 TOOL_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "tool_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_CONFIG = REPO_ROOT / "apps" / "api" / "app" / "config.py"
@@ -393,11 +394,20 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     api_key_service = API_KEY_SERVICE.read_text(encoding="utf-8")
+    hashing_utils = HASHING_UTILS.read_text(encoding="utf-8")
     expect(
         "_lock_user_for_api_key_create" in api_key_service
         and "with_for_update" in api_key_service
         and "max_active_api_keys_per_user" in api_key_service,
         "API key creation must serialize per user before enforcing the active-key cap",
+        failures,
+    )
+    dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(encoding="utf-8")
+    expect(
+        "is_api_key_format" in hashing_utils
+        and "is_api_key_format(x_api_key)" in dependencies
+        and "hash_api_key(x_api_key)" in dependencies,
+        "gateway API key validation must reject malformed keys before hashing and database lookup",
         failures,
     )
     api_keys_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "api_keys.py").read_text(encoding="utf-8")

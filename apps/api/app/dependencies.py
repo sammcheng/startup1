@@ -1,9 +1,9 @@
 import logging
 import time
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
-from urllib.parse import urlparse
+from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
 from fastapi import Depends, Header
@@ -16,7 +16,7 @@ from app.exceptions import Forbidden, InvalidAPIKeyError, Unauthorized
 from app.models import APIKey, User
 from app.models.user import UserRole
 from app.services.auth_service import AuthIdentity, sync_user_from_identity
-from app.utils.hashing import hash_api_key
+from app.utils.hashing import hash_api_key, is_api_key_format
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +186,8 @@ def _extract_bearer(authorization: str | None) -> str:
 
 
 async def get_current_user(
+    db: Annotated[AsyncSession, Depends(get_db)],
     authorization: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     """
     Validate the Clerk Bearer JWT and return the matching active User row.
@@ -211,8 +211,8 @@ async def get_current_user(
 
 
 async def get_optional_current_user(
+    db: Annotated[AsyncSession, Depends(get_db)],
     authorization: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_db),
 ) -> User | None:
     if not authorization:
         return None
@@ -250,8 +250,8 @@ async def require_admin(
 
 
 async def validate_api_key(
+    db: Annotated[AsyncSession, Depends(get_db)],
     x_api_key: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_db),
 ) -> tuple[User, APIKey]:
     """
     Validate the ``X-Api-Key`` header, mark it as used, and return
@@ -259,6 +259,8 @@ async def validate_api_key(
     """
     if not x_api_key:
         raise InvalidAPIKeyError("X-Api-Key header required.")
+    if not is_api_key_format(x_api_key):
+        raise InvalidAPIKeyError()
 
     key_hash = hash_api_key(x_api_key)
     result = await db.execute(
@@ -279,7 +281,7 @@ async def validate_api_key(
     await db.execute(
         update(APIKey)
         .where(APIKey.id == api_key.id)
-        .values(last_used_at=datetime.now(timezone.utc))
+        .values(last_used_at=datetime.now(UTC))
     )
     await db.commit()
 

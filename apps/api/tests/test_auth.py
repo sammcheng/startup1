@@ -1,12 +1,12 @@
 import pytest
 
+import app.dependencies as auth_dependencies
 from app.dependencies import get_current_identity
 from app.exceptions import Unauthorized
 from app.main import app
 from app.routers import auth
 from app.schemas.auth import AuthSyncRequest
 from app.services import auth_service
-import app.dependencies as auth_dependencies
 
 
 def test_auth_sync_returns_user_payload(client, buyer, monkeypatch):
@@ -263,7 +263,7 @@ async def test_get_current_user_lazily_syncs_verified_identity(monkeypatch):
 
     monkeypatch.setattr(auth_dependencies, "verify_clerk_identity", fake_verify_clerk_identity)
 
-    user = await auth_dependencies.get_current_user("Bearer test-token", db)
+    user = await auth_dependencies.get_current_user(db=db, authorization="Bearer test-token")
 
     assert user.clerk_id == "clerk_lazy"
     assert user.email == "lazy@example.com"
