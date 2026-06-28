@@ -332,6 +332,16 @@ def check_repo_files(failures: list[str]) -> None:
         "billing scheduler must guard seller payouts with DB-backed idempotency",
         failures,
     )
+    expect(
+        "_terminate_stale_pending_purchase" in billing_service and "_fail_checkout_creation" in billing_service,
+        "tool purchases must not leave unrecoverable pending checkout records",
+        failures,
+    )
+    expect(
+        'checkout_session.get("id") or checkout_session.get("payment_intent")' in billing_service,
+        "pending tool purchases must store checkout session IDs so checkout URLs can be recovered",
+        failures,
+    )
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)

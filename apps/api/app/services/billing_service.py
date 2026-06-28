@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client
-from app.exceptions import Forbidden, ToolNotFoundError, ToolNotLiveError
+from app.exceptions import AppError, Forbidden, ToolNotFoundError, ToolNotLiveError
 from app.models import Tool, ToolPurchase, Transaction, TransactionStatus, TransactionType, UsageLog, User
 from app.models.tool import OwnershipType, ToolStatus
 from app.models.tool_purchase import PurchaseStatus
@@ -117,7 +117,13 @@ async def list_payment_methods(user: User) -> list[PaymentMethodSummary]:
     return items
 
 
-async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tuple[ToolPurchase, str | None]:
+async def purchase_tool(
+    db: AsyncSession,
+    buyer: User,
+    tool_id: uuid.UUID,
+    *,
+    _retry_stale_pending: bool = True,
+) -> tuple[ToolPurchase, str | None]:
     tool = await db.get(Tool, tool_id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
@@ -130,7 +136,17 @@ async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tu
     if existing:
         return existing, None
     if pending:
-        return pending, await _get_pending_checkout_url(db, buyer, tool)
+        checkout_url = await _get_pending_checkout_url(db, buyer, tool)
+        if checkout_url:
+            return pending, checkout_url
+        if _retry_stale_pending:
+            await _terminate_stale_pending_purchase(db, pending, buyer.id, tool.id)
+            return await purchase_tool(db, buyer, tool_id, _retry_stale_pending=False)
+        raise AppError(
+            status_code=502,
+            error_code="checkout_unavailable",
+            message="The existing checkout session could not be recovered. Please retry in a moment.",
+        )
 
     now = datetime.now(timezone.utc)
     purchase_price = _quantize(tool.one_time_price or Decimal("0.00"))
@@ -175,14 +191,37 @@ async def purchase_tool(db: AsyncSession, buyer: User, tool_id: uuid.UUID) -> tu
         if existing:
             return existing, None
         if pending:
-            return pending, await _get_pending_checkout_url(db, buyer, tool)
+            checkout_url = await _get_pending_checkout_url(db, buyer, tool)
+            if checkout_url:
+                return pending, checkout_url
+            if _retry_stale_pending:
+                await _terminate_stale_pending_purchase(db, pending, buyer.id, tool.id)
+                return await purchase_tool(db, buyer, tool_id, _retry_stale_pending=False)
         raise
 
     checkout_url: str | None = None
     if requires_checkout and transaction is not None:
-        checkout_session = await _create_tool_checkout_session(buyer, tool, purchase, transaction)
+        try:
+            checkout_session = await _create_tool_checkout_session(buyer, tool, purchase, transaction)
+        except Exception as exc:
+            await _fail_checkout_creation(db, purchase, transaction)
+            raise AppError(
+                status_code=502,
+                error_code="checkout_unavailable",
+                message="Stripe checkout could not be created. Please retry in a moment.",
+            ) from exc
         checkout_url = checkout_session.get("url")
-        transaction.stripe_payment_intent_id = checkout_session.get("payment_intent") or checkout_session.get("id")
+        if not checkout_url:
+            await _fail_checkout_creation(db, purchase, transaction)
+            raise AppError(
+                status_code=502,
+                error_code="checkout_unavailable",
+                message="Stripe checkout did not return a usable checkout URL. Please retry in a moment.",
+            )
+        # Store the Checkout Session ID while pending so buyers can recover the
+        # checkout URL. The completion webhook replaces it with the payment
+        # intent ID once Stripe confirms payment.
+        transaction.stripe_payment_intent_id = checkout_session.get("id") or checkout_session.get("payment_intent")
         await db.commit()
 
     await db.refresh(purchase)
@@ -279,6 +318,48 @@ async def _get_pending_checkout_url(db: AsyncSession, buyer: User, tool: Tool) -
         return None
 
     return checkout_session.get("url")
+
+
+async def _terminate_stale_pending_purchase(
+    db: AsyncSession,
+    purchase: ToolPurchase,
+    buyer_id: uuid.UUID,
+    tool_id: uuid.UUID,
+) -> None:
+    purchase.status = PurchaseStatus.terminated
+    transaction = await _latest_pending_purchase_transaction(db, buyer_id, tool_id)
+    if transaction:
+        transaction.status = TransactionStatus.failed
+    await db.commit()
+
+
+async def _fail_checkout_creation(
+    db: AsyncSession,
+    purchase: ToolPurchase,
+    transaction: Transaction,
+) -> None:
+    purchase.status = PurchaseStatus.terminated
+    transaction.status = TransactionStatus.failed
+    await db.commit()
+
+
+async def _latest_pending_purchase_transaction(
+    db: AsyncSession,
+    buyer_id: uuid.UUID,
+    tool_id: uuid.UUID,
+) -> Transaction | None:
+    result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.buyer_id == buyer_id,
+            Transaction.tool_id == tool_id,
+            Transaction.type == TransactionType.full_purchase,
+            Transaction.status == TransactionStatus.pending,
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def record_usage(user_id, tool_id, amount) -> None:

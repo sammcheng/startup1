@@ -71,6 +71,7 @@ class FakePurchaseSession:
         commit_error=None,
         existing_after_rollback=None,
         pending_after_rollback=None,
+        tool_after_stale_retry=None,
     ):
         self.tool = tool
         self.existing = existing
@@ -80,27 +81,41 @@ class FakePurchaseSession:
         self.commit_error = commit_error
         self.existing_after_rollback = existing_after_rollback
         self.pending_after_rollback = pending_after_rollback
+        self.tool_after_stale_retry = tool_after_stale_retry or tool
         self.added = []
         self.committed = 0
         self.rollbacks = 0
         self.refreshed = []
         self.execute_calls = 0
+        self.after_rollback_execute_calls = 0
 
     async def get(self, model, key):
         if model is ToolPurchase or model is Transaction:
             return self.by_id.get(key)
+        if self.tool is None:
+            self.tool = self.tool_after_stale_retry
+            return self.tool
         return self.tool
 
     async def execute(self, statement):
         self.execute_calls += 1
+        if self.rollbacks:
+            self.after_rollback_execute_calls += 1
+            if self.after_rollback_execute_calls == 1:
+                return SimpleNamespace(scalar_one_or_none=lambda: self.existing_after_rollback)
+            if self.after_rollback_execute_calls == 2:
+                return SimpleNamespace(scalar_one_or_none=lambda: self.pending_after_rollback)
+            return SimpleNamespace(scalar_one_or_none=lambda: self.pending_transaction)
         if self.execute_calls == 1:
             return SimpleNamespace(scalar_one_or_none=lambda: self.existing)
         if self.execute_calls == 2:
-            return SimpleNamespace(scalar_one_or_none=lambda: self.pending)
-        if self.execute_calls == 3 and self.commit_error is not None:
-            return SimpleNamespace(scalar_one_or_none=lambda: self.existing_after_rollback)
-        if self.execute_calls == 4 and self.commit_error is not None:
-            return SimpleNamespace(scalar_one_or_none=lambda: self.pending_after_rollback)
+            pending = self.pending if self.pending and self.pending.status == PurchaseStatus.pending else None
+            return SimpleNamespace(scalar_one_or_none=lambda: pending)
+        if self.execute_calls == 5:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.existing)
+        if self.execute_calls == 6:
+            pending = self.pending if self.pending and self.pending.status == PurchaseStatus.pending else None
+            return SimpleNamespace(scalar_one_or_none=lambda: pending)
         return SimpleNamespace(scalar_one_or_none=lambda: self.pending_transaction)
 
     def add(self, obj):
@@ -113,6 +128,7 @@ class FakePurchaseSession:
 
     async def rollback(self):
         self.rollbacks += 1
+        self.commit_error = None
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
@@ -311,7 +327,7 @@ async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer
     assert transaction.amount == Decimal("100.00")
     assert transaction.platform_fee == Decimal("20.00")
     assert transaction.seller_payout == Decimal("80.00")
-    assert transaction.stripe_payment_intent_id == "pi_test_purchase"
+    assert transaction.stripe_payment_intent_id == "cs_test_purchase"
 
 
 @pytest.mark.asyncio
@@ -432,6 +448,82 @@ async def test_purchase_tool_reuses_pending_checkout_session(buyer, live_tool, m
     assert checkout_url == "https://checkout.stripe.test/existing"
     assert db.added == []
     assert db.committed == 0
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer, live_tool, monkeypatch):
+    live_tool.ownership_type = OwnershipType.full_sale
+    live_tool.one_time_price = Decimal("100.00")
+    stale_pending = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=live_tool.id,
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        purchase_price=Decimal("100.00"),
+        purchase_type=live_tool.ownership_type,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(timezone.utc),
+    )
+    stale_transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id=None,
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(timezone.utc),
+        period_end=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakePurchaseSession(
+        None,
+        pending=stale_pending,
+        pending_transaction=stale_transaction,
+        tool_after_stale_retry=live_tool,
+    )
+
+    async def fake_checkout_session(buyer, tool, purchase, transaction):
+        return {
+            "id": "cs_test_retry",
+            "url": "https://checkout.stripe.test/retry",
+            "payment_intent": "pi_test_retry",
+        }
+
+    monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
+
+    purchase, checkout_url = await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    assert stale_pending.status == PurchaseStatus.terminated
+    assert stale_transaction.status == billing_service.TransactionStatus.failed
+    assert purchase is not stale_pending
+    assert purchase.status == PurchaseStatus.pending
+    assert checkout_url == "https://checkout.stripe.test/retry"
+    assert db.committed == 3
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_fails_pending_purchase_when_checkout_creation_fails(buyer, live_tool, monkeypatch):
+    live_tool.ownership_type = OwnershipType.full_sale
+    live_tool.one_time_price = Decimal("100.00")
+    db = FakePurchaseSession(live_tool)
+
+    async def fake_checkout_session(*args, **kwargs):
+        raise RuntimeError("stripe outage")
+
+    monkeypatch.setattr(billing_service, "_create_tool_checkout_session", fake_checkout_session)
+
+    with pytest.raises(billing_service.AppError, match="Stripe checkout could not be created"):
+        await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    purchase = next(item for item in db.added if isinstance(item, ToolPurchase))
+    transaction = next(item for item in db.added if isinstance(item, Transaction))
+    assert purchase.status == PurchaseStatus.terminated
+    assert transaction.status == billing_service.TransactionStatus.failed
+    assert db.committed == 2
 
 
 @pytest.mark.asyncio
