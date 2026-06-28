@@ -15,7 +15,7 @@ from app.schemas.billing import (
     SetupPaymentResponse,
     ToolPurchaseResponse,
 )
-from app.services import billing_service
+from app.services import alert_service, billing_service
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -87,6 +87,12 @@ async def stripe_webhook(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     if not stripe_signature:
+        await alert_service.send_alert(
+            "stripe_webhook_missing_signature",
+            severity="warning",
+            summary="Stripe webhook arrived without a signature.",
+            details={"path": str(request.url.path)},
+        )
         raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
             error_code="missing_signature",
@@ -97,10 +103,25 @@ async def stripe_webhook(
     try:
         event = billing_service.verify_webhook(payload, stripe_signature)
     except Exception as exc:
+        await alert_service.send_alert(
+            "stripe_webhook_invalid_signature",
+            severity="warning",
+            summary="Stripe webhook signature verification failed.",
+            details={"signature_prefix": alert_service.redact(stripe_signature)},
+        )
         raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
             error_code="invalid_signature",
             message="Invalid Stripe webhook signature.",
         ) from exc
 
-    await billing_service.handle_webhook_event(db, event)
+    try:
+        await billing_service.handle_webhook_event(db, event)
+    except Exception as exc:
+        await alert_service.send_alert(
+            "stripe_webhook_handler_failed",
+            severity="critical",
+            summary="Stripe webhook handler failed after signature verification.",
+            details={"event_type": event.get("type"), "error": type(exc).__name__},
+        )
+        raise

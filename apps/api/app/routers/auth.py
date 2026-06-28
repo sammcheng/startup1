@@ -10,6 +10,7 @@ from app.dependencies import get_current_identity, get_db
 from app.exceptions import AppError
 from app.models import User
 from app.schemas.auth import AuthSyncRequest, AuthSyncResponse
+from app.services import alert_service
 from app.services.auth_service import AuthIdentity, sync_user_from_identity
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,12 @@ async def clerk_webhook(
     secret = settings.clerk_webhook_secret
     if not secret:
         logger.error("CLERK_WEBHOOK_SECRET is not configured")
+        await alert_service.send_alert(
+            "clerk_webhook_misconfigured",
+            severity="critical",
+            summary="Clerk webhook secret is missing.",
+            details={"path": str(request.url.path)},
+        )
         raise AppError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="misconfiguration",
@@ -93,6 +100,12 @@ async def clerk_webhook(
         event: dict = wh.verify(body, svix_headers)
     except WebhookVerificationError:
         logger.warning("Clerk webhook signature verification failed")
+        await alert_service.send_alert(
+            "clerk_webhook_invalid_signature",
+            severity="warning",
+            summary="Clerk webhook signature verification failed.",
+            details={"svix_id": alert_service.redact(svix_headers.get("svix-id"))},
+        )
         raise AppError(
             status_code=status.HTTP_400_BAD_REQUEST,
             error_code="invalid_signature",

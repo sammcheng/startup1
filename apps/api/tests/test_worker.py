@@ -70,6 +70,7 @@ async def test_final_worker_failure_does_not_break_api_health(client, monkeypatc
         max_attempts=1,
     )
     transitions: list[str] = []
+    alerts = []
 
     async def fake_get_job(db, parsed_job_id):
         return job
@@ -88,14 +89,41 @@ async def test_final_worker_failure_does_not_break_api_health(client, monkeypatc
         assert final_attempt is True
         return ProcessUploadResult(succeeded=False, error_message="Invalid Dockerfile.")
 
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
     monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr(worker.job_service, "get_job", fake_get_job)
     monkeypatch.setattr(worker.job_service, "mark_job_running", fake_mark_running)
     monkeypatch.setattr(worker.job_service, "mark_job_failed", fake_mark_failed)
     monkeypatch.setattr(worker.container_service, "process_tool_upload", fake_process_tool_upload)
+    monkeypatch.setattr(worker.alert_service, "send_alert", fake_send_alert)
 
     result = await worker.process_tool_upload_job({"job_try": 1}, str(job_id))
 
     assert result == {"status": "failed"}
     assert transitions == ["running", "failed:Invalid Dockerfile."]
+    assert alerts[0]["event"] == "tool_processing_failed"
     assert client.get("/health").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_billing_scheduler_alerts_on_failure(monkeypatch):
+    alerts = []
+
+    async def fake_run_scheduled_jobs_once():
+        raise RuntimeError("stripe outage")
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(worker.settings, "stripe_secret_key", "sk_test")
+    monkeypatch.setattr(worker.billing_service, "run_scheduled_jobs_once", fake_run_scheduled_jobs_once)
+    monkeypatch.setattr(worker.alert_service, "send_alert", fake_send_alert)
+
+    with pytest.raises(RuntimeError):
+        await worker.run_billing_scheduled_jobs({})
+
+    assert alerts[0]["event"] == "billing_scheduler_failed"

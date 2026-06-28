@@ -180,6 +180,7 @@ Recommended hosted env values:
 - Render `WORKER_QUEUE_NAME=hackmarket:jobs` on both API and worker
 - Render `RUN_BILLING_SCHEDULER_IN_API=false`; billing schedules run from the worker cron job
 - Render `RENDER_TOOL_PLAN=starter` so dynamically hosted seller tools do not launch on free instances
+- Render `ALERT_WEBHOOK_URL`: optional but strongly recommended for production alerts from readiness checks, worker failures, billing scheduler failures, and invalid provider webhooks
 
 Release verification after deploy:
 1. Confirm frontend responds on the public Vercel URL and custom domain.

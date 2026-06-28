@@ -13,7 +13,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.middleware.error_handler import setup_error_handlers
 from app.request_context import get_request_id, reset_request_id, set_request_id
-from app.services import billing_service
+from app.services import alert_service, billing_service
 
 
 class RequestIdFilter(logging.Filter):
@@ -233,10 +233,35 @@ async def ready():
             worker_health = await _redis_client.get(settings.worker_health_check_key)
             checks["queue"] = f"ok depth={depth}"
             checks["worker"] = "ok" if worker_health else "missing_heartbeat"
+            if depth >= settings.alert_queue_depth_threshold:
+                await alert_service.send_alert(
+                    "queue_depth_high",
+                    severity="warning",
+                    summary=f"Worker queue depth is {depth}.",
+                    details={
+                        "queue": settings.worker_queue_name,
+                        "depth": depth,
+                        "threshold": settings.alert_queue_depth_threshold,
+                    },
+                )
+            if not worker_health:
+                await alert_service.send_alert(
+                    "worker_heartbeat_missing",
+                    severity="critical",
+                    summary="Worker heartbeat is missing from Redis.",
+                    details={"health_check_key": settings.worker_health_check_key},
+                )
         except Exception as exc:
             checks["queue"] = f"error: {type(exc).__name__}"
 
     all_ok = checks.get("database") == "ok" and checks.get("redis") == "ok" and checks.get("queue", "ok").startswith("ok")
+    if not all_ok and settings.environment == "production":
+        await alert_service.send_alert(
+            "api_readiness_degraded",
+            severity="critical",
+            summary="API readiness check is degraded.",
+            details={"checks": checks},
+        )
     payload = {
         "status": "ready" if all_ok else "degraded",
         "environment": settings.environment,

@@ -8,7 +8,7 @@ from arq import Retry, cron
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client, engine
 from app.models import ToolProcessingJobStatus
-from app.services import billing_service, container_service, job_service, queue_service
+from app.services import alert_service, billing_service, container_service, job_service, queue_service
 from app.services.proxy_service import close_http_client
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,18 @@ async def process_tool_upload_job(ctx: dict, job_id: str) -> dict[str, str]:
             raise Retry(defer=min(300, 15 * attempt))
 
         await job_service.mark_job_failed(db, job, error=error)
+        await alert_service.send_alert(
+            "tool_processing_failed",
+            severity="critical",
+            summary="Tool processing failed after all retry attempts.",
+            details={
+                "job_id": str(parsed_job_id),
+                "tool_id": str(job.tool_id),
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "error": error,
+            },
+        )
         return {"status": "failed"}
 
 
@@ -58,7 +70,16 @@ async def run_billing_scheduled_jobs(ctx: dict) -> dict[str, str]:  # noqa: ARG0
         logger.info("Skipping billing scheduled jobs because STRIPE_SECRET_KEY is not configured.")
         return {"status": "skipped"}
 
-    await billing_service.run_scheduled_jobs_once()
+    try:
+        await billing_service.run_scheduled_jobs_once()
+    except Exception as exc:
+        await alert_service.send_alert(
+            "billing_scheduler_failed",
+            severity="critical",
+            summary="Billing scheduler job failed.",
+            details={"error": type(exc).__name__},
+        )
+        raise
     return {"status": "succeeded"}
 
 

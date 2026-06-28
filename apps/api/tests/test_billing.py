@@ -329,15 +329,23 @@ def test_stripe_webhook_requires_signature(client):
 
 
 def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
+    alerts = []
+
     def fake_verify_webhook(payload, signature):
         raise ValueError("bad signature")
 
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
+    monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
 
     response = client.post("/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "bad"})
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_signature"
+    assert alerts[0]["event"] == "stripe_webhook_invalid_signature"
 
 
 def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
@@ -362,6 +370,33 @@ def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
 
     assert response.status_code == 204
     assert handled == [{"type": "checkout.session.completed", "data": {"object": {"id": "cs_test"}}}]
+
+
+def test_stripe_webhook_alerts_when_handler_fails(client, monkeypatch):
+    alerts = []
+
+    def fake_verify_webhook(payload, signature):
+        return {"type": "invoice.payment_failed", "data": {"object": {"id": "in_test"}}}
+
+    async def fake_handle_webhook_event(db, event):
+        raise RuntimeError("database down")
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
+    monkeypatch.setattr(billing_service, "handle_webhook_event", fake_handle_webhook_event)
+    monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
+
+    with pytest.raises(RuntimeError, match="database down"):
+        client.post(
+            "/v1/billing/webhook",
+            content=b'{"type":"invoice.payment_failed"}',
+            headers={"Stripe-Signature": "sig_test"},
+        )
+
+    assert alerts[0]["event"] == "stripe_webhook_handler_failed"
 
 
 @pytest.mark.asyncio

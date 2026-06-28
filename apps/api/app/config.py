@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     tool_request_timeout_seconds: int = 30
     max_request_body_bytes: int = 50 * 1024 * 1024  # 50MB
 
+    # Observability / alerting
+    alert_webhook_url: str = ""
+    alert_webhook_timeout_seconds: int = 5
+    alert_queue_depth_threshold: int = 100
+
     # Rate limiting
     gateway_rate_limit_per_minute: int = 100
     demo_rate_limit_per_hour: int = 10
@@ -182,6 +187,12 @@ class Settings(BaseSettings):
 
         if self.debug:
             raise ValueError("DEBUG must be false in production.")
+
+        if self.alert_webhook_timeout_seconds <= 0:
+            raise ValueError("ALERT_WEBHOOK_TIMEOUT_SECONDS must be positive in production.")
+
+        if self.alert_queue_depth_threshold < 1:
+            raise ValueError("ALERT_QUEUE_DEPTH_THRESHOLD must be at least 1 in production.")
 
         if self.run_billing_scheduler_in_api:
             raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")

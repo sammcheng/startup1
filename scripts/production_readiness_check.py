@@ -44,6 +44,9 @@ API_REQUIRED_ENV = {
     "WORKER_HEALTH_CHECK_INTERVAL_SECONDS",
     "WORKER_HEALTH_CHECK_KEY",
     "RUN_BILLING_SCHEDULER_IN_API",
+    "ALERT_WEBHOOK_URL",
+    "ALERT_WEBHOOK_TIMEOUT_SECONDS",
+    "ALERT_QUEUE_DEPTH_THRESHOLD",
     "CONVERTER_SECRET",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
@@ -169,6 +172,16 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            env.get("ALERT_WEBHOOK_URL", {}).get("sync") is False,
+            f"{name} must define ALERT_WEBHOOK_URL as a secret env var",
+            failures,
+        )
+        expect(
+            env.get("ALERT_QUEUE_DEPTH_THRESHOLD", {}).get("value") == "100",
+            f"{name} must define the production queue-depth alert threshold",
+            failures,
+        )
+        expect(
             env.get("ALLOW_REPO_ANALYSIS_FALLBACK", {}).get("value") == "false",
             f"{name} must not allow heuristic repo analysis fallback",
             failures,
@@ -225,6 +238,8 @@ def check_repo_files(failures: list[str]) -> None:
         "WORKER_QUEUE_NAME",
         "WORKER_HEALTH_CHECK_KEY",
         "RUN_BILLING_SCHEDULER_IN_API",
+        "ALERT_WEBHOOK_URL",
+        "ALERT_QUEUE_DEPTH_THRESHOLD",
         "OPENROUTER_API_KEY",
         "S3_BUCKET_NAME",
         "RENDER_TOOL_PLAN",

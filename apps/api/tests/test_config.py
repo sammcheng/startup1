@@ -101,6 +101,34 @@ def test_production_settings_accept_required_values() -> None:
     assert settings.database_url.startswith("postgresql+asyncpg://")
 
 
+def test_production_rejects_invalid_alert_settings() -> None:
+    with pytest.raises(ValueError, match="ALERT_WEBHOOK_TIMEOUT_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_webhook_timeout_seconds=0,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="ALERT_QUEUE_DEPTH_THRESHOLD"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_queue_depth_threshold=0,
+            **PRODUCTION_REQUIRED,
+        )
+
+
 def test_production_rejects_debug_mode() -> None:
     with pytest.raises(ValueError, match="DEBUG must be false"):
         Settings(

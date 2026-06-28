@@ -54,6 +54,8 @@ def test_clerk_webhook_requires_configured_secret(client, monkeypatch):
 
 
 def test_clerk_webhook_rejects_invalid_signature(client, monkeypatch):
+    alerts = []
+
     class FakeWebhook:
         def __init__(self, secret):
             assert secret == "whsec_test"
@@ -61,8 +63,13 @@ def test_clerk_webhook_rejects_invalid_signature(client, monkeypatch):
         def verify(self, body, headers):
             raise auth.WebhookVerificationError()
 
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
     monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "whsec_test")
     monkeypatch.setattr(auth, "Webhook", FakeWebhook)
+    monkeypatch.setattr(auth.alert_service, "send_alert", fake_send_alert)
 
     response = client.post(
         "/v1/auth/webhook",
@@ -76,6 +83,7 @@ def test_clerk_webhook_rejects_invalid_signature(client, monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_signature"
+    assert alerts[0]["event"] == "clerk_webhook_invalid_signature"
 
 
 def test_clerk_webhook_dispatches_verified_user_created_event(client, monkeypatch):

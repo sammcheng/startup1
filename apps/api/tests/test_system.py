@@ -70,6 +70,48 @@ def test_ready_returns_degraded_when_dependency_fails(client, monkeypatch):
     assert payload["checks"]["redis"] == "ok"
 
 
+def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
+    alerts = []
+
+    class FakeReadySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return None
+
+    class FakeProductionRedis:
+        async def ping(self):
+            return True
+
+        async def zcard(self, key):
+            return 101
+
+        async def get(self, key):
+            return None
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(dependencies, "AsyncSessionLocal", lambda: FakeReadySession())
+    monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
+    monkeypatch.setattr("app.main.settings.environment", "production")
+    monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr("app.main.alert_service.send_alert", fake_send_alert)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert [alert["event"] for alert in alerts] == [
+        "queue_depth_high",
+        "worker_heartbeat_missing",
+    ]
+
+
 def test_cors_allows_configured_origin(client):
     response = client.options(
         "/v1/tools/discover",

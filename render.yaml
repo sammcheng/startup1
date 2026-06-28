@@ -52,6 +52,12 @@ services:
         value: hackmarket:jobs:health
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
+        value: "5"
+      - key: ALERT_QUEUE_DEPTH_THRESHOLD
+        value: "100"
       - key: CONVERTER_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
@@ -165,6 +171,12 @@ services:
         value: hackmarket:jobs:health
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
+        value: "5"
+      - key: ALERT_QUEUE_DEPTH_THRESHOLD
+        value: "100"
       - key: CONVERTER_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY

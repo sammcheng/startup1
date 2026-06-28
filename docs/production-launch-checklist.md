@@ -17,6 +17,7 @@ Rotate or create production values for:
 - `CONVERTER_SECRET`
 - `RENDER_API_KEY`
 - `GHCR_TOKEN`
+- `ALERT_WEBHOOK_URL`
 
 Store live values only in Vercel, Render, Stripe, Clerk, AWS, GitHub, or a proper secret manager. Do not commit live secrets into this repository.
 
@@ -48,6 +49,11 @@ Apply the Blueprint in `render.yaml`. It should create:
 - `home-accessibility-checker`: bundled seller tool service
 
 Do not launch production on free tiers. The repository readiness check enforces starter/basic plans in `render.yaml`, but you still need to confirm live Render services match the Blueprint.
+
+Required production alert env vars:
+- `ALERT_WEBHOOK_URL`
+- `ALERT_WEBHOOK_TIMEOUT_SECONDS=5`
+- `ALERT_QUEUE_DEPTH_THRESHOLD=100`
 
 Attach the API domain:
 - `api.hackmarket.io`
@@ -106,6 +112,7 @@ Watch these signals during the first launch window:
 - Worker health key reported by `/ready`
 - Redis queue depth
 - Failed `tool_processing_jobs`
+- Alert webhook deliveries for worker failures, readiness degradation, and invalid provider webhooks
 - Stripe webhook failures
 - Clerk webhook failures
 - Seller tool deployment failures
