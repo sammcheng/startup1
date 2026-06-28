@@ -168,6 +168,38 @@ def test_public_tool_detail_redacts_operational_fields(client, live_tool, monkey
     assert payload["docker_image_uri"] is None
 
 
+def test_public_tool_docs_require_live_tool(client, draft_tool, monkeypatch):
+    async def fake_get_tool_by_slug(db, slug):
+        assert slug == draft_tool.slug
+        return draft_tool
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+
+    response = client.get(f"/v1/tools/{draft_tool.slug}/docs")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_live"
+
+
+def test_public_tool_docs_use_configured_public_api_url(client, live_tool, monkeypatch):
+    async def fake_get_tool_by_slug(db, slug):
+        assert slug == live_tool.slug
+        return live_tool
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io")
+
+    response = client.get(
+        f"/v1/tools/{live_tool.slug}/docs",
+        headers={"host": "internal-render-service.onrender.com"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["endpoint_url"] == f"https://api.hackmarket.io/api/v1/tools/{live_tool.slug}"
+    assert "internal-render-service" not in payload["code_examples"][0]["code"]
+
+
 def test_get_my_tool_returns_not_found_for_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 

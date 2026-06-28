@@ -679,6 +679,13 @@ def check_repo_files(failures: list[str]) -> None:
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("flush_total_requests_if_needed" in tools_router, "public demos must flush request counters for durable production metrics", failures)
+    expect(
+        "raise ToolNotLiveError(slug)" in tools_router
+        and "docs_service.generate_tool_docs(tool)" in tools_router
+        and "public_api_base_url=str(request.base_url)" not in tools_router,
+        "public tool docs must only expose live tools and use configured public API URLs",
+        failures,
+    )
     expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
 
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
