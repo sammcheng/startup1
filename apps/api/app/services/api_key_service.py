@@ -1,17 +1,18 @@
 import uuid
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.exceptions import AppError, Forbidden
-from app.models import APIKey
+from app.models import APIKey, User
 from app.utils import hashing
 
 
 async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str) -> tuple[APIKey, str]:
     if hasattr(db, "execute"):
+        await _lock_user_for_api_key_create(db, user_id)
         active_count = await count_active_api_keys(db, user_id)
         if active_count >= settings.max_active_api_keys_per_user:
             raise AppError(
@@ -31,11 +32,15 @@ async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str) -> tup
     db.add(api_key)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise Forbidden("An API key with this configuration could not be created right now.")
+        raise Forbidden("An API key with this configuration could not be created right now.") from exc
     await db.refresh(api_key)
     return api_key, raw_key
+
+
+async def _lock_user_for_api_key_create(db: AsyncSession, user_id: uuid.UUID) -> None:
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
 
 
 async def count_active_api_keys(db: AsyncSession, user_id: uuid.UUID) -> int:

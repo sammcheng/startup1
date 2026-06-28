@@ -1,8 +1,6 @@
 import pytest
 
 from app.exceptions import AppError
-from app.dependencies import validate_api_key
-from app.main import app
 from app.services import api_key_service
 from app.utils.hashing import hash_api_key
 
@@ -72,17 +70,63 @@ async def test_key_hashing(fake_db, buyer, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_key_rejects_when_active_key_limit_reached(buyer, monkeypatch):
-    class FakeScalarResult:
+    class FakeLockResult:
+        pass
+
+    class FakeCountResult:
         def scalar_one(self):
             return 1
 
     class FakeLimitDb:
+        def __init__(self):
+            self.execute_calls = 0
+
         async def execute(self, statement):
-            return FakeScalarResult()
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return FakeLockResult()
+            return FakeCountResult()
 
     monkeypatch.setattr(api_key_service.settings, "max_active_api_keys_per_user", 1)
+    db = FakeLimitDb()
 
     with pytest.raises(AppError) as exc:
-        await api_key_service.create_api_key(FakeLimitDb(), buyer.id, "extra")
+        await api_key_service.create_api_key(db, buyer.id, "extra")
 
     assert exc.value.error_code == "api_key_limit_reached"
+    assert db.execute_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_create_key_locks_user_before_counting_active_keys(buyer, monkeypatch):
+    calls = []
+
+    class FakeCreateDb:
+        def __init__(self):
+            self.added = []
+
+        async def execute(self, statement):
+            raise AssertionError("lock/count helpers are patched for this test")
+
+        def add(self, obj):
+            self.added.append(obj)
+
+        async def commit(self):
+            return None
+
+        async def refresh(self, obj):
+            return None
+
+    async def fake_lock_user(db, user_id):
+        calls.append(("lock", user_id))
+
+    async def fake_count_active_api_keys(db, user_id):
+        calls.append(("count", user_id))
+        return 0
+
+    monkeypatch.setattr(api_key_service, "_lock_user_for_api_key_create", fake_lock_user)
+    monkeypatch.setattr(api_key_service, "count_active_api_keys", fake_count_active_api_keys)
+
+    await api_key_service.create_api_key(FakeCreateDb(), buyer.id, "production")
+
+    assert calls == [("lock", buyer.id), ("count", buyer.id)]
