@@ -11,14 +11,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
-
 
 DEFAULT_FRONTEND_PATHS = [
     "/",
@@ -232,6 +230,20 @@ def check_frontend_security_headers(app_root: str, timeout: int) -> CheckResult:
         return CheckResult("frontend security headers", False, f"unexpected {status}")
     if missing:
         return CheckResult("frontend security headers", False, f"missing {', '.join(missing)}")
+    csp = normalized.get("content-security-policy", "")
+    unsafe_fragments = [
+        fragment
+        for fragment in ("localhost", "127.0.0.1", "unsafe-eval")
+        if fragment in csp
+    ]
+    if unsafe_fragments:
+        return CheckResult(
+            "frontend security headers",
+            False,
+            f"production CSP includes unsafe directives: {', '.join(unsafe_fragments)}",
+        )
+    if app_root.startswith("https://") and "strict-transport-security" not in normalized:
+        return CheckResult("frontend security headers", False, "missing strict-transport-security")
     return CheckResult("frontend security headers", True, "required headers present")
 
 

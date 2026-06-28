@@ -482,6 +482,12 @@ def check_repo_files(failures: list[str]) -> None:
     expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)
     expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
     expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
+    expect(
+        "production CSP includes unsafe directives" in smoke_check
+        and "strict-transport-security" in smoke_check,
+        "smoke checks must reject unsafe production frontend security headers",
+        failures,
+    )
     expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
     expect("check_admin_operations_health" in smoke_check, "smoke checks must verify admin operations health when an admin token is provided", failures)
     load_smoke_check = PRODUCTION_LOAD_SMOKE_CHECK.read_text(encoding="utf-8")

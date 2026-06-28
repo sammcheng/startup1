@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 from urllib.error import HTTPError
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "production_smoke_check.py"
 SPEC = importlib.util.spec_from_file_location("production_smoke_check", SCRIPT_PATH)
 assert SPEC and SPEC.loader
@@ -61,6 +60,44 @@ def test_api_cors_requires_exact_production_origin(monkeypatch):
 
     assert result.ok is True
     assert result.detail == "allows https://hackmarket.io"
+
+
+def test_frontend_security_headers_reject_unsafe_production_csp(monkeypatch):
+    def fake_request(*args, **kwargs):
+        return 200, "", {
+            "Content-Security-Policy": "default-src 'self'; connect-src 'self' http://localhost:8080; script-src 'self' 'unsafe-eval'",
+            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=()",
+        }
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_frontend_security_headers("https://hackmarket.io/", 5)
+
+    assert result.ok is False
+    assert "localhost" in result.detail
+    assert "unsafe-eval" in result.detail
+
+
+def test_frontend_security_headers_require_hsts_for_https(monkeypatch):
+    def fake_request(*args, **kwargs):
+        return 200, "", {
+            "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://api.hackmarket.io",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=()",
+        }
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_frontend_security_headers("https://hackmarket.io/", 5)
+
+    assert result.ok is False
+    assert result.detail == "missing strict-transport-security"
 
 
 def test_admin_operations_health_smoke_requires_expected_sections(monkeypatch):
