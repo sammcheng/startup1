@@ -7,7 +7,7 @@ from svix.webhooks import Webhook, WebhookVerificationError
 
 from app.config import settings
 from app.dependencies import get_current_identity, get_db
-from app.exceptions import AppError
+from app.exceptions import AppError, Unauthorized
 from app.models import User
 from app.schemas.auth import AuthSyncRequest, AuthSyncResponse
 from app.services import alert_service
@@ -47,7 +47,10 @@ async def sync_authenticated_user(
     identity: AuthIdentity = Depends(get_current_identity),
     db: AsyncSession = Depends(get_db),
 ) -> AuthSyncResponse:
-    user = await sync_user_from_identity(db, identity, body)
+    try:
+        user = await sync_user_from_identity(db, identity, body)
+    except ValueError as exc:
+        raise Unauthorized("Verified account email is required. Check your Clerk JWT claims or webhook sync.") from exc
     return AuthSyncResponse(
         id=str(user.id),
         clerk_id=user.clerk_id,

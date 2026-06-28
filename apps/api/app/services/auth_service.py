@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import User
 from app.models.user import UserRole
 from app.schemas.auth import AuthSyncRequest
@@ -22,9 +23,12 @@ async def sync_user_from_identity(
     identity: AuthIdentity,
     profile: AuthSyncRequest | None = None,
 ) -> User:
-    # Email ownership comes from the verified Clerk token/webhook payload. The
-    # client sync body is only a fallback for Clerk JWT templates that omit it.
-    email = identity.email or (profile.email if profile else "") or ""
+    # Email ownership must come from a verified Clerk token/webhook payload in
+    # production. The client sync body is only a local/test fallback for Clerk
+    # JWT templates that omit email claims while developers are wiring auth.
+    email = identity.email or ""
+    if not email and settings.environment != "production":
+        email = (profile.email if profile else "") or ""
     if not email:
         raise ValueError("An email address is required to synchronize the user.")
 

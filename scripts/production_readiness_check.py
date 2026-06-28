@@ -433,6 +433,19 @@ def check_repo_files(failures: list[str]) -> None:
     expect("validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety, "URL safety DNS checks must not block the async request path", failures)
     expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
 
+    auth_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "auth_service.py").read_text(encoding="utf-8")
+    auth_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "auth.py").read_text(encoding="utf-8")
+    expect(
+        'settings.environment != "production"' in auth_service and "profile.email" in auth_service,
+        "client-provided auth sync email must only be a non-production fallback",
+        failures,
+    )
+    expect(
+        "Verified account email is required" in auth_router,
+        "auth sync must fail cleanly when verified Clerk identity has no email",
+        failures,
+    )
+
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("flush_total_requests_if_needed" in tools_router, "public demos must flush request counters for durable production metrics", failures)
     expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)

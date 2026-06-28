@@ -200,6 +200,54 @@ async def test_sync_user_trusts_verified_identity_email_over_client_body():
 
 
 @pytest.mark.asyncio
+async def test_sync_user_rejects_client_email_fallback_in_production(monkeypatch):
+    db = _FakeAuthSession()
+    monkeypatch.setattr(auth_service.settings, "environment", "production")
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_no_email",
+        email=None,
+        username="no-email",
+        display_name="No Email",
+    )
+    profile = AuthSyncRequest(
+        email="client-claimed@example.com",
+        username="client-user",
+        display_name="Client User",
+    )
+
+    with pytest.raises(ValueError, match="email address is required"):
+        await auth_service.sync_user_from_identity(db, identity, profile)
+
+    assert db.added == []
+    assert db.commits == 0
+
+
+def test_auth_sync_returns_401_when_verified_identity_has_no_email(client, monkeypatch):
+    async def fake_identity():
+        return auth_service.AuthIdentity(
+            clerk_id="clerk_no_email",
+            email=None,
+            username="no-email",
+            display_name="No Email",
+        )
+
+    monkeypatch.setattr(auth_service.settings, "environment", "production")
+    app.dependency_overrides[get_current_identity] = fake_identity
+
+    response = client.post(
+        "/v1/auth/sync",
+        json={
+            "email": "client-claimed@example.com",
+            "username": "client-user",
+            "display_name": "Client User",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
 async def test_get_current_user_lazily_syncs_verified_identity(monkeypatch):
     db = _FakeAuthSession()
     identity = auth_service.AuthIdentity(
