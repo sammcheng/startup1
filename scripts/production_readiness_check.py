@@ -370,6 +370,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect("operations_health_service.get_operations_health" in api_main, "API readiness must use the shared operations health service", failures)
 
     admin_router = API_ADMIN_ROUTER.read_text(encoding="utf-8")
+    tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
     expect("operations_health_service.get_operations_health" in admin_router, "admin health endpoint must use the shared operations health service", failures)
     expect(ADMIN_AUDIT_SERVICE.exists(), "admin audit service is missing", failures)
     admin_audit_service = ADMIN_AUDIT_SERVICE.read_text(encoding="utf-8")
@@ -420,6 +421,10 @@ def check_repo_files(failures: list[str]) -> None:
     expect("getaddrinfo" in url_safety, "URL safety must resolve hostnames before outbound tool calls", failures)
     expect("validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety, "URL safety DNS checks must not block the async request path", failures)
     expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
+
+    tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
+    expect("flush_total_requests_if_needed" in tools_router, "public demos must flush request counters for durable production metrics", failures)
+    expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
 
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)

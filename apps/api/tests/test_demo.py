@@ -5,6 +5,9 @@ from app.services import proxy_service, tool_service
 
 
 def test_public_demo_forwards_live_tool_request(client, live_tool, monkeypatch):
+    recorded_tool_ids = []
+    flushed_tool_ids = []
+
     async def fake_get_tool_by_slug(db, slug):
         assert slug == live_tool.slug
         return live_tool
@@ -16,15 +19,25 @@ def test_public_demo_forwards_live_tool_request(client, live_tool, monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
+    async def fake_increment_total_requests(redis, tool_id):
+        recorded_tool_ids.append(tool_id)
+        return 1
+
+    async def fake_flush_total_requests_if_needed(redis, tool_id):
+        flushed_tool_ids.append(tool_id)
+
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
     monkeypatch.setattr(proxy_service, "forward_request", fake_forward_request)
-    monkeypatch.setattr(tool_service, "increment_total_requests", noop)
+    monkeypatch.setattr(tool_service, "increment_total_requests", fake_increment_total_requests)
+    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", fake_flush_total_requests_if_needed)
 
     response = client.post(f"/v1/tools/{live_tool.slug}/demo", json={"text": "hello"})
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     assert response.headers["X-Demo-RateLimit-Limit"] == "10"
+    assert recorded_tool_ids == [live_tool.id]
+    assert flushed_tool_ids == [live_tool.id]
 
 
 def test_public_demo_rate_limit_enforced(client, live_tool, fake_redis, monkeypatch):
@@ -55,6 +68,7 @@ def test_public_demo_timeout_returns_504(client, live_tool, monkeypatch):
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
     monkeypatch.setattr(proxy_service, "forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
+    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
 
     response = client.post(f"/v1/tools/{live_tool.slug}/demo", json={"text": "hello"})
 
@@ -86,6 +100,7 @@ def test_public_demo_normalizes_platform_502_html(client, live_tool, monkeypatch
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
     monkeypatch.setattr(proxy_service, "forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
+    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
 
     response = client.post(f"/v1/tools/{live_tool.slug}/demo", json={"text": "hello"})
 

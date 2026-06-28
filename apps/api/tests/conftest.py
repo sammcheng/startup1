@@ -67,6 +67,11 @@ class FakeRedis:
         value = self.values.get(key)
         return str(value) if value is not None else None
 
+    async def getdel(self, key: str) -> str | None:
+        value = await self.get(key)
+        self.values.pop(key, None)
+        return value
+
     async def set(self, key: str, value: str, ex: int | None = None) -> bool:
         self.values[key] = value
         return True

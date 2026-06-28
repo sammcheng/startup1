@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -376,6 +376,7 @@ async def list_tools(
 async def run_tool_demo(
     slug: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> Response:
@@ -426,6 +427,7 @@ async def run_tool_demo(
 
     response_time_ms = max(int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000), 1)
     await tool_service.increment_total_requests(redis, tool.id)
+    background_tasks.add_task(tool_service.flush_total_requests_if_needed, redis, tool.id)
 
     upstream_headers.update(
         {
