@@ -106,6 +106,12 @@ services:
         value: "900"
       - key: PUBLIC_RATE_LIMIT_PER_MINUTE
         value: "60"
+      - key: GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD
+        value: "3"
+      - key: GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS
+        value: "3600"
+      - key: MAX_ACTIVE_API_KEYS_PER_USER
+        value: "10"
       - key: RENDER_REGISTRY_CREDENTIAL_ID
         sync: false
       - key: RENDER_REGISTRY_CREDENTIAL_NAME
@@ -223,6 +229,12 @@ services:
         value: /health
       - key: RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS
         value: "900"
+      - key: GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD
+        value: "3"
+      - key: GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS
+        value: "3600"
+      - key: MAX_ACTIVE_API_KEYS_PER_USER
+        value: "10"
       - key: RENDER_REGISTRY_CREDENTIAL_ID
         sync: false
       - key: RENDER_REGISTRY_CREDENTIAL_NAME

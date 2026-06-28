@@ -1,5 +1,6 @@
 import pytest
 
+from app.exceptions import AppError
 from app.dependencies import validate_api_key
 from app.main import app
 from app.services import api_key_service
@@ -67,3 +68,21 @@ async def test_key_hashing(fake_db, buyer, monkeypatch):
 
     assert raw_key == "hm_live_static_secret"
     assert api_key.key_hash == hash_api_key(raw_key)
+
+
+@pytest.mark.asyncio
+async def test_create_key_rejects_when_active_key_limit_reached(buyer, monkeypatch):
+    class FakeScalarResult:
+        def scalar_one(self):
+            return 1
+
+    class FakeLimitDb:
+        async def execute(self, statement):
+            return FakeScalarResult()
+
+    monkeypatch.setattr(api_key_service.settings, "max_active_api_keys_per_user", 1)
+
+    with pytest.raises(AppError) as exc:
+        await api_key_service.create_api_key(FakeLimitDb(), buyer.id, "extra")
+
+    assert exc.value.error_code == "api_key_limit_reached"

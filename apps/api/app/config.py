@@ -73,6 +73,9 @@ class Settings(BaseSettings):
 
     # Rate limiting
     gateway_rate_limit_per_minute: int = 100
+    gateway_rate_limit_violation_alert_threshold: int = 3
+    gateway_rate_limit_violation_window_seconds: int = 3600
+    max_active_api_keys_per_user: int = 10
     demo_rate_limit_per_hour: int = 10
     public_rate_limit_per_minute: int = 60
 
@@ -193,6 +196,15 @@ class Settings(BaseSettings):
 
         if self.alert_queue_depth_threshold < 1:
             raise ValueError("ALERT_QUEUE_DEPTH_THRESHOLD must be at least 1 in production.")
+
+        if self.gateway_rate_limit_violation_alert_threshold < 1:
+            raise ValueError("GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD must be at least 1 in production.")
+
+        if self.gateway_rate_limit_violation_window_seconds < 60:
+            raise ValueError("GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS must be at least 60 in production.")
+
+        if self.max_active_api_keys_per_user < 1:
+            raise ValueError("MAX_ACTIVE_API_KEYS_PER_USER must be at least 1 in production.")
 
         if self.run_billing_scheduler_in_api:
             raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")

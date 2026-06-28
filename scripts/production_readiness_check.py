@@ -70,6 +70,9 @@ API_REQUIRED_ENV = {
     "RENDER_TOOL_AUTO_DEPLOY",
     "RENDER_TOOL_HEALTHCHECK_PATH",
     "RENDER_TOOL_DEPLOY_TIMEOUT_SECONDS",
+    "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",
+    "GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS",
+    "MAX_ACTIVE_API_KEYS_PER_USER",
     "RENDER_REGISTRY_CREDENTIAL_ID",
     "RENDER_REGISTRY_CREDENTIAL_NAME",
     "IMAGE_REGISTRY_NAMESPACE",
@@ -182,6 +185,16 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            env.get("GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD", {}).get("value") == "3",
+            f"{name} must define gateway rate-limit abuse alert threshold",
+            failures,
+        )
+        expect(
+            env.get("MAX_ACTIVE_API_KEYS_PER_USER", {}).get("value") == "10",
+            f"{name} must cap active API keys per user",
+            failures,
+        )
+        expect(
             env.get("ALLOW_REPO_ANALYSIS_FALLBACK", {}).get("value") == "false",
             f"{name} must not allow heuristic repo analysis fallback",
             failures,
@@ -240,6 +253,8 @@ def check_repo_files(failures: list[str]) -> None:
         "RUN_BILLING_SCHEDULER_IN_API",
         "ALERT_WEBHOOK_URL",
         "ALERT_QUEUE_DEPTH_THRESHOLD",
+        "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",
+        "MAX_ACTIVE_API_KEYS_PER_USER",
         "OPENROUTER_API_KEY",
         "S3_BUCKET_NAME",
         "RENDER_TOOL_PLAN",

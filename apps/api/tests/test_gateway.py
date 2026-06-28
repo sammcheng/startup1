@@ -79,6 +79,38 @@ def test_rate_limit_enforced(client, auth_overrides, buyer, api_key, live_tool, 
     assert response.headers["Retry-After"] == "60"
 
 
+def test_rate_limit_abuse_alerts_after_repeated_violations(
+    client,
+    auth_overrides,
+    buyer,
+    api_key,
+    live_tool,
+    fake_redis,
+    monkeypatch,
+):
+    auth_overrides(api_key_context=(buyer, api_key))
+    fake_redis.values[f"ratelimit:{api_key.id}"] = 100
+    fake_redis.values[f"gateway-abuse:{api_key.id}"] = 2
+    alerts = []
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(gateway.alert_service, "send_alert", fake_send_alert)
+    monkeypatch.setattr(gateway.settings, "gateway_rate_limit_violation_alert_threshold", 3)
+
+    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+
+    assert response.status_code == 429
+    assert alerts[0]["event"] == "gateway_rate_limit_abuse"
+    assert alerts[0]["details"]["api_key_prefix"] == api_key.key_prefix
+
+
 def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
     auth_overrides(api_key_context=(buyer, api_key))
     captured = []

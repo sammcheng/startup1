@@ -54,6 +54,9 @@ Required production alert env vars:
 - `ALERT_WEBHOOK_URL`
 - `ALERT_WEBHOOK_TIMEOUT_SECONDS=5`
 - `ALERT_QUEUE_DEPTH_THRESHOLD=100`
+- `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3`
+- `GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS=3600`
+- `MAX_ACTIVE_API_KEYS_PER_USER=10`
 
 Attach the API domain:
 - `api.hackmarket.io`
@@ -113,6 +116,7 @@ Watch these signals during the first launch window:
 - Redis queue depth
 - Failed `tool_processing_jobs`
 - Alert webhook deliveries for worker failures, readiness degradation, and invalid provider webhooks
+- Gateway rate-limit abuse alerts and active API-key caps
 - Stripe webhook failures
 - Clerk webhook failures
 - Seller tool deployment failures

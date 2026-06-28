@@ -1,15 +1,26 @@
 import uuid
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import Forbidden
+from app.config import settings
+from app.exceptions import AppError, Forbidden
 from app.models import APIKey
 from app.utils import hashing
 
 
 async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str) -> tuple[APIKey, str]:
+    if hasattr(db, "execute"):
+        active_count = await count_active_api_keys(db, user_id)
+        if active_count >= settings.max_active_api_keys_per_user:
+            raise AppError(
+                message=f"You can have at most {settings.max_active_api_keys_per_user} active API keys.",
+                status_code=409,
+                error_code="api_key_limit_reached",
+                details={"max_active_keys": settings.max_active_api_keys_per_user},
+            )
+
     raw_key = hashing.generate_api_key()
     api_key = APIKey(
         user_id=user_id,
@@ -25,6 +36,16 @@ async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str) -> tup
         raise Forbidden("An API key with this configuration could not be created right now.")
     await db.refresh(api_key)
     return api_key, raw_key
+
+
+async def count_active_api_keys(db: AsyncSession, user_id: uuid.UUID) -> int:
+    result = await db.execute(
+        select(func.count(APIKey.id)).where(
+            APIKey.user_id == user_id,
+            APIKey.is_active.is_(True),
+        )
+    )
+    return int(result.scalar_one() or 0)
 
 
 async def list_api_keys(db: AsyncSession, user_id: uuid.UUID) -> list[APIKey]:

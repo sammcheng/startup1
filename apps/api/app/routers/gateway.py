@@ -14,7 +14,7 @@ from app.exceptions import RateLimitExceededError, ToolNotFoundError, ToolNotLiv
 from app.models import APIKey, Tool, User
 from app.models.tool import ToolStatus
 from app.schemas.usage import UsageLogCreate
-from app.services import proxy_service, tool_service, usage_service
+from app.services import alert_service, proxy_service, tool_service, usage_service
 
 RATE_LIMIT_WINDOW_SECONDS = 60
 
@@ -70,7 +70,7 @@ async def _proxy_tool_request_impl(
     if tool.status != ToolStatus.live or not tool.api_endpoint:
         raise ToolNotLiveError(tool_slug)
 
-    limit, remaining = await _check_rate_limit(redis, api_key.id)
+    limit, remaining = await _check_rate_limit(redis, api_key)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     started_at = datetime.now(timezone.utc)
     request_body = await request.body()
@@ -141,15 +141,37 @@ async def _proxy_tool_request_impl(
     )
 
 
-async def _check_rate_limit(redis: Redis, api_key_id: uuid.UUID) -> tuple[int, int]:
+async def _check_rate_limit(redis: Redis, api_key: APIKey) -> tuple[int, int]:
     limit = settings.gateway_rate_limit_per_minute
-    key = f"ratelimit:{api_key_id}"
+    key = f"ratelimit:{api_key.id}"
     current = await redis.incr(key)
     if current == 1:
         await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS)
     if current > limit:
+        await _record_rate_limit_violation(redis, api_key, current)
         raise RateLimitExceededError(limit, 0, RATE_LIMIT_WINDOW_SECONDS)
     return limit, limit - current
+
+
+async def _record_rate_limit_violation(redis: Redis, api_key: APIKey, current_window_count: int) -> None:
+    violation_key = f"gateway-abuse:{api_key.id}"
+    violations = await redis.incr(violation_key)
+    if violations == 1:
+        await redis.expire(violation_key, settings.gateway_rate_limit_violation_window_seconds)
+    if violations == settings.gateway_rate_limit_violation_alert_threshold:
+        await alert_service.send_alert(
+            "gateway_rate_limit_abuse",
+            severity="warning",
+            summary="API key repeatedly exceeded gateway rate limits.",
+            details={
+                "api_key_id": str(api_key.id),
+                "api_key_prefix": api_key.key_prefix,
+                "current_window_count": current_window_count,
+                "limit_per_minute": settings.gateway_rate_limit_per_minute,
+                "violation_count": violations,
+                "violation_window_seconds": settings.gateway_rate_limit_violation_window_seconds,
+            },
+        )
 
 
 async def _forward_request(tool: Tool, request: Request, request_body: bytes, request_id: str, tool_path: str = "") -> httpx.Response:
