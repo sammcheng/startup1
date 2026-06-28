@@ -345,6 +345,13 @@ def check_repo_files(failures: list[str]) -> None:
         "pending tool purchases must store checkout session IDs so checkout URLs can be recovered",
         failures,
     )
+    expect(
+        "checkout.session.async_payment_succeeded" in billing_service
+        and "checkout.session.async_payment_failed" in billing_service
+        and "_checkout_session_is_paid" in billing_service,
+        "checkout session webhooks must not activate purchases before payment is confirmed",
+        failures,
+    )
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
     expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)

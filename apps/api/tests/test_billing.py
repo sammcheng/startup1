@@ -1,7 +1,7 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-import uuid
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -709,6 +709,7 @@ async def test_checkout_webhook_activates_pending_purchase_and_transaction():
                 "object": {
                     "id": "cs_test_purchase",
                     "payment_intent": "pi_test_purchase",
+                    "payment_status": "paid",
                     "metadata": {
                         "purchase_id": str(purchase.id),
                         "transaction_id": str(transaction.id),
@@ -721,6 +722,124 @@ async def test_checkout_webhook_activates_pending_purchase_and_transaction():
     assert purchase.status == PurchaseStatus.active
     assert transaction.status == billing_service.TransactionStatus.completed
     assert transaction.stripe_payment_intent_id == "pi_test_purchase"
+    assert db.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_checkout_webhook_defers_unpaid_session_until_async_success():
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=uuid.uuid4(),
+        buyer_id=uuid.uuid4(),
+        seller_id=uuid.uuid4(),
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(timezone.utc),
+    )
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=purchase.buyer_id,
+        seller_id=purchase.seller_id,
+        tool_id=purchase.tool_id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="cs_test_async",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(timezone.utc),
+        period_end=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
+
+    event_payload = {
+        "data": {
+            "object": {
+                "id": "cs_test_async",
+                "payment_intent": "pi_test_async",
+                "metadata": {
+                    "purchase_id": str(purchase.id),
+                    "transaction_id": str(transaction.id),
+                },
+            }
+        },
+    }
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "checkout.session.completed",
+            "data": {"object": {**event_payload["data"]["object"], "payment_status": "unpaid"}},
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.pending
+    assert transaction.status == billing_service.TransactionStatus.pending
+    assert transaction.stripe_payment_intent_id == "cs_test_async"
+    assert db.committed == 0
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "checkout.session.async_payment_succeeded",
+            **event_payload,
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.active
+    assert transaction.status == billing_service.TransactionStatus.completed
+    assert transaction.stripe_payment_intent_id == "pi_test_async"
+    assert db.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_checkout_async_payment_failed_terminates_pending_purchase():
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=uuid.uuid4(),
+        buyer_id=uuid.uuid4(),
+        seller_id=uuid.uuid4(),
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(timezone.utc),
+    )
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=purchase.buyer_id,
+        seller_id=purchase.seller_id,
+        tool_id=purchase.tool_id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="cs_test_async",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(timezone.utc),
+        period_end=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "checkout.session.async_payment_failed",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "purchase_id": str(purchase.id),
+                        "transaction_id": str(transaction.id),
+                    },
+                }
+            },
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.terminated
+    assert transaction.status == billing_service.TransactionStatus.failed
     assert db.committed == 1
 
 

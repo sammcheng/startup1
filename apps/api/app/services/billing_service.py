@@ -2,17 +2,25 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 import stripe
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client
 from app.exceptions import AppError, Forbidden, ToolNotFoundError, ToolNotLiveError
-from app.models import Tool, ToolPurchase, Transaction, TransactionStatus, TransactionType, UsageLog, User
+from app.models import (
+    Tool,
+    ToolPurchase,
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+    UsageLog,
+    User,
+)
 from app.models.tool import OwnershipType, ToolStatus
 from app.models.tool_purchase import PurchaseStatus
 from app.schemas.billing import (
@@ -776,6 +784,10 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
 
     if event_type == "checkout.session.completed":
         await _complete_checkout_session(db, data)
+    elif event_type == "checkout.session.async_payment_succeeded":
+        await _complete_checkout_session(db, data, require_paid=False)
+    elif event_type == "checkout.session.async_payment_failed":
+        await _expire_checkout_session(db, data)
     elif event_type == "checkout.session.expired":
         await _expire_checkout_session(db, data)
     elif event_type == "payment_intent.succeeded":
@@ -800,7 +812,19 @@ async def _update_transaction_status(db: AsyncSession, payment_intent_id: str | 
     await db.commit()
 
 
-async def _complete_checkout_session(db: AsyncSession, session: dict) -> None:
+async def _complete_checkout_session(
+    db: AsyncSession,
+    session: dict,
+    *,
+    require_paid: bool = True,
+) -> None:
+    if require_paid and not _checkout_session_is_paid(session):
+        logger.info(
+            "Deferring checkout completion until payment is confirmed for session %s.",
+            session.get("id"),
+        )
+        return
+
     metadata = session.get("metadata") or {}
     purchase_id = _parse_uuid(metadata.get("purchase_id"))
     transaction_id = _parse_uuid(metadata.get("transaction_id"))
@@ -818,6 +842,11 @@ async def _complete_checkout_session(db: AsyncSession, session: dict) -> None:
             transaction.stripe_payment_intent_id = payment_id
 
     await db.commit()
+
+
+def _checkout_session_is_paid(session: dict) -> bool:
+    payment_status = session.get("payment_status")
+    return payment_status in {"paid", "no_payment_required"}
 
 
 async def _expire_checkout_session(db: AsyncSession, session: dict) -> None:
