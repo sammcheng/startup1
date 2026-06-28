@@ -166,6 +166,8 @@ export default async function ToolPage({
   const catColor = CAT_COLORS[tool.category] ?? "#6b7280";
   const listingUrlAndImageTool = supportsListingUrlAndImages(tool.input_schema as Record<string, unknown> | null);
   const isConverterTool = Boolean(tool.api_endpoint?.includes("/api/tools/"));
+  const directDemoEndpoint =
+    ALLOW_CONVERTER_CATALOG_FALLBACK && isConverterTool ? tool.api_endpoint ?? undefined : undefined;
   const inputSchemaMeta = tool.input_schema as Record<string, unknown> | null;
   const isQaCertified = Boolean(inputSchemaMeta?.qa_certified);
   const qaAvgMs = inputSchemaMeta?.qa_avg_ms as number | undefined;
@@ -452,7 +454,7 @@ export default async function ToolPage({
                 inputType={tool.input_type}
                 inputSchema={tool.input_schema}
                 outputType={tool.output_type}
-                demoEndpoint={tool.api_endpoint ?? undefined}
+                demoEndpoint={directDemoEndpoint}
                 autoRun={isConverterTool}
               />
             }

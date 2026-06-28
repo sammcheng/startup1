@@ -414,6 +414,17 @@ def check_repo_files(failures: list[str]) -> None:
             f"{path.relative_to(REPO_ROOT)} must guard converter catalog fallback",
             failures,
         )
+    tool_page = WEB_TOOL_PAGE.read_text(encoding="utf-8")
+    expect(
+        "demoEndpoint={tool.api_endpoint" not in tool_page,
+        "tool pages must not expose raw seller endpoints to browser demos",
+        failures,
+    )
+    expect(
+        "ALLOW_CONVERTER_CATALOG_FALLBACK && isConverterTool" in tool_page,
+        "direct demo endpoints must stay limited to the development-only converter fallback",
+        failures,
+    )
 
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
     expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)
