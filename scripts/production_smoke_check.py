@@ -33,7 +33,13 @@ DEFAULT_FRONTEND_PATHS = [
     "/sign-up",
 ]
 AUTH_BOUNDARY_PATHS = ["/dashboard", "/admin", "/approver"]
-API_AUTH_BOUNDARY_PATHS = ["v1/dashboard", "v1/api-keys", "v1/seller/dashboard", "v1/admin/operations-health"]
+API_AUTH_BOUNDARY_PATHS = [
+    "v1/dashboard",
+    "v1/api-keys",
+    "v1/seller/dashboard",
+    "v1/admin/operations-health",
+    "v1/admin/audit-logs",
+]
 DEFAULT_TIMEOUT_SECONDS = 15
 
 

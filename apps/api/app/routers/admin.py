@@ -9,10 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_redis, require_admin
 from app.exceptions import AppError, ToolNotFoundError
 from app.models.tool import ToolStatus
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.tool_processing_job import ToolProcessingJob, ToolProcessingJobStatus
 from app.models.user import User
 from app.models.user import UserRole
 from app.schemas.admin import (
+    AdminAuditLogListResponse,
+    AdminAuditLogResponse,
     AdminOperationsHealthResponse,
     AdminProcessingJobListResponse,
     AdminProcessingJobResponse,
@@ -22,7 +25,7 @@ from app.schemas.admin import (
     AdminUserUpdate,
 )
 from app.schemas.tool import AdminToolReviewUpdate, ToolListResponse, ToolResponse
-from app.services import job_service, operations_health_service, tool_service, user_service
+from app.services import admin_audit_service, job_service, operations_health_service, tool_service, user_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -51,6 +54,20 @@ def _job_response(job: ToolProcessingJob) -> AdminProcessingJobResponse:
         tool_slug=getattr(tool, "slug", None),
         tool_status=getattr(tool, "status", None),
         seller_email=getattr(seller, "email", None),
+    )
+
+
+def _audit_log_response(log: AdminAuditLog) -> AdminAuditLogResponse:
+    admin = getattr(log, "admin", None)
+    return AdminAuditLogResponse(
+        id=log.id,
+        admin_id=log.admin_id,
+        admin_email=getattr(admin, "email", None),
+        action=log.action,
+        target_type=log.target_type,
+        target_id=log.target_id,
+        details=log.details,
+        created_at=log.created_at,
     )
 
 
@@ -126,6 +143,18 @@ async def update_admin_tool_review(
         is_featured=body.is_featured,
         redis=redis,
     )
+    await admin_audit_service.record_admin_action(
+        db,
+        admin_id=_admin.id,
+        action="tool_review_updated",
+        target_type="tool",
+        target_id=updated.id,
+        details={
+            "status": updated.status.value,
+            "is_featured": updated.is_featured,
+            "processing_error": updated.processing_error,
+        },
+    )
     view_count = await tool_service.get_view_count(redis, updated.slug)
     return ToolResponse.model_validate(updated).model_copy(update={"view_count": view_count})
 
@@ -193,7 +222,39 @@ async def update_admin_user(
         role=body.role,
         is_active=body.is_active,
     )
+    await admin_audit_service.record_admin_action(
+        db,
+        admin_id=admin.id,
+        action="user_moderation_updated",
+        target_type="user",
+        target_id=updated.id,
+        details={
+            "role": updated.role.value,
+            "is_active": updated.is_active,
+        },
+    )
     return AdminUserResponse.model_validate(updated)
+
+
+@router.get(
+    "/audit-logs",
+    response_model=AdminAuditLogListResponse,
+    summary="List recent admin audit log events",
+)
+async def list_admin_audit_logs(
+    _admin: Annotated[User, Depends(require_admin)],
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> AdminAuditLogListResponse:
+    logs, total = await admin_audit_service.list_admin_audit_logs(db, page=page, limit=limit)
+    return AdminAuditLogListResponse(
+        items=[_audit_log_response(log) for log in logs],
+        total=total,
+        page=page,
+        limit=limit,
+        pages=math.ceil(total / limit) if total else 0,
+    )
 
 
 @router.get(
@@ -273,5 +334,17 @@ async def retry_admin_processing_job(
             message="The processing queue is unavailable. Try again after the worker recovers.",
         ) from exc
 
+    await admin_audit_service.record_admin_action(
+        db,
+        admin_id=admin.id,
+        action="processing_job_retried",
+        target_type="processing_job",
+        target_id=job.id,
+        details={
+            "retry_job_id": str(retry_job.id),
+            "tool_id": str(job.tool_id),
+            "reason": body.reason,
+        },
+    )
     detailed_retry_job = await job_service.get_job_with_details(db, retry_job.id)
     return _job_response(detailed_retry_job or retry_job)

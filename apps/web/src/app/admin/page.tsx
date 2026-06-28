@@ -47,6 +47,22 @@ interface AdminProcessingJobListResponse {
   total: number;
 }
 
+interface AdminAuditLog {
+  id: string;
+  admin_id: string;
+  admin_email: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface AdminAuditLogListResponse {
+  items: AdminAuditLog[];
+  total: number;
+}
+
 interface AdminOperationsHealth {
   status: "healthy" | "degraded";
   checks: Record<string, string>;
@@ -131,6 +147,7 @@ export default function AdminPage() {
 function AdminOperations({ token }: { token: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [jobs, setJobs] = useState<AdminProcessingJob[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [health, setHealth] = useState<AdminOperationsHealth | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
@@ -139,14 +156,16 @@ function AdminOperations({ token }: { token: string }) {
     setStatus("loading");
     setNotice(null);
     try {
-      const [healthResponse, userResponse, jobResponse] = await Promise.all([
+      const [healthResponse, userResponse, jobResponse, auditResponse] = await Promise.all([
         api.get<AdminOperationsHealth>("/admin/operations-health", { token }),
         api.get<AdminUserListResponse>("/admin/users?limit=25", { token }),
         api.get<AdminProcessingJobListResponse>("/admin/processing-jobs?limit=25", { token }),
+        api.get<AdminAuditLogListResponse>("/admin/audit-logs?limit=25", { token }),
       ]);
       setHealth(healthResponse);
       setUsers(userResponse.items);
       setJobs(jobResponse.items);
+      setAuditLogs(auditResponse.items);
       setStatus("ready");
     } catch (error) {
       setStatus("error");
@@ -183,6 +202,7 @@ function AdminOperations({ token }: { token: string }) {
       );
       setJobs((current) => [retried, ...current.filter((item) => item.id !== retried.id)]);
       setNotice(`Queued retry for ${retried.tool_name ?? retried.tool_id}.`);
+      void load();
     } catch (error) {
       setNotice(error instanceof ApiError ? error.message : "Could not retry this job.");
     }
@@ -241,6 +261,25 @@ function AdminOperations({ token }: { token: string }) {
           ))}
         </Panel>
 
+        <Panel title="Audit trail">
+          {status === "loading" ? <EmptyState text="Loading audit logs…" /> : null}
+          {status !== "loading" && auditLogs.length === 0 ? <EmptyState text="No admin actions recorded yet." /> : null}
+          {auditLogs.map((log) => (
+            <article key={log.id} style={rowStyle}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <strong>{humanizeAction(log.action)}</strong>
+                  <span style={rolePillStyle}>{log.target_type}</span>
+                </div>
+                <p style={mutedStyle}>
+                  {log.admin_email ?? "Unknown admin"} · {new Date(log.created_at).toLocaleString()}
+                </p>
+                {log.details ? <p style={mutedStyle}>{summarizeAuditDetails(log.details)}</p> : null}
+              </div>
+            </article>
+          ))}
+        </Panel>
+
         <Panel title="Users">
           {status === "loading" ? <EmptyState text="Loading users…" /> : null}
           {status !== "loading" && users.length === 0 ? <EmptyState text="No users found." /> : null}
@@ -272,6 +311,18 @@ function AdminOperations({ token }: { token: string }) {
       </section>
     </main>
   );
+}
+
+function humanizeAction(action: string) {
+  return action.replaceAll("_", " ");
+}
+
+function summarizeAuditDetails(details: Record<string, unknown>) {
+  const pairs = Object.entries(details)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${String(value)}`);
+  return pairs.join(" · ");
 }
 
 function OperationsHealthPanel({

@@ -99,3 +99,4 @@ def test_admin_operations_health_smoke_rejects_incomplete_payload(monkeypatch):
 
 def test_admin_operations_health_is_part_of_api_auth_boundaries():
     assert "v1/admin/operations-health" in smoke.API_AUTH_BOUNDARY_PATHS
+    assert "v1/admin/audit-logs" in smoke.API_AUTH_BOUNDARY_PATHS

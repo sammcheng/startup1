@@ -26,6 +26,9 @@ JOBS_MIGRATION = (
 DATA_INTEGRITY_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0008_add_data_integrity_constraints.py"
 )
+ADMIN_AUDIT_MIGRATION = (
+    REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0009_add_admin_audit_logs.py"
+)
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
@@ -35,6 +38,7 @@ BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_ser
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
 OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
+ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
@@ -296,6 +300,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
     expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
+    expect(ADMIN_AUDIT_MIGRATION.exists(), "admin audit log migration is missing", failures)
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
     expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
     expect(MIGRATION_SAFETY_CHECK.exists(), "migration safety check is missing", failures)
@@ -333,6 +338,12 @@ def check_repo_files(failures: list[str]) -> None:
 
     admin_router = API_ADMIN_ROUTER.read_text(encoding="utf-8")
     expect("operations_health_service.get_operations_health" in admin_router, "admin health endpoint must use the shared operations health service", failures)
+    expect(ADMIN_AUDIT_SERVICE.exists(), "admin audit service is missing", failures)
+    admin_audit_service = ADMIN_AUDIT_SERVICE.read_text(encoding="utf-8")
+    expect("record_admin_action" in admin_audit_service, "admin mutations must have a durable audit recorder", failures)
+    expect("list_admin_audit_logs" in admin_audit_service, "admin dashboard must expose audit history", failures)
+    expect("record_admin_action" in admin_router, "admin mutation routes must record audit actions", failures)
+    expect("/audit-logs" in admin_router, "admin API must expose audit logs to admins", failures)
 
     smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
     expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)
@@ -343,7 +354,9 @@ def check_repo_files(failures: list[str]) -> None:
 
     admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
     expect("/admin/operations-health" in admin_page, "admin dashboard must load production operations health", failures)
+    expect("/admin/audit-logs" in admin_page, "admin dashboard must load audit logs", failures)
     expect("Production health" in admin_page, "admin dashboard must render production health status", failures)
+    expect("Audit trail" in admin_page, "admin dashboard must render admin audit trail", failures)
 
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
     expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)

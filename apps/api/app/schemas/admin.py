@@ -91,6 +91,25 @@ class AdminOperationsHealthResponse(BaseModel):
     processing_jobs: AdminProcessingJobHealthResponse
 
 
+class AdminAuditLogResponse(BaseModel):
+    id: uuid.UUID
+    admin_id: uuid.UUID
+    admin_email: str | None = None
+    action: str
+    target_type: str
+    target_id: uuid.UUID | None = None
+    details: dict | None = None
+    created_at: datetime
+
+
+class AdminAuditLogListResponse(BaseModel):
+    items: list[AdminAuditLogResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
 class AdminProcessingJobRetryRequest(BaseModel):
     reason: str = Field(default="Admin retry", min_length=1, max_length=500)
 

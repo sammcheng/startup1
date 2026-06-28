@@ -77,6 +77,7 @@ alembic upgrade head
 
 Confirm migration `0007_add_tool_processing_jobs.py` is applied so seller submissions have durable job status.
 Confirm migration `0008_add_data_integrity_constraints.py` is applied so API key hashes and open buyer/tool purchases are protected by database uniqueness.
+Confirm migration `0009_add_admin_audit_logs.py` is applied so admin actions have a durable audit trail.
 
 Before running production migrations:
 - Confirm Render Postgres backups are enabled.
@@ -166,9 +167,10 @@ Do not invite real users until uploads, dashboard status updates, buyer API key 
 ## 8. Operator Readiness
 
 Before opening the marketplace, sign in with an admin account and verify:
-- `/admin` loads the production health panel, users, and processing jobs.
+- `/admin` loads the production health panel, audit trail, users, and processing jobs.
 - Suspended users can no longer access authenticated API paths.
 - Failed processing jobs can be retried from `/admin`.
+- Tool review changes, user moderation changes, and processing-job retries appear in the `/admin` audit trail.
 - `/approver` can approve, reject, pause, and feature submitted tools.
 
 ## 9. Trust Pages
