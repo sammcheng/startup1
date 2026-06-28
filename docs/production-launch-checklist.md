@@ -82,7 +82,8 @@ Confirm migration `0009_add_admin_audit_logs.py` is applied so admin actions hav
 Before running production migrations:
 - Confirm Render Postgres backups are enabled.
 - Take or identify a recent manual backup.
-- Run `python3 scripts/check_alembic_migrations.py --upgrade` against a disposable Postgres database.
+- Run `MIGRATION_TEST_DATABASE_URL=postgresql+asyncpg://... python3 scripts/check_alembic_migrations.py --upgrade` against a disposable Postgres database.
+- Do not use the production `DATABASE_URL` for migration validation; the script should refuse production-like targets unless an explicit override is used for a known disposable database.
 - Run `python3 scripts/check_migration_safety.py` and explicitly review any migration that uses destructive upgrade operations.
 - Confirm the data-integrity migration reports no duplicate API key hashes or duplicate open buyer/tool purchases.
 - Review `docs/database-operations-runbook.md`.

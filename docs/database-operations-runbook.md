@@ -7,7 +7,7 @@ Use this before launch, before schema changes, and during incidents. Render Post
 Before merging schema changes:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test \
+MIGRATION_TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test \
   python3 scripts/check_alembic_migrations.py --upgrade
 python3 scripts/check_migration_safety.py
 ```
@@ -16,6 +16,7 @@ The check must prove:
 - Alembic has exactly one head.
 - `alembic upgrade head` succeeds on a real Postgres database.
 - The database reports the current revision as the head after upgrade.
+- The target database is clearly disposable: local by default, not `ENVIRONMENT=production`, and named with a test/ci/temp/disposable marker.
 - New `upgrade()` bodies do not include destructive Alembic operations or raw destructive SQL unless the migration is explicitly marked reviewed with `MIGRATION_SAFETY_REVIEWED = True`.
 - Migration `0008_add_data_integrity_constraints.py` finds no duplicate API key hashes or duplicate open buyer/tool purchases before adding uniqueness constraints.
 
@@ -87,3 +88,4 @@ Before public launch, record evidence for:
 - Manual backup timestamp.
 - Successful restore drill date.
 - `python3 scripts/check_alembic_migrations.py --upgrade` passing in CI.
+- Any remote disposable migration test must use `--allow-remote-database` intentionally and never point at production.

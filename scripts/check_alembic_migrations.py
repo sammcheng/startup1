@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +17,8 @@ API_DIR = REPO_ROOT / "apps" / "api"
 
 
 ALEMBIC_ENTRYPOINT = "from alembic.config import main; main()"
+SAFE_DATABASE_NAME_MARKERS = ("test", "testing", "ci", "tmp", "temp", "disposable", "scratch")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def run_alembic(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -34,6 +38,57 @@ def fail(message: str, output: str = "") -> int:
     if output:
         print(output, file=sys.stderr)
     return 1
+
+
+def database_url_from_env(env: dict[str, str]) -> str | None:
+    return env.get("MIGRATION_TEST_DATABASE_URL") or env.get("DATABASE_URL")
+
+
+def database_name(database_url: str) -> str:
+    parsed = urlparse(database_url)
+    return parsed.path.rsplit("/", 1)[-1]
+
+
+def is_local_database_host(database_url: str) -> bool:
+    parsed = urlparse(database_url)
+    host = parsed.hostname
+    if not host:
+        return False
+    if host.lower() in LOCAL_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def has_safe_database_name(database_url: str) -> bool:
+    name = database_name(database_url).lower()
+    return any(marker in name for marker in SAFE_DATABASE_NAME_MARKERS)
+
+
+def validate_database_target(args: argparse.Namespace, env: dict[str, str]) -> int:
+    database_url = database_url_from_env(env)
+    if not database_url:
+        return fail("DATABASE_URL or MIGRATION_TEST_DATABASE_URL must be set")
+
+    if env.get("ENVIRONMENT") == "production" and not args.allow_production_env:
+        return fail("refusing to run migration validation with ENVIRONMENT=production")
+
+    if not is_local_database_host(database_url) and not args.allow_remote_database:
+        return fail(
+            "refusing to run migration validation against a remote database; "
+            "use --allow-remote-database only for a disposable non-production database"
+        )
+
+    if not has_safe_database_name(database_url) and not args.allow_any_database_name:
+        return fail(
+            "refusing to run migration validation against a database name that does not look disposable; "
+            "use a name containing test, ci, temp, disposable, or scratch"
+        )
+
+    env["DATABASE_URL"] = database_url
+    return 0
 
 
 def check_single_head(env: dict[str, str]) -> int:
@@ -72,19 +127,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run alembic upgrade head against DATABASE_URL after checking migration heads.",
     )
+    parser.add_argument(
+        "--allow-remote-database",
+        action="store_true",
+        help="Allow a non-local database host. Use only with disposable staging/test databases.",
+    )
+    parser.add_argument(
+        "--allow-any-database-name",
+        action="store_true",
+        help="Allow a database name without a test/ci/temp/disposable marker.",
+    )
+    parser.add_argument(
+        "--allow-production-env",
+        action="store_true",
+        help="Allow ENVIRONMENT=production. This should almost never be used for this validation script.",
+    )
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     env = os.environ.copy()
     env.setdefault("ENVIRONMENT", "test")
     env.setdefault("REDIS_URL", "redis://localhost:6379/15")
     env.setdefault("STRIPE_SECRET_KEY", "sk_test_migration_check")
     env.setdefault("CLERK_JWKS_URL", "https://example.com/.well-known/jwks.json")
 
-    if "DATABASE_URL" not in env:
-        return fail("DATABASE_URL must be set")
+    target_status = validate_database_target(args, env)
+    if target_status:
+        return target_status
 
     head_status = check_single_head(env)
     if head_status:

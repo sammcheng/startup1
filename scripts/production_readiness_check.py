@@ -34,6 +34,7 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
 REPO_HYGIENE_CHECK = REPO_ROOT / "scripts" / "repo_hygiene_check.py"
 MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
+ALEMBIC_MIGRATION_CHECK = REPO_ROOT / "scripts" / "check_alembic_migrations.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
@@ -304,6 +305,7 @@ def check_repo_files(failures: list[str]) -> None:
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
     expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
     expect(MIGRATION_SAFETY_CHECK.exists(), "migration safety check is missing", failures)
+    expect(ALEMBIC_MIGRATION_CHECK.exists(), "Alembic upgrade validation check is missing", failures)
     expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
     expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
 
@@ -370,6 +372,11 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "python ../../scripts/check_migration_safety.py" in ci_workflow,
         "CI must scan Alembic upgrades for destructive migration operations",
+        failures,
+    )
+    expect(
+        "python ../../scripts/check_alembic_migrations.py --upgrade" in ci_workflow,
+        "CI must validate Alembic upgrades against a disposable Postgres database",
         failures,
     )
     expect(
