@@ -278,6 +278,21 @@ def test_production_rejects_local_database_or_redis_urls() -> None:
         )
 
 
+def test_production_rejects_bootstrap_tool_seed() -> None:
+    with pytest.raises(ValueError, match="ENABLE_BOOTSTRAP_TOOL_SEED"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            enable_bootstrap_tool_seed=True,
+            **PRODUCTION_REQUIRED,
+        )
+
+
 def test_production_requires_openrouter_unless_fallback_is_explicitly_allowed() -> None:
     with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
         Settings(

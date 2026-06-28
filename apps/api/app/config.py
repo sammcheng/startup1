@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     # Storage
     local_storage_path: str = "/tmp/hackmarket-storage"
 
+    # Local/demo bootstrap data. Must stay disabled in production so marketplace
+    # data is always user-owned or intentionally imported through secured flows.
+    enable_bootstrap_tool_seed: bool = False
+    bootstrap_tool_api_endpoint: str = ""
+
     # Render-backed tool deployments
     render_api_key: str = ""
     render_owner_id: str = ""
@@ -228,6 +233,9 @@ class Settings(BaseSettings):
 
         if self.run_billing_scheduler_in_api:
             raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")
+
+        if self.enable_bootstrap_tool_seed:
+            raise ValueError("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production.")
 
         if self.max_source_zip_entries < 1:
             raise ValueError("MAX_SOURCE_ZIP_ENTRIES must be at least 1 in production.")

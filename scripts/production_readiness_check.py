@@ -37,7 +37,9 @@ MIGRATION_SAFETY_CHECK = REPO_ROOT / "scripts" / "check_migration_safety.py"
 ALEMBIC_MIGRATION_CHECK = REPO_ROOT / "scripts" / "check_alembic_migrations.py"
 BILLING_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "billing_service.py"
 API_MAIN = REPO_ROOT / "apps" / "api" / "app" / "main.py"
+API_CONFIG = REPO_ROOT / "apps" / "api" / "app" / "config.py"
 API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
+BOOTSTRAP_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "bootstrap_service.py"
 OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
 ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
@@ -330,6 +332,10 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     api_main = API_MAIN.read_text(encoding="utf-8")
+    api_config = API_CONFIG.read_text(encoding="utf-8")
+    expect("enable_bootstrap_tool_seed: bool = False" in api_config, "bootstrap tool seed must default off", failures)
+    expect("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config, "production must reject fixed bootstrap marketplace seeds", failures)
+    expect(BOOTSTRAP_SERVICE.exists(), "bootstrap seed service is missing", failures)
     expect(OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures)
     operations_health_service = OPERATIONS_HEALTH_SERVICE.read_text(encoding="utf-8")
     expect("get_operations_health" in operations_health_service, "operations health service must expose shared health summary", failures)
