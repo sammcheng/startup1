@@ -6,8 +6,8 @@ import pytest
 from app.dependencies import validate_api_key
 from app.exceptions import InvalidAPIKeyError
 from app.main import app
-from app.routers import gateway
 from app.models.tool import OwnershipType
+from app.routers import gateway
 from app.services import tool_service, url_safety, usage_service
 
 
@@ -326,7 +326,11 @@ def test_gateway_timeout_returns_504(client, auth_overrides, buyer, api_key, liv
     response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
 
     assert response.status_code == 504
-    assert response.json()["error"]["code"] == "TOOL_TIMEOUT"
+    error = response.json()["error"]
+    assert error["code"] == "TOOL_TIMEOUT"
+    assert error["status"] == 504
+    assert error["request_id"] == response.headers["X-HackMarket-Request-Id"]
+    assert error["details"] == {"timeout_seconds": 30}
 
 
 def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
@@ -361,9 +365,13 @@ def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api
     response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "TOOL_UNAVAILABLE"
-    assert response.json()["error"]["platform"] == "Render"
-    assert response.json()["error"]["platform_request_id"] == "abc123-PDX"
+    error = response.json()["error"]
+    assert error["code"] == "TOOL_UNAVAILABLE"
+    assert error["status"] == 502
+    assert error["request_id"] == response.headers["X-HackMarket-Request-Id"]
+    assert error["details"] == {}
+    assert error["platform"] == "Render"
+    assert error["platform_request_id"] == "abc123-PDX"
 
 
 def test_gateway_rejects_private_tool_endpoint_in_production(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):

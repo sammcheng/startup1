@@ -1,5 +1,6 @@
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated
 
@@ -11,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db, get_redis, validate_api_key
-from app.exceptions import AppError, Forbidden, RateLimitExceededError, ToolNotFoundError, ToolNotLiveError
+from app.exceptions import (
+    AppError,
+    Forbidden,
+    RateLimitExceededError,
+    ToolNotFoundError,
+    ToolNotLiveError,
+)
 from app.models import APIKey, Tool, ToolPurchase, User
 from app.models.tool import OwnershipType, ToolStatus
 from app.models.tool_purchase import PurchaseStatus
@@ -33,8 +40,8 @@ async def proxy_tool_request_root(
     request: Request,
     background_tasks: BackgroundTasks,
     auth_context: Annotated[tuple[User, APIKey], Depends(validate_api_key)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> Response:
     return await _proxy_tool_request_impl(tool_slug, "", request, background_tasks, auth_context, db, redis)
 
@@ -50,8 +57,8 @@ async def proxy_tool_request_with_path(
     request: Request,
     background_tasks: BackgroundTasks,
     auth_context: Annotated[tuple[User, APIKey], Depends(validate_api_key)],
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> Response:
     return await _proxy_tool_request_impl(tool_slug, tool_path, request, background_tasks, auth_context, db, redis)
 
@@ -75,7 +82,7 @@ async def _proxy_tool_request_impl(
 
     limit, remaining = await _check_rate_limit(redis, api_key)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     request_body = await request.body()
 
     upstream_status_code = status.HTTP_502_BAD_GATEWAY
@@ -93,24 +100,43 @@ async def _proxy_tool_request_impl(
         normalized_gateway_error = proxy_service.normalize_platform_gateway_error(upstream_response)
         if normalized_gateway_error:
             upstream_status_code, upstream_content, upstream_headers, upstream_media_type = normalized_gateway_error
+            upstream_content = _attach_gateway_error_context(upstream_content, request_id, upstream_status_code)
             error_message = "The tool service was temporarily unavailable."
     except AppError:
         raise
     except httpx.TimeoutException:
         error_message = "The tool took too long to respond."
         upstream_status_code = status.HTTP_504_GATEWAY_TIMEOUT
-        upstream_content = b'{"error":{"code":"TOOL_TIMEOUT","message":"The tool took too long to respond."}}'
+        upstream_content = _gateway_error_content(
+            "TOOL_TIMEOUT",
+            "The tool took too long to respond.",
+            upstream_status_code,
+            request_id,
+            {"timeout_seconds": settings.tool_request_timeout_seconds},
+        )
         upstream_headers = {"content-type": "application/json"}
     except httpx.HTTPError:
         error_message = "The tool container could not be reached."
-        upstream_content = b'{"error":{"code":"TOOL_UNAVAILABLE","message":"The tool container could not be reached."}}'
+        upstream_status_code = status.HTTP_502_BAD_GATEWAY
+        upstream_content = _gateway_error_content(
+            "TOOL_UNAVAILABLE",
+            "The tool container could not be reached.",
+            upstream_status_code,
+            request_id,
+        )
         upstream_headers = {"content-type": "application/json"}
     except Exception:
         error_message = "The tool request failed before completion."
-        upstream_content = b'{"error":{"code":"TOOL_REQUEST_FAILED","message":"The tool request failed before completion."}}'
+        upstream_status_code = status.HTTP_502_BAD_GATEWAY
+        upstream_content = _gateway_error_content(
+            "TOOL_REQUEST_FAILED",
+            "The tool request failed before completion.",
+            upstream_status_code,
+            request_id,
+        )
         upstream_headers = {"content-type": "application/json"}
 
-    response_time_ms = max(int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000), 1)
+    response_time_ms = max(int((datetime.now(UTC) - started_at).total_seconds() * 1000), 1)
 
     background_tasks.add_task(
         usage_service.create_usage_log,
@@ -208,6 +234,40 @@ async def _forward_request(tool: Tool, request: Request, request_body: bytes, re
         tool_path=tool_path,
         timeout_seconds=settings.tool_request_timeout_seconds,
     )
+
+
+def _gateway_error_content(
+    code: str,
+    message: str,
+    status_code: int,
+    request_id: str,
+    details: dict | None = None,
+) -> bytes:
+    return json.dumps(
+        {
+            "error": {
+                "code": code,
+                "message": message,
+                "status": status_code,
+                "request_id": request_id,
+                "details": details or {},
+            }
+        }
+    ).encode("utf-8")
+
+
+def _attach_gateway_error_context(content: bytes, request_id: str, status_code: int) -> bytes:
+    try:
+        payload = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return content
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return content
+    error.setdefault("status", status_code)
+    error.setdefault("request_id", request_id)
+    error.setdefault("details", {})
+    return json.dumps(payload).encode("utf-8")
 
 
 def _calculate_request_cost(tool: Tool, status_code: int) -> Decimal:

@@ -450,6 +450,14 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_gateway_error_content" in gateway_router
+        and "_attach_gateway_error_context" in gateway_router
+        and '"request_id": request_id' in gateway_router
+        and '"timeout_seconds": settings.tool_request_timeout_seconds' in gateway_router,
+        "gateway-generated tool failure errors must use the standard traceable envelope",
+        failures,
+    )
+    expect(
         "Sign in before submitting a tool for analysis" in tools_router,
         "anonymous production submissions must fail before creating system-owned drafts",
         failures,
