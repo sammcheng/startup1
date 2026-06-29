@@ -11,6 +11,7 @@ from app.exceptions import AppError
 from app.request_context import get_request_id
 
 logger = logging.getLogger(__name__)
+SENSITIVE_VALIDATION_ERROR_KEYS = {"input", "ctx", "url"}
 
 
 def _error_response(
@@ -99,7 +100,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
-        details = {"errors": exc.errors()}
+        details = {"errors": exc.errors() if settings.debug else _safe_validation_errors(exc.errors())}
         return _error_response(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "validation_error",
@@ -153,6 +154,14 @@ def setup_error_handlers(app: FastAPI) -> None:
             request_id,
             details,
         )
+
+
+def _safe_validation_errors(errors: list[dict]) -> list[dict]:
+    return [
+        {key: value for key, value in error.items() if key not in SENSITIVE_VALIDATION_ERROR_KEYS}
+        for error in errors
+        if isinstance(error, dict)
+    ]
 
 
 def _status_to_code(status_code: int) -> str:

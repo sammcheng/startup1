@@ -534,6 +534,14 @@ def check_repo_files(failures: list[str]) -> None:
         "early request body limit errors must use the standard traceable error envelope",
         failures,
     )
+    error_handler = (REPO_ROOT / "apps" / "api" / "app" / "middleware" / "error_handler.py").read_text(encoding="utf-8")
+    expect(
+        "_safe_validation_errors" in error_handler
+        and "SENSITIVE_VALIDATION_ERROR_KEYS" in error_handler
+        and "settings.debug else _safe_validation_errors" in error_handler,
+        "production validation errors must not echo raw submitted input values",
+        failures,
+    )
     expect(
         "degraded_high_depth" in operations_health_service,
         "shared operations health must degrade when worker queue depth is too high",

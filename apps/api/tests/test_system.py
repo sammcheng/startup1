@@ -99,6 +99,34 @@ def test_request_body_limit_rejects_declared_oversized_body(client, monkeypatch)
     assert error["details"] == {"max_request_body_bytes": 4}
 
 
+def test_validation_errors_strip_raw_input_when_debug_is_disabled(client, monkeypatch):
+    monkeypatch.setattr("app.middleware.error_handler.settings.debug", False)
+
+    response = client.post(
+        "/v1/tools/discover",
+        json={"query": {"secret": "sk_live_should_not_echo"}, "limit": "not-a-number"},
+    )
+
+    assert response.status_code == 422
+    errors = response.json()["error"]["details"]["errors"]
+    assert errors
+    assert all("input" not in error for error in errors)
+    assert "sk_live_should_not_echo" not in response.text
+
+
+def test_validation_errors_keep_raw_input_when_debug_is_enabled(client, monkeypatch):
+    monkeypatch.setattr("app.middleware.error_handler.settings.debug", True)
+
+    response = client.post(
+        "/v1/tools/discover",
+        json={"query": {"secret": "debug-secret"}, "limit": "not-a-number"},
+    )
+
+    assert response.status_code == 422
+    assert any("input" in error for error in response.json()["error"]["details"]["errors"])
+    assert "debug-secret" in response.text
+
+
 def test_ready_returns_ready_when_dependencies_respond(client, monkeypatch):
     class FakeReadySession:
         async def __aenter__(self):
