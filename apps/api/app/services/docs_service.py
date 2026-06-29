@@ -9,7 +9,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 100
 
 
 def generate_tool_docs(tool: Tool, public_api_base_url: str | None = None) -> ToolDocumentation:
-    endpoint_url = f"{_public_api_base(public_api_base_url)}/api/v1/tools/{tool.slug}"
+    endpoint_url = f"{_gateway_api_base(public_api_base_url)}/tools/{tool.slug}"
     method = "POST"
     request_example = _build_request_example(tool)
     response_example = _build_response_example(tool)
@@ -158,6 +158,15 @@ def _public_api_base(public_api_base_url: str | None = None) -> str:
     if settings.public_api_base_url:
         return settings.public_api_base_url.rstrip("/")
     return "http://localhost:8000"
+
+
+def _gateway_api_base(public_api_base_url: str | None = None) -> str:
+    base = _public_api_base(public_api_base_url)
+    if base.endswith("/api/v1"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base[:-3]}/api/v1"
+    return f"{base}/api/v1"
 
 
 def _curl_example(endpoint_url: str, request_json: str) -> str:

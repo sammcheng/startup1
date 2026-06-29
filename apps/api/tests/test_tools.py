@@ -200,6 +200,36 @@ def test_public_tool_docs_use_configured_public_api_url(client, live_tool, monke
     assert "internal-render-service" not in payload["code_examples"][0]["code"]
 
 
+def test_public_tool_docs_normalize_versioned_public_api_url(client, live_tool, monkeypatch):
+    async def fake_get_tool_by_slug(db, slug):
+        assert slug == live_tool.slug
+        return live_tool
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/v1")
+
+    response = client.get(f"/v1/tools/{live_tool.slug}/docs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["endpoint_url"] == f"https://api.hackmarket.io/api/v1/tools/{live_tool.slug}"
+    assert "/v1/api/v1/" not in payload["code_examples"][0]["code"]
+
+
+def test_public_tool_docs_keep_gateway_public_api_url(client, live_tool, monkeypatch):
+    async def fake_get_tool_by_slug(db, slug):
+        assert slug == live_tool.slug
+        return live_tool
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/api/v1")
+
+    response = client.get(f"/v1/tools/{live_tool.slug}/docs")
+
+    assert response.status_code == 200
+    assert response.json()["endpoint_url"] == f"https://api.hackmarket.io/api/v1/tools/{live_tool.slug}"
+
+
 def test_get_my_tool_returns_not_found_for_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 

@@ -769,6 +769,15 @@ def check_repo_files(failures: list[str]) -> None:
         "public tool docs must only expose live tools and use configured public API URLs",
         failures,
     )
+    docs_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "docs_service.py").read_text(encoding="utf-8")
+    expect(
+        "_gateway_api_base" in docs_service
+        and 'base.endswith("/v1")' in docs_service
+        and 'base.endswith("/api/v1")' in docs_service
+        and 'endpoint_url = f"{_gateway_api_base(public_api_base_url)}/tools/{tool.slug}"' in docs_service,
+        "generated tool docs must normalize PUBLIC_API_BASE_URL before publishing gateway URLs",
+        failures,
+    )
     expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
 
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
