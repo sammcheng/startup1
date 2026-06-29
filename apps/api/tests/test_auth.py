@@ -125,6 +125,40 @@ def test_clerk_webhook_dispatches_verified_user_created_event(client, monkeypatc
     assert handled == [("clerk_created", clerk_user)]
 
 
+@pytest.mark.asyncio
+async def test_clerk_user_created_webhook_sanitizes_avatar_url():
+    db = _FakeAuthSession()
+    clerk_user = {
+        "id": "clerk_created_unsafe_avatar",
+        "primary_email_address_id": "email_1",
+        "email_addresses": [{"id": "email_1", "email_address": "created@example.com"}],
+        "username": "created-user",
+        "image_url": "javascript:alert(1)",
+    }
+
+    await auth._handle_user_created(db, "clerk_created_unsafe_avatar", clerk_user)
+
+    assert db.added[0].avatar_url is None
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_clerk_user_updated_webhook_accepts_only_https_avatar_url():
+    db = _FakeAuthSession()
+    clerk_user = {
+        "id": "clerk_updated_safe_avatar",
+        "primary_email_address_id": "email_1",
+        "email_addresses": [{"id": "email_1", "email_address": "updated@example.com"}],
+        "username": "updated-user",
+        "image_url": "https://images.clerk.dev/updated.png",
+    }
+
+    await auth._handle_user_updated(db, "clerk_updated_safe_avatar", clerk_user)
+
+    assert db.added[0].avatar_url == "https://images.clerk.dev/updated.png"
+    assert db.commits == 1
+
+
 def test_resolve_jwks_url_falls_back_to_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_jwks_url", "")
     monkeypatch.setattr(auth_dependencies.settings, "clerk_issuer_url", "")

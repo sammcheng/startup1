@@ -746,6 +746,15 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_handle_user_created" in auth_router
+        and "_handle_user_updated" in auth_router
+        and "sync_user_from_identity" in auth_router
+        and "avatar_url=clerk_user.get(\"image_url\")" in auth_router
+        and ".values(avatar_url" not in auth_router,
+        "Clerk webhooks must route avatar updates through auth sync sanitization",
+        failures,
+    )
+    expect(
         "Verified account email is required" in auth_router,
         "auth sync must fail cleanly when verified Clerk identity has no email",
         failures,
