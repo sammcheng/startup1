@@ -67,6 +67,7 @@ WEB_LIVE_BENCHMARK = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" 
 WEB_FILE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "FileOutput.tsx"
 WEB_IMAGE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "ImageOutput.tsx"
 WEB_PURCHASE_BUTTON = REPO_ROOT / "apps" / "web" / "src" / "components" / "billing" / "PurchaseToolButton.tsx"
+WEB_SAFE_URL = REPO_ROOT / "apps" / "web" / "src" / "lib" / "safe-url.ts"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
@@ -624,6 +625,8 @@ def check_repo_files(failures: list[str]) -> None:
     web_file_output = WEB_FILE_OUTPUT.read_text(encoding="utf-8")
     web_image_output = WEB_IMAGE_OUTPUT.read_text(encoding="utf-8")
     web_purchase_button = WEB_PURCHASE_BUTTON.read_text(encoding="utf-8")
+    web_marketplace_client = WEB_MARKETPLACE_CLIENT.read_text(encoding="utf-8")
+    web_safe_url = WEB_SAFE_URL.read_text(encoding="utf-8")
     expect(
         'REQUEST_ID_HEADER = "X-HackMarket-Request-Id"' in web_api_client
         and "createRequestId" in web_api_client
@@ -654,6 +657,17 @@ def check_repo_files(failures: list[str]) -> None:
         and 'value.startsWith("data:image/")' in web_image_output
         and 'protocol === "https:"' in web_image_output,
         "frontend demo file and image outputs must reject unsafe URL schemes",
+        failures,
+    )
+    expect(
+        "safeCssImageUrl" in web_safe_url
+        and "safeGithubUrl" in web_safe_url
+        and 'url.protocol === "https:"' in web_safe_url
+        and '"github.com"' in web_safe_url
+        and "safeCssImageUrl(tool.seller.avatar_url)" in web_marketplace_client
+        and "safeCssImageUrl(tool.seller.avatar_url)" in tool_page
+        and "safeGithubUrl(tool.github_url)" in tool_page,
+        "frontend must sanitize avatar image URLs and public GitHub links before rendering",
         failures,
     )
     expect(

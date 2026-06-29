@@ -8,6 +8,7 @@ import type { Segment, ScoredTool } from "@/lib/nlpSearch";
 import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
 import { ALLOW_CONVERTER_CATALOG_FALLBACK, CONVERTER_URL } from "@/lib/env";
+import { safeCssImageUrl } from "@/lib/safe-url";
 
 // ── Converter adapter ──────────────────────────────────────────────────────
 
@@ -186,6 +187,7 @@ function XIcon({ size = 12 }: { size?: number }) {
 
 function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
   const color = CAT_COLORS[tool.category] ?? "#6b7280";
+  const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
   return (
     <Link href={`/tools/${tool.slug}`} className="group block">
       <article
@@ -237,12 +239,12 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {tool.seller.avatar_url ? (
+            {sellerAvatarBackgroundImage ? (
               <span
                 aria-hidden="true"
                 className="w-5 h-5 rounded-full border flex-shrink-0"
                 style={{
-                  backgroundImage: `url(${tool.seller.avatar_url})`,
+                  backgroundImage: sellerAvatarBackgroundImage,
                   backgroundPosition: "center",
                   backgroundSize: "cover",
                   borderColor: "var(--border)",

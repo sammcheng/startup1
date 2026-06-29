@@ -6,11 +6,13 @@ import { LogOut, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useCurrentAccount } from "@/hooks/useAuth";
+import { safeCssImageUrl } from "@/lib/safe-url";
 
 export default function SiteNav() {
   const pathname = usePathname();
   const { isLoaded, isSignedIn, signOut, user } = useCurrentAccount();
   const [scrolled, setScrolled] = useState(false);
+  const avatarBackgroundImage = safeCssImageUrl(user?.imageUrl);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -74,14 +76,14 @@ export default function SiteNav() {
                 fontWeight: 600,
               }}
             >
-              {user?.imageUrl ? (
+              {avatarBackgroundImage ? (
                 <span
                   aria-hidden="true"
                   style={{
                     width: 20,
                     height: 20,
                     borderRadius: 999,
-                    backgroundImage: `url(${user.imageUrl})`,
+                    backgroundImage: avatarBackgroundImage,
                     backgroundPosition: "center",
                     backgroundSize: "cover",
                     flexShrink: 0,

@@ -12,6 +12,7 @@ import {
   type SubmissionRecord,
   type SubmissionStage,
 } from "@/lib/submissions";
+import { safeGithubUrl } from "@/lib/safe-url";
 import type { SellerSubmissionStatusResponse } from "@/types/seller";
 
 interface StageDef {
@@ -204,6 +205,7 @@ export default function SubmissionStatusPage({
 function StatusView({ submission }: { submission: SubmissionRecord }) {
   const activeIdx = stageIndex(submission.stage);
   const isRejected = submission.stage === "rejected";
+  const githubUrl = safeGithubUrl(submission.github_url);
 
   return (
     <main
@@ -255,15 +257,19 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
             <span>
               {submission.tech_stack.slice(0, 2).join(" + ") || submission.language}
             </span>
-            <span>·</span>
-            <a
-              href={submission.github_url}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--blue)", textDecoration: "none" }}
-            >
-              {submission.github_url.replace(/^https:\/\/github\.com\//, "")} ↗
-            </a>
+            {githubUrl && (
+              <>
+                <span>·</span>
+                <a
+                  href={githubUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--blue)", textDecoration: "none" }}
+                >
+                  {githubUrl.replace(/^https:\/\/github\.com\//, "")} ↗
+                </a>
+              </>
+            )}
           </div>
         </header>
 

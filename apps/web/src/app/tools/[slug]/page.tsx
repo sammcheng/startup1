@@ -11,6 +11,7 @@ import DemoRunner from "@/components/demo/DemoRunner";
 import LiveBenchmark from "@/components/demo/LiveBenchmark";
 import DemoTabs from "@/components/demos/DemoTabs";
 import PurchaseToolButton from "@/components/billing/PurchaseToolButton";
+import { safeCssImageUrl, safeGithubUrl } from "@/lib/safe-url";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,8 @@ export default async function ToolPage({
   const toolDocs = await fetchToolDocs(slug);
 
   const catColor = CAT_COLORS[tool.category] ?? "#6b7280";
+  const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
+  const githubUrl = safeGithubUrl(tool.github_url);
   const listingUrlAndImageTool = supportsListingUrlAndImages(tool.input_schema as Record<string, unknown> | null);
   const isConverterTool = Boolean(tool.api_endpoint?.includes("/api/tools/"));
   const directDemoEndpoint =
@@ -254,12 +257,12 @@ export default async function ToolPage({
           {/* Seller + GitHub */}
           <div className="flex items-center gap-2.5 mt-4 animate-fade-up delay-150">
             <span className="text-sm" style={{ color: "var(--faint)" }}>by</span>
-            {tool.seller.avatar_url ? (
+            {sellerAvatarBackgroundImage ? (
               <span
                 aria-hidden="true"
                 className="w-6 h-6 rounded-full flex-shrink-0"
                 style={{
-                  backgroundImage: `url(${tool.seller.avatar_url})`,
+                  backgroundImage: sellerAvatarBackgroundImage,
                   backgroundPosition: "center",
                   backgroundSize: "cover",
                 }}
@@ -278,9 +281,9 @@ export default async function ToolPage({
             >
               {tool.seller.display_name}
             </span>
-            {tool.github_url && (
+            {githubUrl && (
               <a
-                href={tool.github_url}
+                href={githubUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="ml-2 text-xs border rounded-md px-2.5 py-1 transition-all hover:border-[var(--border-h)]"

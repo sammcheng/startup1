@@ -32,6 +32,7 @@ import { api, ApiError } from "@/lib/api";
 import { syncCurrentUser } from "@/lib/auth-sync";
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { toolToSubmissionRecord } from "@/lib/submission-adapter";
+import { safeGithubUrl } from "@/lib/safe-url";
 import type { Tool, ToolListResponse, ToolStatus } from "@/types/tool";
 
 type AdminReviewStatus = Extract<ToolStatus, "draft" | "processing" | "live" | "paused" | "rejected">;
@@ -780,6 +781,8 @@ function DetailFrame({
 }
 
 function DetailHeader({ submission }: { submission: SubmissionRecord }) {
+  const githubUrl = safeGithubUrl(submission.github_url);
+
   return (
     <>
       <Eyebrow>Submission · {submission.id}</Eyebrow>
@@ -808,15 +811,19 @@ function DetailHeader({ submission }: { submission: SubmissionRecord }) {
         <Sep />
         <span>{submission.tech_stack.join(" · ") || submission.language}</span>
         <Sep />
-        <a
-          href={submission.github_url}
-          target="_blank"
-          rel="noreferrer"
-          style={{ color: "var(--blue)", textDecoration: "none" }}
-        >
-          repo ↗
-        </a>
-        <Sep />
+        {githubUrl && (
+          <>
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--blue)", textDecoration: "none" }}
+            >
+              repo ↗
+            </a>
+            <Sep />
+          </>
+        )}
         <span style={{ fontFamily: "var(--font-mono)" }}>{submission.submitter_email}</span>
       </div>
     </>
