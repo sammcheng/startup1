@@ -50,6 +50,45 @@ def test_api_auth_boundary_requires_structured_json_error(monkeypatch):
     assert result.detail == "protected with structured 401"
 
 
+def test_api_auth_boundary_normalizes_versioned_api_url(monkeypatch):
+    requested_urls = []
+
+    class FakeHeaders(dict):
+        def get(self, key, default=None):
+            return super().get(key, default)
+
+    class FakeHTTPError(HTTPError):
+        def __init__(self, url):
+            super().__init__(
+                url,
+                401,
+                "Unauthorized",
+                FakeHeaders({"X-HackMarket-Request-Id": "req_123"}),
+                None,
+            )
+
+        def read(self, amt=None):
+            return b'{"error":{"code":"unauthorized","message":"Authorization header required.","request_id":"req_123"}}'
+
+    def fake_request(method, url, **kwargs):
+        requested_urls.append(url)
+        raise FakeHTTPError(url)
+
+    monkeypatch.setattr(smoke, "request", fake_request)
+
+    result = smoke.check_api_auth_boundary("https://api.example.com/v1", "v1/dashboard", 5)
+
+    assert result.ok is True
+    assert requested_urls == ["https://api.example.com/v1/dashboard"]
+
+
+def test_api_helpers_normalize_gateway_api_url():
+    assert smoke.api_origin_url("https://api.example.com/api/v1") == "https://api.example.com/"
+    assert smoke.rest_api_url("https://api.example.com/api/v1", "tools/discover") == (
+        "https://api.example.com/v1/tools/discover"
+    )
+
+
 def test_api_cors_requires_exact_production_origin(monkeypatch):
     def fake_request(*args, **kwargs):
         return 200, "", {"Access-Control-Allow-Origin": "https://hackmarket.io"}

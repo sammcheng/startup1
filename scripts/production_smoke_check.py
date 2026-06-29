@@ -60,6 +60,19 @@ def normalize_base_url(url: str) -> str:
     return url.rstrip("/") + "/"
 
 
+def api_origin_url(url: str) -> str:
+    normalized = normalize_base_url(url)
+    if normalized.endswith("/api/v1/"):
+        return normalized[: -len("api/v1/")]
+    if normalized.endswith("/v1/"):
+        return normalized[: -len("v1/")]
+    return normalized
+
+
+def rest_api_url(url: str, path: str) -> str:
+    return urljoin(api_origin_url(url), f"v1/{path.lstrip('/')}")
+
+
 def request(
     method: str,
     url: str,
@@ -134,7 +147,7 @@ def check_discovery(api_root: str, timeout: int) -> CheckResult:
     return run_http_check(
         "public tool discovery",
         "POST",
-        urljoin(api_root, "v1/tools/discover"),
+        rest_api_url(api_root, "tools/discover"),
         expected_statuses={200},
         headers={"Content-Type": "application/json"},
         body=body,
@@ -147,7 +160,7 @@ def check_api_cors(api_root: str, app_root: str, timeout: int) -> CheckResult:
     try:
         status, body, headers = request(
             "OPTIONS",
-            urljoin(api_root, "v1/tools/discover"),
+            rest_api_url(api_root, "tools/discover"),
             headers={
                 "Origin": origin,
                 "Access-Control-Request-Method": "POST",
@@ -195,7 +208,7 @@ def parse_json_error(status: int, body: str, headers: dict[str, str]) -> str | N
 def check_api_auth_boundary(api_root: str, path: str, timeout: int) -> CheckResult:
     name = f"api auth boundary /{path}"
     try:
-        status, body, headers = request("GET", urljoin(api_root, path), timeout=timeout)
+        status, body, headers = request("GET", rest_api_url(api_root, path.removeprefix("v1/")), timeout=timeout)
     except HTTPError as exc:
         status = exc.code
         body = exc.read(4096).decode("utf-8", errors="replace")
@@ -342,7 +355,7 @@ def check_admin_operations_health(api_root: str, admin_session_token: str, timeo
     try:
         status, body, _headers = request(
             "GET",
-            urljoin(api_root, "v1/admin/operations-health"),
+            rest_api_url(api_root, "admin/operations-health"),
             headers={"Authorization": f"Bearer {admin_session_token}"},
             timeout=timeout,
         )
@@ -380,7 +393,11 @@ def check_admin_operations_health(api_root: str, admin_session_token: str, timeo
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app-url", default=os.getenv("APP_BASE_URL"), help="Frontend base URL")
-    parser.add_argument("--api-url", default=os.getenv("PUBLIC_API_BASE_URL"), help="API root URL without /v1")
+    parser.add_argument(
+        "--api-url",
+        default=os.getenv("PUBLIC_API_BASE_URL"),
+        help="API origin URL; /v1 or /api/v1 suffixes are normalized automatically",
+    )
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument(
         "--clerk-session-token",
@@ -402,7 +419,7 @@ def main() -> int:
         return 2
 
     app_root = normalize_base_url(args.app_url)
-    api_root = normalize_base_url(args.api_url)
+    api_root = api_origin_url(args.api_url)
     results: list[CheckResult] = []
 
     for path in DEFAULT_FRONTEND_PATHS:

@@ -576,6 +576,15 @@ def check_repo_files(failures: list[str]) -> None:
     expect("ThreadPoolExecutor" in load_smoke_check, "load smoke check must exercise concurrent requests", failures)
     expect("gateway invocation" in load_smoke_check, "load smoke check must support gateway invocation checks", failures)
     expect("public discovery" in load_smoke_check, "load smoke check must cover tool discovery under load", failures)
+    expect(
+        "api_origin_url" in smoke_check
+        and "rest_api_url" in smoke_check
+        and "api_origin_url" in load_smoke_check
+        and "rest_api_url" in load_smoke_check
+        and "gateway_api_url" in load_smoke_check,
+        "production smoke checks must normalize API base URLs before constructing REST and gateway paths",
+        failures,
+    )
 
     admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
     expect("/admin/operations-health" in admin_page, "admin dashboard must load production operations health", failures)

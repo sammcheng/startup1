@@ -47,6 +47,40 @@ def test_build_targets_adds_gateway_when_credentials_are_available():
     assert gateway.headers["X-API-Key"] == "hm_live_test"
 
 
+def test_build_targets_normalizes_versioned_api_url():
+    args = argparse.Namespace(
+        api_url="https://api.example.com/v1",
+        discovery_query="accessibility",
+        discovery_limit=3,
+        gateway_tool_slug="home-accessibility-checker",
+        gateway_api_key="hm_live_test",
+        gateway_body='{"text":"launch smoke"}',
+    )
+
+    targets = load_smoke.build_targets(args)
+
+    assert targets[0].url == "https://api.example.com/ready"
+    assert targets[1].url == "https://api.example.com/v1/tools/discover"
+    assert targets[2].url == "https://api.example.com/api/v1/tools/home-accessibility-checker"
+
+
+def test_build_targets_normalizes_gateway_api_url():
+    args = argparse.Namespace(
+        api_url="https://api.example.com/api/v1",
+        discovery_query="accessibility",
+        discovery_limit=3,
+        gateway_tool_slug="home-accessibility-checker",
+        gateway_api_key="hm_live_test",
+        gateway_body='{"text":"launch smoke"}',
+    )
+
+    targets = load_smoke.build_targets(args)
+
+    assert targets[0].url == "https://api.example.com/ready"
+    assert targets[1].url == "https://api.example.com/v1/tools/discover"
+    assert targets[2].url == "https://api.example.com/api/v1/tools/home-accessibility-checker"
+
+
 def test_summarize_results_fails_when_latency_exceeds_threshold():
     results = [
         load_smoke.RequestResult("public discovery", True, 200, 100, "HTTP 200"),

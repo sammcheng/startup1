@@ -63,6 +63,23 @@ def normalize_base_url(url: str) -> str:
     return url.rstrip("/") + "/"
 
 
+def api_origin_url(url: str) -> str:
+    normalized = normalize_base_url(url)
+    if normalized.endswith("/api/v1/"):
+        return normalized[: -len("api/v1/")]
+    if normalized.endswith("/v1/"):
+        return normalized[: -len("v1/")]
+    return normalized
+
+
+def rest_api_url(url: str, path: str) -> str:
+    return urljoin(api_origin_url(url), f"v1/{path.lstrip('/')}")
+
+
+def gateway_api_url(url: str, path: str) -> str:
+    return urljoin(api_origin_url(url), f"api/v1/{path.lstrip('/')}")
+
+
 def percentile(values: list[float], percentile_value: float) -> float:
     if not values:
         return 0
@@ -140,7 +157,7 @@ def run_target(
 
 
 def build_targets(args: argparse.Namespace) -> list[RequestTarget]:
-    api_root = normalize_base_url(args.api_url)
+    api_root = api_origin_url(args.api_url)
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "hackmarket-load-smoke/1.0",
@@ -157,7 +174,7 @@ def build_targets(args: argparse.Namespace) -> list[RequestTarget]:
         RequestTarget(
             "public discovery",
             "POST",
-            urljoin(api_root, "v1/tools/discover"),
+            rest_api_url(args.api_url, "tools/discover"),
             {200},
             headers,
             json.dumps({"query": args.discovery_query, "limit": args.discovery_limit}).encode("utf-8"),
@@ -169,7 +186,7 @@ def build_targets(args: argparse.Namespace) -> list[RequestTarget]:
             RequestTarget(
                 "gateway invocation",
                 "POST",
-                urljoin(api_root, f"api/v1/tools/{args.gateway_tool_slug}"),
+                gateway_api_url(args.api_url, f"tools/{args.gateway_tool_slug}"),
                 {200},
                 gateway_headers,
                 args.gateway_body.encode("utf-8"),
@@ -180,7 +197,11 @@ def build_targets(args: argparse.Namespace) -> list[RequestTarget]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--api-url", default=os.getenv("PUBLIC_API_BASE_URL"), help="API root URL without /v1")
+    parser.add_argument(
+        "--api-url",
+        default=os.getenv("PUBLIC_API_BASE_URL"),
+        help="API origin URL; /v1 or /api/v1 suffixes are normalized automatically",
+    )
     parser.add_argument("--requests", type=int, default=DEFAULT_REQUESTS)
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
