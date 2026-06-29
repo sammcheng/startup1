@@ -398,6 +398,14 @@ def check_repo_files(failures: list[str]) -> None:
         "checkout session webhooks must not activate purchases before payment is confirmed",
         failures,
     )
+    expect(
+        "_get_checkout_records" in billing_service
+        and "_checkout_transaction_matches_purchase" in billing_service
+        and "transaction.buyer_id == purchase.buyer_id" in billing_service
+        and "transaction.type == TransactionType.full_purchase" in billing_service,
+        "checkout session webhooks must verify purchase and transaction metadata match before state changes",
+        failures,
+    )
     billing_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "billing.py").read_text(encoding="utf-8")
     expect(
         "stripe_webhook_misconfigured" in billing_router

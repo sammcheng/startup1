@@ -861,17 +861,15 @@ async def _complete_checkout_session(
     purchase_id = _parse_uuid(metadata.get("purchase_id"))
     transaction_id = _parse_uuid(metadata.get("transaction_id"))
     payment_id = session.get("payment_intent") or session.get("id")
+    purchase, transaction = await _get_checkout_records(db, purchase_id, transaction_id)
+    if purchase is None or transaction is None:
+        return
 
-    if purchase_id:
-        purchase = await db.get(ToolPurchase, purchase_id)
-        if purchase and purchase.status == PurchaseStatus.pending:
-            purchase.status = PurchaseStatus.active
+    if purchase.status == PurchaseStatus.pending:
+        purchase.status = PurchaseStatus.active
 
-    if transaction_id:
-        transaction = await db.get(Transaction, transaction_id)
-        if transaction:
-            transaction.status = TransactionStatus.completed
-            transaction.stripe_payment_intent_id = payment_id
+    transaction.status = TransactionStatus.completed
+    transaction.stripe_payment_intent_id = payment_id
 
     await db.commit()
 
@@ -885,18 +883,53 @@ async def _expire_checkout_session(db: AsyncSession, session: dict) -> None:
     metadata = session.get("metadata") or {}
     purchase_id = _parse_uuid(metadata.get("purchase_id"))
     transaction_id = _parse_uuid(metadata.get("transaction_id"))
+    purchase, transaction = await _get_checkout_records(db, purchase_id, transaction_id)
+    if purchase is None or transaction is None:
+        return
 
-    if purchase_id:
-        purchase = await db.get(ToolPurchase, purchase_id)
-        if purchase and purchase.status == PurchaseStatus.pending:
-            purchase.status = PurchaseStatus.terminated
+    if purchase.status == PurchaseStatus.pending:
+        purchase.status = PurchaseStatus.terminated
 
-    if transaction_id:
-        transaction = await db.get(Transaction, transaction_id)
-        if transaction and transaction.status == TransactionStatus.pending:
-            transaction.status = TransactionStatus.failed
+    if transaction.status == TransactionStatus.pending:
+        transaction.status = TransactionStatus.failed
 
     await db.commit()
+
+
+async def _get_checkout_records(
+    db: AsyncSession,
+    purchase_id: uuid.UUID | None,
+    transaction_id: uuid.UUID | None,
+) -> tuple[ToolPurchase | None, Transaction | None]:
+    if not purchase_id or not transaction_id:
+        logger.warning("Ignoring Stripe checkout webhook with missing purchase or transaction metadata.")
+        return None, None
+
+    purchase = await db.get(ToolPurchase, purchase_id)
+    transaction = await db.get(Transaction, transaction_id)
+    if not purchase or not transaction:
+        logger.warning(
+            "Ignoring Stripe checkout webhook for unknown purchase or transaction metadata.",
+        )
+        return None, None
+
+    if not _checkout_transaction_matches_purchase(transaction, purchase):
+        logger.warning(
+            "Ignoring Stripe checkout webhook with mismatched purchase and transaction metadata.",
+        )
+        return None, None
+
+    return purchase, transaction
+
+
+def _checkout_transaction_matches_purchase(transaction: Transaction, purchase: ToolPurchase) -> bool:
+    return (
+        transaction.type == TransactionType.full_purchase
+        and transaction.buyer_id == purchase.buyer_id
+        and transaction.seller_id == purchase.seller_id
+        and transaction.tool_id == purchase.tool_id
+        and transaction.amount == purchase.purchase_price
+    )
 
 
 def _parse_uuid(value: str | None) -> uuid.UUID | None:

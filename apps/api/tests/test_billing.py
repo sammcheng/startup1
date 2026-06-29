@@ -884,6 +884,91 @@ async def test_checkout_webhook_activates_pending_purchase_and_transaction():
 
 
 @pytest.mark.asyncio
+async def test_checkout_webhook_rejects_mismatched_purchase_transaction_metadata():
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=uuid.uuid4(),
+        buyer_id=uuid.uuid4(),
+        seller_id=uuid.uuid4(),
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(UTC),
+    )
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=uuid.uuid4(),
+        seller_id=purchase.seller_id,
+        tool_id=purchase.tool_id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="cs_test_purchase",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakePurchaseSession(None, by_id={purchase.id: purchase, transaction.id: transaction})
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_test_purchase",
+                    "payment_intent": "pi_test_purchase",
+                    "payment_status": "paid",
+                    "metadata": {
+                        "purchase_id": str(purchase.id),
+                        "transaction_id": str(transaction.id),
+                    },
+                }
+            },
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.pending
+    assert transaction.status == billing_service.TransactionStatus.pending
+    assert transaction.stripe_payment_intent_id == "cs_test_purchase"
+    assert db.committed == 0
+
+
+@pytest.mark.asyncio
+async def test_expired_checkout_rejects_missing_transaction_metadata():
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=uuid.uuid4(),
+        buyer_id=uuid.uuid4(),
+        seller_id=uuid.uuid4(),
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(UTC),
+    )
+    db = FakePurchaseSession(None, by_id={purchase.id: purchase})
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "checkout.session.expired",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "purchase_id": str(purchase.id),
+                    },
+                }
+            },
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.pending
+    assert db.committed == 0
+
+
+@pytest.mark.asyncio
 async def test_checkout_webhook_defers_unpaid_session_until_async_success():
     purchase = ToolPurchase(
         id=uuid.uuid4(),
