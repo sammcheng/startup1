@@ -1,10 +1,14 @@
 "use client";
 
+import { safeHttpsUrl } from "@/lib/safe-url";
+
 export default function FileOutput({ value }: { value: string | null }) {
+  const downloadUrl = safeHttpsUrl(value);
+
   if (!value) {
     return <EmptyState message="No downloadable file yet." />;
   }
-  if (!isSafeDownloadUrl(value)) {
+  if (!downloadUrl) {
     return <EmptyState message="The tool returned an unsafe download URL." />;
   }
 
@@ -13,7 +17,7 @@ export default function FileOutput({ value }: { value: string | null }) {
       <span className="text-sm font-medium text-stone-200">Download result</span>
       <div className="rounded-2xl border border-stone-800 bg-black/30 p-4">
         <a
-          href={value}
+          href={downloadUrl}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center rounded-full border border-cyan-300/30 px-4 py-2 text-sm text-cyan-100 transition hover:border-cyan-300"
@@ -27,12 +31,4 @@ export default function FileOutput({ value }: { value: string | null }) {
 
 function EmptyState({ message }: { message: string }) {
   return <p className="rounded-2xl border border-stone-800 bg-stone-900/60 p-4 text-sm text-stone-500">{message}</p>;
-}
-
-function isSafeDownloadUrl(value: string): boolean {
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
 }

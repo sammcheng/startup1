@@ -651,11 +651,14 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
-        "isSafeDownloadUrl" in web_file_output
-        and 'protocol === "https:"' in web_file_output
-        and "isSafeImageUrl" in web_image_output
-        and 'value.startsWith("data:image/")' in web_image_output
-        and 'protocol === "https:"' in web_image_output,
+        "safeHttpsUrl(value)" in web_file_output
+        and "href={downloadUrl}" in web_file_output
+        and "safeImageUrl(value)" in web_image_output
+        and "safeOutputCssImageUrl(value)" in web_image_output
+        and "href={imageUrl}" in web_image_output
+        and "backgroundImage" in web_image_output
+        and "SAFE_DATA_IMAGE_PATTERN" in web_safe_url
+        and "svg" not in web_safe_url,
         "frontend demo file and image outputs must reject unsafe URL schemes",
         failures,
     )

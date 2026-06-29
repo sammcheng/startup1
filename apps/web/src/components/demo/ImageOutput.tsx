@@ -1,10 +1,15 @@
 "use client";
 
+import { safeImageUrl, safeOutputCssImageUrl } from "@/lib/safe-url";
+
 export default function ImageOutput({ value }: { value: string | null }) {
+  const imageUrl = safeImageUrl(value);
+  const backgroundImage = safeOutputCssImageUrl(value);
+
   if (!value) {
     return <EmptyState message="No image output yet." />;
   }
-  if (!isSafeImageUrl(value)) {
+  if (!imageUrl || !backgroundImage) {
     return <EmptyState message="The tool returned an unsafe image URL." />;
   }
 
@@ -13,7 +18,7 @@ export default function ImageOutput({ value }: { value: string | null }) {
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-stone-200">Image result</span>
         <a
-          href={value}
+          href={imageUrl}
           download
           className="rounded-full border border-stone-700 px-3 py-1 text-xs text-stone-300 transition hover:border-cyan-300"
         >
@@ -25,7 +30,7 @@ export default function ImageOutput({ value }: { value: string | null }) {
           aria-label="Tool output"
           className="h-[420px] w-full rounded-2xl bg-contain bg-center bg-no-repeat"
           role="img"
-          style={{ backgroundImage: `url(${value})` }}
+          style={{ backgroundImage }}
         />
       </div>
     </div>
@@ -34,16 +39,4 @@ export default function ImageOutput({ value }: { value: string | null }) {
 
 function EmptyState({ message }: { message: string }) {
   return <p className="rounded-2xl border border-stone-800 bg-stone-900/60 p-4 text-sm text-stone-500">{message}</p>;
-}
-
-function isSafeImageUrl(value: string): boolean {
-  if (value.startsWith("data:image/")) {
-    return true;
-  }
-
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
 }
