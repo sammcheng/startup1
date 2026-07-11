@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import pytest
 
-from app.config import Settings
+from app.config import Settings, find_repo_root
 
 PRODUCTION_REQUIRED = {
     "converter_secret": "converter-secret",
@@ -14,6 +16,18 @@ PRODUCTION_REQUIRED = {
     "s3_bucket_name": "hackmarket-test",
     "openrouter_api_key": "sk-or-test",
 }
+
+
+def test_repo_root_falls_back_to_api_root_in_shallow_container_layout() -> None:
+    assert find_repo_root(Path("/app/app/config.py")) == Path("/app")
+
+
+def test_repo_root_detects_monorepo_layout(tmp_path: Path) -> None:
+    config_path = tmp_path / "apps" / "api" / "app" / "config.py"
+    config_path.parent.mkdir(parents=True)
+    config_path.touch()
+
+    assert find_repo_root(config_path) == tmp_path
 
 
 def test_render_postgres_url_uses_asyncpg_driver() -> None:

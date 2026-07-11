@@ -4,8 +4,21 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[3]
+
+def find_repo_root(config_path: Path) -> Path:
+    """Find the monorepo root, falling back to the API root in containers."""
+    resolved = config_path.resolve()
+    api_root = resolved.parent.parent
+    for parent in resolved.parents:
+        if (parent / "apps" / "api").is_dir():
+            return parent
+    return api_root
+
+
+CONFIG_PATH = Path(__file__).resolve()
+APP_DIR = CONFIG_PATH.parent.parent
+REPO_ROOT = find_repo_root(CONFIG_PATH)
+ENV_FILES = tuple(dict.fromkeys((str(REPO_ROOT / ".env"), str(APP_DIR / ".env"))))
 
 
 # ---------------------------------------------------------------------------
@@ -48,10 +61,7 @@ class ClerkSettings(BaseModel):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(
-            str(REPO_ROOT / ".env"),
-            str(APP_DIR / ".env"),
-        ),
+        env_file=ENV_FILES,
         extra="ignore",
     )
 
