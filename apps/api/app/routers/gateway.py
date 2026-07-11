@@ -43,7 +43,9 @@ async def proxy_tool_request_root(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
 ) -> Response:
-    return await _proxy_tool_request_impl(tool_slug, "", request, background_tasks, auth_context, db, redis)
+    return await _proxy_tool_request_impl(
+        tool_slug, "", request, background_tasks, auth_context, db, redis
+    )
 
 
 @router.api_route(
@@ -60,7 +62,9 @@ async def proxy_tool_request_with_path(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
 ) -> Response:
-    return await _proxy_tool_request_impl(tool_slug, tool_path, request, background_tasks, auth_context, db, redis)
+    return await _proxy_tool_request_impl(
+        tool_slug, tool_path, request, background_tasks, auth_context, db, redis
+    )
 
 
 async def _proxy_tool_request_impl(
@@ -92,15 +96,21 @@ async def _proxy_tool_request_impl(
     error_message: str | None = None
 
     try:
-        upstream_response = await _forward_request(tool, request, request_body, request_id, tool_path)
+        upstream_response = await _forward_request(
+            tool, request, request_body, request_id, tool_path
+        )
         upstream_status_code = upstream_response.status_code
         upstream_content = upstream_response.content
         upstream_headers = proxy_service.filter_response_headers(upstream_response.headers)
         upstream_media_type = upstream_response.headers.get("content-type", "application/json")
         normalized_gateway_error = proxy_service.normalize_platform_gateway_error(upstream_response)
         if normalized_gateway_error:
-            upstream_status_code, upstream_content, upstream_headers, upstream_media_type = normalized_gateway_error
-            upstream_content = _attach_gateway_error_context(upstream_content, request_id, upstream_status_code)
+            upstream_status_code, upstream_content, upstream_headers, upstream_media_type = (
+                normalized_gateway_error
+            )
+            upstream_content = _attach_gateway_error_context(
+                upstream_content, request_id, upstream_status_code
+            )
             error_message = "The tool service was temporarily unavailable."
     except AppError:
         raise
@@ -203,7 +213,9 @@ async def _ensure_gateway_entitlement(db: AsyncSession, buyer: User, tool: Tool)
         raise Forbidden("Purchase this tool before invoking it with an API key.")
 
 
-async def _record_rate_limit_violation(redis: Redis, api_key: APIKey, current_window_count: int) -> None:
+async def _record_rate_limit_violation(
+    redis: Redis, api_key: APIKey, current_window_count: int
+) -> None:
     violation_key = f"gateway-abuse:{api_key.id}"
     violations = await redis.incr(violation_key)
     if violations == 1:
@@ -224,7 +236,9 @@ async def _record_rate_limit_violation(redis: Redis, api_key: APIKey, current_wi
         )
 
 
-async def _forward_request(tool: Tool, request: Request, request_body: bytes, request_id: str, tool_path: str = "") -> httpx.Response:
+async def _forward_request(
+    tool: Tool, request: Request, request_body: bytes, request_id: str, tool_path: str = ""
+) -> httpx.Response:
     return await proxy_service.forward_request(
         api_endpoint=tool.api_endpoint,
         request=request,

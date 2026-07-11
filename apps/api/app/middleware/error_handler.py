@@ -53,9 +53,7 @@ def _error_response(
 
 def setup_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
-    async def app_error_handler(
-        request: Request, exc: AppError
-    ) -> JSONResponse:
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
         logger.warning(
             "Application error on %s %s: %s",
@@ -72,9 +70,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
         # Pass through the detail from HTTPException as-is when it's a dict
         if isinstance(exc.detail, dict):
@@ -100,9 +96,11 @@ def setup_error_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
-        details = {"errors": exc.errors() if settings.debug else _safe_validation_errors(exc.errors())}
+        details = {
+            "errors": exc.errors() if settings.debug else _safe_validation_errors(exc.errors())
+        }
         return _error_response(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "validation_error",
             "Request validation failed.",
             request_id,
@@ -110,9 +108,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(IntegrityError)
-    async def integrity_error_handler(
-        request: Request, exc: IntegrityError
-    ) -> JSONResponse:
+    async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
         logger.warning("Database integrity error on %s %s", request.method, request.url.path)
         return _error_response(
@@ -124,9 +120,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(OperationalError)
-    async def operational_error_handler(
-        request: Request, exc: OperationalError
-    ) -> JSONResponse:
+    async def operational_error_handler(request: Request, exc: OperationalError) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
         logger.exception("Database operational error on %s %s", request.method, request.url.path)
         return _error_response(
@@ -138,13 +132,9 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
-        logger.exception(
-            "Unhandled exception on %s %s", request.method, request.url.path
-        )
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         # Never leak stack traces in production
         details = {"type": type(exc).__name__} if settings.debug else {}
         return _error_response(

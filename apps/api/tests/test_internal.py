@@ -1,4 +1,5 @@
 """Tests for the internal converter import endpoint."""
+
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -58,6 +59,7 @@ def client_with_secret(fake_db, fake_redis, monkeypatch):
     monkeypatch.setenv("CONVERTER_SECRET", "test-secret")
 
     from app.config import settings
+
     monkeypatch.setattr(settings, "converter_secret", "test-secret")
 
     async def override_db():
@@ -96,17 +98,26 @@ def test_import_missing_secret_rejected(fake_db, fake_redis):
 def test_import_creates_tool(client_with_secret, fake_db, fake_redis):
     created_tool_id = uuid.uuid4()
 
-    mock_tool = type("Tool", (), {
-        "id": created_tool_id,
-        "slug": "test-repo",
-        "seller_id": uuid.uuid4(),
-        "status": "draft",
-    })()
+    mock_tool = type(
+        "Tool",
+        (),
+        {
+            "id": created_tool_id,
+            "slug": "test-repo",
+            "seller_id": uuid.uuid4(),
+            "status": "draft",
+        },
+    )()
     update_tool = AsyncMock()
 
     with (
-        patch("app.routers.internal._get_or_create_system_seller", new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})())),
-        patch("app.routers.internal.tool_service.create_tool", new=AsyncMock(return_value=mock_tool)),
+        patch(
+            "app.routers.internal._get_or_create_system_seller",
+            new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})()),
+        ),
+        patch(
+            "app.routers.internal.tool_service.create_tool", new=AsyncMock(return_value=mock_tool)
+        ),
         patch("app.routers.internal.tool_service.update_tool", new=update_tool),
     ):
         resp = client_with_secret.post(
@@ -124,19 +135,37 @@ def test_import_creates_tool(client_with_secret, fake_db, fake_redis):
 
 
 def test_import_with_multiple_endpoints(client_with_secret):
-    payload = {**VALID_PAYLOAD, "endpoints": [
-        {"method": "GET", "path": "/health", "summary": "Health check"},
-        {"method": "POST", "path": "/analyze", "summary": "Analyze data",
-         "request_body": {"text": "string — input text"},
-         "response_example": {"result": "analysis output"}},
-    ]}
+    payload = {
+        **VALID_PAYLOAD,
+        "endpoints": [
+            {"method": "GET", "path": "/health", "summary": "Health check"},
+            {
+                "method": "POST",
+                "path": "/analyze",
+                "summary": "Analyze data",
+                "request_body": {"text": "string — input text"},
+                "response_example": {"result": "analysis output"},
+            },
+        ],
+    }
     created_id = uuid.uuid4()
-    mock_tool = type("Tool", (), {"id": created_id, "slug": "test-repo", "seller_id": uuid.uuid4(), "status": "draft"})()
+    mock_tool = type(
+        "Tool",
+        (),
+        {"id": created_id, "slug": "test-repo", "seller_id": uuid.uuid4(), "status": "draft"},
+    )()
 
     with (
-        patch("app.routers.internal._get_or_create_system_seller", new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})())),
-        patch("app.routers.internal.tool_service.create_tool", new=AsyncMock(return_value=mock_tool)),
-        patch("app.routers.internal.tool_service.update_tool", new=AsyncMock(return_value=mock_tool)),
+        patch(
+            "app.routers.internal._get_or_create_system_seller",
+            new=AsyncMock(return_value=type("User", (), {"id": uuid.uuid4(), "role": "both"})()),
+        ),
+        patch(
+            "app.routers.internal.tool_service.create_tool", new=AsyncMock(return_value=mock_tool)
+        ),
+        patch(
+            "app.routers.internal.tool_service.update_tool", new=AsyncMock(return_value=mock_tool)
+        ),
     ):
         resp = client_with_secret.post("/v1/internal/tools/import", json=payload)
 

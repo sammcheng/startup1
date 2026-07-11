@@ -18,11 +18,11 @@ services:
       - key: DEBUG
         value: "false"
       - key: APP_BASE_URL
-        value: https://hackmarket.io
+        value: https://web-six-dusky-20.vercel.app
       - key: PUBLIC_API_BASE_URL
-        value: https://api.hackmarket.io
+        value: https://start-3lbd.onrender.com
       - key: CORS_ORIGINS
-        value: '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+        value: '["https://web-six-dusky-20.vercel.app"]'
       - key: CORS_ORIGIN_REGEX
         value: ""
       - key: ALLOW_VERCEL_PREVIEW_ORIGINS
@@ -97,7 +97,7 @@ services:
       - key: OPENROUTER_MODEL
         value: anthropic/claude-sonnet-4
       - key: OPENROUTER_APP_URL
-        value: https://hackmarket.io
+        value: https://web-six-dusky-20.vercel.app
       - key: OPENROUTER_APP_NAME
         value: Hackmarket
       - key: ALLOW_REPO_ANALYSIS_FALLBACK
@@ -157,11 +157,11 @@ services:
       - key: DEBUG
         value: "false"
       - key: APP_BASE_URL
-        value: https://hackmarket.io
+        value: https://web-six-dusky-20.vercel.app
       - key: PUBLIC_API_BASE_URL
-        value: https://api.hackmarket.io
+        value: https://start-3lbd.onrender.com
       - key: CORS_ORIGINS
-        value: '["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]'
+        value: '["https://web-six-dusky-20.vercel.app"]'
       - key: CORS_ORIGIN_REGEX
         value: ""
       - key: ALLOW_VERCEL_PREVIEW_ORIGINS
@@ -236,7 +236,7 @@ services:
       - key: OPENROUTER_MODEL
         value: anthropic/claude-sonnet-4
       - key: OPENROUTER_APP_URL
-        value: https://hackmarket.io
+        value: https://web-six-dusky-20.vercel.app
       - key: OPENROUTER_APP_NAME
         value: Hackmarket
       - key: ALLOW_REPO_ANALYSIS_FALLBACK
@@ -302,7 +302,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: PUBLIC_APP_URL
-        value: https://hackmarket.io
+        value: https://web-six-dusky-20.vercel.app
       - key: LOG_LEVEL
         value: info
       - key: OPENROUTER_TIMEOUT_MS

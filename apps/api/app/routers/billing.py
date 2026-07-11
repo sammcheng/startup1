@@ -60,7 +60,11 @@ async def get_invoices(
     return await billing_service.list_invoices(current_user)
 
 
-@router.post("/tools/{tool_id}/purchase", response_model=ToolPurchaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/tools/{tool_id}/purchase",
+    response_model=ToolPurchaseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def purchase_tool(
     tool_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],

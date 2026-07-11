@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.tool import ToolStatus
 from app.models.tool_processing_job import ToolProcessingJobStatus
@@ -19,6 +19,22 @@ class SellerRequestsPoint(BaseModel):
     count: int
 
 
+class SellerLatencyPoint(BaseModel):
+    date: date
+    avg_response_time_ms: float
+
+
+class SellerActivityItem(BaseModel):
+    id: uuid.UUID
+    tool_id: uuid.UUID
+    tool_name: str
+    request_timestamp: datetime
+    status_code: int
+    response_time_ms: int
+    cost: Decimal
+    error_message: str | None = None
+
+
 class SellerToolSummary(BaseModel):
     tool_id: uuid.UUID
     tool_name: str
@@ -28,7 +44,12 @@ class SellerToolSummary(BaseModel):
     latest_job_error: str | None = None
     requests_this_month: int
     revenue_this_month: Decimal
+    unique_users_this_month: int
     avg_response_time_ms: float | None = None
+    p50_response_time_ms: float | None = None
+    p95_response_time_ms: float | None = None
+    p99_response_time_ms: float | None = None
+    uptime_percentage: Decimal | None = None
 
 
 class SellerTopTool(BaseModel):
@@ -47,6 +68,9 @@ class SellerDashboardResponse(BaseModel):
     avg_response_time_ms: float | None = None
     top_tool: SellerTopTool | None = None
     revenue_chart_data: list[SellerRevenuePoint]
+    request_chart_data: list[SellerRequestsPoint] = Field(default_factory=list)
+    latency_chart_data: list[SellerLatencyPoint] = Field(default_factory=list)
+    recent_activity: list[SellerActivityItem] = Field(default_factory=list)
     tools: list[SellerToolSummary]
 
 

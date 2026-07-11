@@ -11,7 +11,9 @@ from app.routers import gateway
 from app.services import tool_service, url_safety, usage_service
 
 
-def test_valid_api_key_forwards_request(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_valid_api_key_forwards_request(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
 
     async def fake_get_tool_by_slug(db, slug):
@@ -30,7 +32,11 @@ def test_valid_api_key_forwards_request(client, auth_overrides, buyer, api_key, 
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
     monkeypatch.setattr(usage_service, "create_usage_log", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
@@ -44,7 +50,9 @@ def test_invalid_api_key_rejected(client, live_tool):
 
     app.dependency_overrides[validate_api_key] = invalid_key
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "bad-key"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "bad-key"}, json={"text": "hello"}
+    )
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_api_key"
@@ -56,13 +64,17 @@ def test_inactive_api_key_rejected(client, live_tool):
 
     app.dependency_overrides[validate_api_key] = inactive_key
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "inactive"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "inactive"}, json={"text": "hello"}
+    )
 
     assert response.status_code == 401
     assert response.json()["error"]["message"] == "API key is invalid or inactive."
 
 
-def test_rate_limit_enforced(client, auth_overrides, buyer, api_key, live_tool, fake_redis, monkeypatch):
+def test_rate_limit_enforced(
+    client, auth_overrides, buyer, api_key, live_tool, fake_redis, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
     fake_redis.values[f"ratelimit:{api_key.id}"] = 100
 
@@ -71,7 +83,11 @@ def test_rate_limit_enforced(client, auth_overrides, buyer, api_key, live_tool, 
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "rate_limit_exceeded"
@@ -105,7 +121,11 @@ def test_rate_limit_abuse_alerts_after_repeated_violations(
     monkeypatch.setattr(gateway.alert_service, "send_alert", fake_send_alert)
     monkeypatch.setattr(gateway.settings, "gateway_rate_limit_violation_alert_threshold", 3)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 429
     assert alerts[0]["event"] == "gateway_rate_limit_abuse"
@@ -120,7 +140,9 @@ def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeyp
         return live_tool
 
     async def fake_forward_request(tool, request, body, request_id, tool_path=""):
-        return httpx.Response(200, json={"result": "ok"}, headers={"content-type": "application/json"})
+        return httpx.Response(
+            200, json={"result": "ok"}, headers={"content-type": "application/json"}
+        )
 
     async def fake_create_usage_log(entry):
         captured.append(entry)
@@ -134,7 +156,11 @@ def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeyp
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 200
     assert len(captured) == 1
@@ -150,7 +176,9 @@ def test_tool_not_found(client, auth_overrides, buyer, api_key, monkeypatch):
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
 
-    response = client.post("/api/v1/tools/missing-tool", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        "/api/v1/tools/missing-tool", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"}
+    )
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "tool_not_found"
@@ -164,13 +192,19 @@ def test_tool_not_live(client, auth_overrides, buyer, api_key, draft_tool, monke
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
 
-    response = client.post(f"/api/v1/tools/{draft_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{draft_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "tool_not_live"
 
 
-def test_full_sale_gateway_requires_active_purchase(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_full_sale_gateway_requires_active_purchase(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
     live_tool.ownership_type = OwnershipType.full_sale
     forwarded = []
@@ -189,14 +223,20 @@ def test_full_sale_gateway_requires_active_purchase(client, auth_overrides, buye
     monkeypatch.setattr(gateway, "_ensure_gateway_entitlement", fake_entitlement)
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
     assert forwarded == []
 
 
-def test_full_sale_gateway_allows_active_purchase(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_full_sale_gateway_allows_active_purchase(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
     live_tool.ownership_type = OwnershipType.full_sale
     entitlement_checks = []
@@ -220,7 +260,11 @@ def test_full_sale_gateway_allows_active_purchase(client, auth_overrides, buyer,
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
     monkeypatch.setattr(usage_service, "create_usage_log", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
@@ -288,7 +332,9 @@ def test_response_time_recorded(client, auth_overrides, buyer, api_key, live_too
         return live_tool
 
     async def fake_forward_request(tool, request, body, request_id, tool_path=""):
-        return httpx.Response(200, json={"result": "ok"}, headers={"content-type": "application/json"})
+        return httpx.Response(
+            200, json={"result": "ok"}, headers={"content-type": "application/json"}
+        )
 
     async def noop(*args, **kwargs):
         return None
@@ -299,13 +345,19 @@ def test_response_time_recorded(client, auth_overrides, buyer, api_key, live_too
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
     monkeypatch.setattr(usage_service, "create_usage_log", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 200
     assert int(response.headers["X-HackMarket-Response-Time-Ms"]) >= 1
 
 
-def test_gateway_timeout_returns_504(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_gateway_timeout_returns_504(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
 
     async def fake_get_tool_by_slug(db, slug):
@@ -323,7 +375,11 @@ def test_gateway_timeout_returns_504(client, auth_overrides, buyer, api_key, liv
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
     monkeypatch.setattr(usage_service, "create_usage_log", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 504
     error = response.json()["error"]
@@ -333,7 +389,9 @@ def test_gateway_timeout_returns_504(client, auth_overrides, buyer, api_key, liv
     assert error["details"] == {"timeout_seconds": 30}
 
 
-def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_gateway_normalizes_platform_502_html(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
 
     async def fake_get_tool_by_slug(db, slug):
@@ -362,7 +420,11 @@ def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
     monkeypatch.setattr(usage_service, "create_usage_log", noop)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 502
     error = response.json()["error"]
@@ -374,7 +436,9 @@ def test_gateway_normalizes_platform_502_html(client, auth_overrides, buyer, api
     assert error["platform_request_id"] == "abc123-PDX"
 
 
-def test_gateway_rejects_private_tool_endpoint_in_production(client, auth_overrides, buyer, api_key, live_tool, monkeypatch):
+def test_gateway_rejects_private_tool_endpoint_in_production(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
     auth_overrides(api_key_context=(buyer, api_key))
     live_tool.api_endpoint = "https://127.0.0.1:8080"
 
@@ -388,7 +452,11 @@ def test_gateway_rejects_private_tool_endpoint_in_production(client, auth_overri
     monkeypatch.setattr(url_safety.settings, "environment", "production")
     monkeypatch.setattr(usage_service, "create_usage_log", fail_create_usage_log)
 
-    response = client.post(f"/api/v1/tools/{live_tool.slug}", headers={"X-API-Key": "hm_live_test"}, json={"text": "hello"})
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "unsafe_deployment_url"

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlparse
 
@@ -184,7 +184,7 @@ async def purchase_tool(
             message="The existing checkout session could not be recovered. Please retry in a moment.",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     purchase_price = _quantize(tool.one_time_price or Decimal("0.00"))
     requires_checkout = tool.ownership_type == OwnershipType.full_sale and purchase_price > 0
     purchase = ToolPurchase(
@@ -238,7 +238,9 @@ async def purchase_tool(
     checkout_url: str | None = None
     if requires_checkout and transaction is not None:
         try:
-            checkout_session = await _create_tool_checkout_session(buyer, tool, purchase, transaction)
+            checkout_session = await _create_tool_checkout_session(
+                buyer, tool, purchase, transaction
+            )
         except Exception as exc:
             await _fail_checkout_creation(db, purchase, transaction)
             raise AppError(
@@ -257,7 +259,9 @@ async def purchase_tool(
         # Store the Checkout Session ID while pending so buyers can recover the
         # checkout URL. The completion webhook replaces it with the payment
         # intent ID once Stripe confirms payment.
-        transaction.stripe_payment_intent_id = checkout_session.get("id") or checkout_session.get("payment_intent")
+        transaction.stripe_payment_intent_id = checkout_session.get("id") or checkout_session.get(
+            "payment_intent"
+        )
         await db.commit()
 
     await db.refresh(purchase)
@@ -466,7 +470,9 @@ async def _existing_seller_payout_id(
     return existing.stripe_payment_intent_id if existing else None
 
 
-async def create_usage_invoice(db: AsyncSession, user_id, period_start: datetime, period_end: datetime) -> str | None:
+async def create_usage_invoice(
+    db: AsyncSession, user_id, period_start: datetime, period_end: datetime
+) -> str | None:
     existing_invoice_id = await _existing_usage_invoice_id(db, user_id, period_start, period_end)
     if existing_invoice_id:
         logger.info(
@@ -549,17 +555,21 @@ async def create_usage_invoice(db: AsyncSession, user_id, period_start: datetime
                 seller_payout=seller_payout,
                 stripe_payment_intent_id=paid_invoice.get("payment_intent") or paid_invoice["id"],
                 type=TransactionType.usage,
-                status=TransactionStatus.completed if paid_invoice.get("status") == "paid" else TransactionStatus.pending,
+                status=TransactionStatus.completed
+                if paid_invoice.get("status") == "paid"
+                else TransactionStatus.pending,
                 period_start=period_start,
                 period_end=period_end,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         )
     await db.commit()
     return paid_invoice["id"]
 
 
-async def calculate_seller_payout(db: AsyncSession, tool_id, period_start: datetime, period_end: datetime) -> Decimal:
+async def calculate_seller_payout(
+    db: AsyncSession, tool_id, period_start: datetime, period_end: datetime
+) -> Decimal:
     result = await db.execute(
         select(func.coalesce(func.sum(UsageLog.cost), 0)).where(
             UsageLog.tool_id == tool_id,
@@ -586,7 +596,7 @@ async def process_seller_payout(
         return None
 
     if period_start is None or period_end is None:
-        period_start, period_end = _previous_month_bounds(datetime.now(timezone.utc))
+        period_start, period_end = _previous_month_bounds(datetime.now(UTC))
 
     existing_transfer_id = await _existing_seller_payout_id(db, seller_id, period_start, period_end)
     if existing_transfer_id:
@@ -628,7 +638,7 @@ async def process_seller_payout(
                 status=TransactionStatus.completed,
                 period_start=period_start,
                 period_end=period_end,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         )
         await db.commit()
@@ -639,14 +649,18 @@ async def process_seller_payout(
 async def list_invoices(user: User) -> list[BillingInvoiceSummary]:
     if not user.stripe_customer_id:
         return []
-    invoices = await asyncio.to_thread(stripe.Invoice.list, customer=user.stripe_customer_id, limit=25)
+    invoices = await asyncio.to_thread(
+        stripe.Invoice.list, customer=user.stripe_customer_id, limit=25
+    )
     return [
         BillingInvoiceSummary(
             id=invoice["id"],
             amount_due=Decimal(invoice.get("amount_due", 0)) / 100,
             amount_paid=Decimal(invoice.get("amount_paid", 0)) / 100,
             status=invoice.get("status"),
-            created_at=datetime.fromtimestamp(invoice["created"], tz=timezone.utc) if invoice.get("created") else None,
+            created_at=datetime.fromtimestamp(invoice["created"], tz=UTC)
+            if invoice.get("created")
+            else None,
             hosted_invoice_url=invoice.get("hosted_invoice_url"),
             invoice_pdf=invoice.get("invoice_pdf"),
         )
@@ -663,7 +677,9 @@ async def get_seller_balance(db: AsyncSession, user: User) -> SellerBalanceRespo
             revenue_by_tool=[],
         )
 
-    balance = await asyncio.to_thread(stripe.Balance.retrieve, stripe_account=user.stripe_connect_id)
+    balance = await asyncio.to_thread(
+        stripe.Balance.retrieve, stripe_account=user.stripe_connect_id
+    )
     available = sum(item["amount"] for item in balance.get("available", []))
     pending = sum(item["amount"] for item in balance.get("pending", []))
 
@@ -698,7 +714,9 @@ async def get_seller_balance(db: AsyncSession, user: User) -> SellerBalanceRespo
                 id=item["id"],
                 amount=Decimal(item["amount"]) / 100,
                 currency=item.get("currency", "usd"),
-                created_at=datetime.fromtimestamp(item["created"], tz=timezone.utc) if item.get("created") else None,
+                created_at=datetime.fromtimestamp(item["created"], tz=UTC)
+                if item.get("created")
+                else None,
                 status="paid",
             )
             for item in transfers["data"]
@@ -723,25 +741,28 @@ async def run_daily_aggregation() -> None:
                 UsageLog.tool_id,
                 func.count(UsageLog.id).label("total_requests"),
                 func.avg(UsageLog.response_time_ms).label("avg_response_time_ms"),
-            )
-            .group_by(UsageLog.tool_id)
+            ).group_by(UsageLog.tool_id)
         )
         for row in tool_rows.all():
             tool = await db.get(Tool, row.tool_id)
             if not tool:
                 continue
             tool.total_requests = int(row.total_requests or 0)
-            tool.avg_response_time_ms = int(row.avg_response_time_ms or 0) if row.avg_response_time_ms else None
+            tool.avg_response_time_ms = (
+                int(row.avg_response_time_ms or 0) if row.avg_response_time_ms else None
+            )
         await db.commit()
 
 
 async def run_weekly_invoicing() -> None:
     async with AsyncSessionLocal() as db:
-        period_start, period_end = _period_bounds(datetime.now(timezone.utc), days=7)
+        period_start, period_end = _period_bounds(datetime.now(UTC), days=7)
         users = await db.execute(
             select(User.id)
             .join(UsageLog, UsageLog.user_id == User.id)
-            .where(UsageLog.request_timestamp >= period_start, UsageLog.request_timestamp < period_end)
+            .where(
+                UsageLog.request_timestamp >= period_start, UsageLog.request_timestamp < period_end
+            )
             .group_by(User.id)
         )
         for user_id in [row[0] for row in users.all()]:
@@ -753,7 +774,7 @@ async def run_weekly_invoicing() -> None:
 
 async def run_monthly_payouts() -> None:
     async with AsyncSessionLocal() as db:
-        period_start, period_end = _previous_month_bounds(datetime.now(timezone.utc))
+        period_start, period_end = _previous_month_bounds(datetime.now(UTC))
         sellers = await db.execute(select(User).where(User.stripe_connect_id.is_not(None)))
         for seller in sellers.scalars():
             revenue_rows = await db.execute(select(Tool.id).where(Tool.seller_id == seller.id))
@@ -784,12 +805,12 @@ async def run_scheduler_loop(stop_event: asyncio.Event) -> None:
             logger.exception("Billing scheduler loop failed")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
 async def run_scheduled_jobs_once() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     day_key = f"billing:last-daily:{now.date().isoformat()}"
     if not await _redis_client.get(day_key):
         await run_daily_aggregation()
@@ -807,7 +828,9 @@ async def run_scheduled_jobs_once() -> None:
 
 
 def verify_webhook(payload: bytes, signature: str):
-    return stripe.Webhook.construct_event(payload=payload, sig_header=signature, secret=settings.stripe_webhook_secret)
+    return stripe.Webhook.construct_event(
+        payload=payload, sig_header=signature, secret=settings.stripe_webhook_secret
+    )
 
 
 async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
@@ -835,10 +858,14 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
         logger.info("Stripe account updated: %s", data.get("id"))
 
 
-async def _update_transaction_status(db: AsyncSession, payment_intent_id: str | None, status: TransactionStatus) -> None:
+async def _update_transaction_status(
+    db: AsyncSession, payment_intent_id: str | None, status: TransactionStatus
+) -> None:
     if not payment_intent_id:
         return
-    result = await db.execute(select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id))
+    result = await db.execute(
+        select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id)
+    )
     for transaction in result.scalars():
         transaction.status = status
     await db.commit()
@@ -902,7 +929,9 @@ async def _get_checkout_records(
     transaction_id: uuid.UUID | None,
 ) -> tuple[ToolPurchase | None, Transaction | None]:
     if not purchase_id or not transaction_id:
-        logger.warning("Ignoring Stripe checkout webhook with missing purchase or transaction metadata.")
+        logger.warning(
+            "Ignoring Stripe checkout webhook with missing purchase or transaction metadata."
+        )
         return None, None
 
     purchase = await db.get(ToolPurchase, purchase_id)
@@ -922,7 +951,9 @@ async def _get_checkout_records(
     return purchase, transaction
 
 
-def _checkout_transaction_matches_purchase(transaction: Transaction, purchase: ToolPurchase) -> bool:
+def _checkout_transaction_matches_purchase(
+    transaction: Transaction, purchase: ToolPurchase
+) -> bool:
     return (
         transaction.type == TransactionType.full_purchase
         and transaction.buyer_id == purchase.buyer_id

@@ -3,6 +3,7 @@ Internal service-to-service endpoints.
 Secured by CONVERTER_SECRET header — never exposed via Clerk auth.
 Used by the converter service to register analyzed GitHub repos as draft tools.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,7 +33,9 @@ SYSTEM_SELLER_EMAIL = "converter@internal.hackmarket.io"
 def _verify_converter_secret(x_converter_secret: Annotated[str | None, Header()] = None) -> None:
     if not settings.converter_secret:
         raise HTTPException(status_code=503, detail="Internal endpoints not configured.")
-    if not x_converter_secret or not secrets.compare_digest(x_converter_secret, settings.converter_secret):
+    if not x_converter_secret or not secrets.compare_digest(
+        x_converter_secret, settings.converter_secret
+    ):
         raise HTTPException(status_code=401, detail="Invalid converter secret.")
 
 
@@ -71,11 +74,8 @@ async def _get_or_create_system_seller(db: AsyncSession):
         from sqlalchemy import update
 
         from app.models.user import User
-        await db.execute(
-            update(User)
-            .where(User.id == user.id)
-            .values(role=UserRole.both)
-        )
+
+        await db.execute(update(User).where(User.id == user.id).values(role=UserRole.both))
         await db.commit()
         await db.refresh(user)
     return user
@@ -93,8 +93,14 @@ def _build_input_schema(endpoints: list[EndpointSpec]) -> dict:
     for ep in endpoints:
         if ep.request_body:
             for name, type_desc in ep.request_body.items():
-                fields.append({"name": name, "type": "string", "description": type_desc, "required": False})
-    return {"fields": fields} if fields else {"fields": [{"name": "input", "type": "string", "required": False}]}
+                fields.append(
+                    {"name": name, "type": "string", "description": type_desc, "required": False}
+                )
+    return (
+        {"fields": fields}
+        if fields
+        else {"fields": [{"name": "input", "type": "string", "required": False}]}
+    )
 
 
 def _build_output_schema(endpoints: list[EndpointSpec]) -> dict:
@@ -115,6 +121,7 @@ def _build_documentation(req: ConverterImportRequest) -> str:
                 lines.append(f"- `{field}`: {desc}")
         if ep.response_example:
             import json
+
             lines.append("\n**Response Example:**")
             lines.append(f"```json\n{json.dumps(ep.response_example, indent=2)}\n```")
         lines.append("")

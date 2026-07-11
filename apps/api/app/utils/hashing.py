@@ -31,7 +31,7 @@ def is_api_key_format(raw_key: str) -> bool:
         return False
     if not _MIN_API_KEY_LENGTH <= len(raw_key) <= _MAX_API_KEY_LENGTH:
         return False
-    return all(char.isalnum() or char in "-_" for char in raw_key[len(_PREFIX):])
+    return all(char.isalnum() or char in "-_" for char in raw_key[len(_PREFIX) :])
 
 
 def key_prefix(raw_key: str) -> str:

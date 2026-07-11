@@ -66,7 +66,10 @@ def test_production_requires_https_clerk_issuer_url() -> None:
             cors_origin_regex="",
             database_url="postgresql://user:secret@db.internal:5432/hackmarket",
             redis_url="redis://redis.internal:6379",
-            **{**PRODUCTION_REQUIRED, "clerk_issuer_url": "http://pleasing-racer-55.clerk.accounts.dev"},
+            **{
+                **PRODUCTION_REQUIRED,
+                "clerk_issuer_url": "http://pleasing-racer-55.clerk.accounts.dev",
+            },
         )
 
 
@@ -339,7 +342,11 @@ def test_production_requires_openrouter_unless_fallback_is_explicitly_allowed() 
             cors_origin_regex="",
             database_url="postgresql://user:secret@db.internal:5432/hackmarket",
             redis_url="redis://redis.internal:6379",
-            **{key: value for key, value in PRODUCTION_REQUIRED.items() if key != "openrouter_api_key"},
+            **{
+                key: value
+                for key, value in PRODUCTION_REQUIRED.items()
+                if key != "openrouter_api_key"
+            },
         )
 
     settings = Settings(

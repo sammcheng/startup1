@@ -87,7 +87,9 @@ def _parse_filters(
 
 
 def _demo_client_identifier(request: Request) -> str:
-    forwarded_for = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for")
+    forwarded_for = request.headers.get("cf-connecting-ip") or request.headers.get(
+        "x-forwarded-for"
+    )
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return request.client.host if request.client else "anonymous"
@@ -431,12 +433,16 @@ async def run_tool_demo(
         upstream_media_type = upstream_response.headers.get("content-type", "application/json")
         normalized_gateway_error = proxy_service.normalize_platform_gateway_error(upstream_response)
         if normalized_gateway_error:
-            upstream_status_code, upstream_content, upstream_headers, upstream_media_type = normalized_gateway_error
+            upstream_status_code, upstream_content, upstream_headers, upstream_media_type = (
+                normalized_gateway_error
+            )
     except AppError:
         raise
     except httpx.TimeoutException:
         upstream_status_code = status.HTTP_504_GATEWAY_TIMEOUT
-        upstream_content = b'{"error":{"code":"TOOL_TIMEOUT","message":"The tool demo took too long to respond."}}'
+        upstream_content = (
+            b'{"error":{"code":"TOOL_TIMEOUT","message":"The tool demo took too long to respond."}}'
+        )
         upstream_headers = {"content-type": "application/json"}
     except httpx.HTTPError:
         upstream_content = b'{"error":{"code":"TOOL_UNAVAILABLE","message":"The tool demo could not be reached right now."}}'
@@ -570,6 +576,7 @@ async def delete_tool(
 
     if await tool_service.has_active_consumers(db, tool_id):
         import logging
+
         logging.getLogger(__name__).warning(
             "Tool %s (%s) paused by seller %s but has active consumers in last 30 days",
             tool.slug,

@@ -5,8 +5,8 @@ from app.services.container_service import ProjectAnalysis, ToolConfig
 from app.services.render_service import (
     _build_image_service_payload,
     _build_service_payload,
-    build_render_service_name,
     build_remote_image_uri,
+    build_render_service_name,
     deploy_image_to_render,
     deploy_tool_to_render,
 )
@@ -111,7 +111,11 @@ async def test_deploy_tool_to_render_requires_github_url(monkeypatch, live_tool)
         dependencies_file="requirements.txt",
         has_dockerfile=False,
     )
-    config = ToolConfig(entry_command="uvicorn main:app --host 0.0.0.0 --port $PORT", port=8000, environment_variables={})
+    config = ToolConfig(
+        entry_command="uvicorn main:app --host 0.0.0.0 --port $PORT",
+        port=8000,
+        environment_variables={},
+    )
 
     try:
         await deploy_tool_to_render(live_tool, analysis, config)
@@ -159,9 +163,13 @@ async def test_deploy_tool_to_render_updates_existing_service(monkeypatch, live_
         assert service_id == "srv_existing"
         return "https://hm-tool-live-tool.onrender.com"
 
-    monkeypatch.setattr("app.services.render_service._find_service_by_name", fake_find_service_by_name)
+    monkeypatch.setattr(
+        "app.services.render_service._find_service_by_name", fake_find_service_by_name
+    )
     monkeypatch.setattr("app.services.render_service._render_request", fake_render_request)
-    monkeypatch.setattr("app.services.render_service._wait_for_service_url", fake_wait_for_service_url)
+    monkeypatch.setattr(
+        "app.services.render_service._wait_for_service_url", fake_wait_for_service_url
+    )
 
     url = await deploy_tool_to_render(live_tool, analysis, config)
 
@@ -223,11 +231,17 @@ async def test_deploy_image_to_render_updates_existing_service(monkeypatch, live
         assert service_id == "srv_existing"
         return "https://hm-tool-live-tool.onrender.com"
 
-    monkeypatch.setattr("app.services.render_service._find_service_by_name", fake_find_service_by_name)
+    monkeypatch.setattr(
+        "app.services.render_service._find_service_by_name", fake_find_service_by_name
+    )
     monkeypatch.setattr("app.services.render_service._publish_image_to_ghcr", fake_publish_image)
-    monkeypatch.setattr("app.services.render_service.ensure_registry_credential", fake_registry_credential)
+    monkeypatch.setattr(
+        "app.services.render_service.ensure_registry_credential", fake_registry_credential
+    )
     monkeypatch.setattr("app.services.render_service._render_request", fake_render_request)
-    monkeypatch.setattr("app.services.render_service._wait_for_service_url", fake_wait_for_service_url)
+    monkeypatch.setattr(
+        "app.services.render_service._wait_for_service_url", fake_wait_for_service_url
+    )
 
     url = await deploy_image_to_render(live_tool, "hackmarket/tool:latest")
 

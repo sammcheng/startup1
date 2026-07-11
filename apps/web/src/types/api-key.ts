@@ -1,4 +1,4 @@
-export interface ApiKeyRecord {
+export interface APIKeyListItem {
   id: string;
   key_prefix: string;
   name: string;
@@ -7,7 +7,7 @@ export interface ApiKeyRecord {
   created_at: string;
 }
 
-export interface ApiKeyCreateResponse {
+export interface APIKeyCreateResponse {
   id: string;
   key: string;
   key_prefix: string;

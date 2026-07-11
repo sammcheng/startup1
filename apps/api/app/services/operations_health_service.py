@@ -37,7 +37,9 @@ async def get_operations_health(db: AsyncSession, redis: Redis) -> dict[str, Any
             "worker_heartbeat": worker_healthy,
             "worker_health_check_key": settings.worker_health_check_key,
         }
-        checks["queue"] = "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
+        checks["queue"] = (
+            "ok" if depth < settings.alert_queue_depth_threshold else "degraded_high_depth"
+        )
         checks["worker"] = "ok" if worker_healthy else "missing_heartbeat"
     except Exception:
         queue = {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -102,9 +102,13 @@ async def list_latest_tool_jobs(
 
 async def processing_job_health(db: AsyncSession, *, now: datetime | None = None) -> dict[str, int]:
     """Summarize processing-job risk for production readiness checks."""
-    current_time = now or datetime.now(timezone.utc)
-    stale_before = current_time - timedelta(seconds=settings.alert_processing_job_stale_after_seconds)
-    failed_since = current_time - timedelta(seconds=settings.alert_failed_processing_jobs_window_seconds)
+    current_time = now or datetime.now(UTC)
+    stale_before = current_time - timedelta(
+        seconds=settings.alert_processing_job_stale_after_seconds
+    )
+    failed_since = current_time - timedelta(
+        seconds=settings.alert_failed_processing_jobs_window_seconds
+    )
 
     stuck_result = await db.execute(
         select(func.count())
@@ -186,7 +190,7 @@ async def enqueue_tool_processing(
         raise
 
     job.status = ToolProcessingJobStatus.queued
-    job.enqueued_at = datetime.now(timezone.utc)
+    job.enqueued_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)
     return job
@@ -225,10 +229,12 @@ async def retry_failed_tool_processing_job(
     return retry_job
 
 
-async def mark_job_running(db: AsyncSession, job: ToolProcessingJob, *, attempt: int) -> ToolProcessingJob:
+async def mark_job_running(
+    db: AsyncSession, job: ToolProcessingJob, *, attempt: int
+) -> ToolProcessingJob:
     job.status = ToolProcessingJobStatus.running
     job.attempts = attempt
-    job.started_at = datetime.now(timezone.utc)
+    job.started_at = datetime.now(UTC)
     job.finished_at = None
     await db.commit()
     await db.refresh(job)
@@ -254,16 +260,18 @@ async def mark_job_retrying(
 async def mark_job_succeeded(db: AsyncSession, job: ToolProcessingJob) -> ToolProcessingJob:
     job.status = ToolProcessingJobStatus.succeeded
     job.last_error = None
-    job.finished_at = datetime.now(timezone.utc)
+    job.finished_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)
     return job
 
 
-async def mark_job_failed(db: AsyncSession, job: ToolProcessingJob, *, error: str) -> ToolProcessingJob:
+async def mark_job_failed(
+    db: AsyncSession, job: ToolProcessingJob, *, error: str
+) -> ToolProcessingJob:
     job.status = ToolProcessingJobStatus.failed
     job.last_error = error
-    job.finished_at = datetime.now(timezone.utc)
+    job.finished_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)
     return job

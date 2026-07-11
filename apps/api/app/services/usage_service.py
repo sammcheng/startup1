@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 from sqlalchemy import Float, cast, func, select
@@ -8,17 +8,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import AsyncSessionLocal
 from app.models import Tool, UsageLog
-from app.schemas.usage import Granularity, UsageLogCreate, UsageSummaryResponse, UsageTimeBucket, UsageToolBreakdown
+from app.schemas.usage import (
+    Granularity,
+    UsageLogCreate,
+    UsageSummaryResponse,
+    UsageTimeBucket,
+    UsageToolBreakdown,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_date_range(start_date: date | None, end_date: date | None) -> tuple[date, date, datetime, datetime]:
-    today = datetime.now(timezone.utc).date()
+def normalize_date_range(
+    start_date: date | None, end_date: date | None
+) -> tuple[date, date, datetime, datetime]:
+    today = datetime.now(UTC).date()
     effective_end = end_date or today
     effective_start = start_date or (effective_end - timedelta(days=29))
-    start_dt = datetime.combine(effective_start, time.min, tzinfo=timezone.utc)
-    end_dt = datetime.combine(effective_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    start_dt = datetime.combine(effective_start, time.min, tzinfo=UTC)
+    end_dt = datetime.combine(effective_end + timedelta(days=1), time.min, tzinfo=UTC)
     return effective_start, effective_end, start_dt, end_dt
 
 
@@ -49,7 +57,9 @@ async def get_usage_summary_for_user(
     if tool_id:
         filters.append(UsageLog.tool_id == tool_id)
 
-    return await _build_summary(db, filters, granularity, effective_start, effective_end, include_unique_users=False)
+    return await _build_summary(
+        db, filters, granularity, effective_start, effective_end, include_unique_users=False
+    )
 
 
 async def get_usage_summary_for_tool(
@@ -66,7 +76,9 @@ async def get_usage_summary_for_tool(
         UsageLog.request_timestamp < end_dt,
     ]
 
-    return await _build_summary(db, filters, granularity, effective_start, effective_end, include_unique_users=True)
+    return await _build_summary(
+        db, filters, granularity, effective_start, effective_end, include_unique_users=True
+    )
 
 
 async def _build_summary(
@@ -122,8 +134,12 @@ async def _build_summary(
                 tool_name=row.tool_name,
                 total_requests=int(row.total_requests or 0),
                 total_cost=Decimal(row.total_cost or 0),
-                avg_response_time=float(row.avg_response_time) if row.avg_response_time is not None else None,
-                unique_users=int(row.unique_users) if include_unique_users and row.unique_users is not None else None,
+                avg_response_time=float(row.avg_response_time)
+                if row.avg_response_time is not None
+                else None,
+                unique_users=int(row.unique_users)
+                if include_unique_users and row.unique_users is not None
+                else None,
                 total_revenue=Decimal(row.total_revenue or 0) if include_unique_users else None,
             )
         )

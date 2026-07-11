@@ -3,7 +3,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "production_load_smoke_check.py"
 SPEC = importlib.util.spec_from_file_location("production_load_smoke_check", SCRIPT_PATH)
 assert SPEC and SPEC.loader
@@ -101,7 +100,9 @@ def test_summarize_results_fails_when_latency_exceeds_threshold():
 
 
 def test_run_target_collects_failures_and_error_rate():
-    target = load_smoke.RequestTarget("api readiness", "GET", "https://api.example.com/ready", {200}, {}, None)
+    target = load_smoke.RequestTarget(
+        "api readiness", "GET", "https://api.example.com/ready", {200}, {}, None
+    )
     calls = 0
 
     def fake_requester(current_target, timeout):

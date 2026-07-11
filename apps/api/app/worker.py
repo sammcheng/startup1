@@ -8,7 +8,13 @@ from arq import Retry, cron
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client, engine
 from app.models import ToolProcessingJobStatus
-from app.services import alert_service, billing_service, container_service, job_service, queue_service
+from app.services import (
+    alert_service,
+    billing_service,
+    container_service,
+    job_service,
+    queue_service,
+)
 from app.services.proxy_service import close_http_client
 
 logger = logging.getLogger(__name__)
@@ -84,7 +90,11 @@ async def run_billing_scheduled_jobs(ctx: dict) -> dict[str, str]:  # noqa: ARG0
 
 
 async def worker_startup(ctx: dict) -> None:  # noqa: ARG001
-    logger.info("Starting Hackmarket worker (env=%s, queue=%s)", settings.environment, settings.worker_queue_name)
+    logger.info(
+        "Starting Hackmarket worker (env=%s, queue=%s)",
+        settings.environment,
+        settings.worker_queue_name,
+    )
 
 
 async def worker_shutdown(ctx: dict) -> None:  # noqa: ARG001

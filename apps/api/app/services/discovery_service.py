@@ -17,10 +17,53 @@ from app.models.tool import Tool, ToolCategory, ToolStatus
 
 STOP_WORDS: frozenset[str] = frozenset(
     {
-        "a","an","the","for","to","of","in","on","at","with","and","or","but",
-        "is","are","do","does","did","i","we","you","my","our","your","it","its",
-        "that","this","from","have","has","had","want","need","how","can","could",
-        "should","would","will","app","project","build","using","use","make","get",
+        "a",
+        "an",
+        "the",
+        "for",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "with",
+        "and",
+        "or",
+        "but",
+        "is",
+        "are",
+        "do",
+        "does",
+        "did",
+        "i",
+        "we",
+        "you",
+        "my",
+        "our",
+        "your",
+        "it",
+        "its",
+        "that",
+        "this",
+        "from",
+        "have",
+        "has",
+        "had",
+        "want",
+        "need",
+        "how",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "app",
+        "project",
+        "build",
+        "using",
+        "use",
+        "make",
+        "get",
     }
 )
 
@@ -102,11 +145,7 @@ async def discover_tools(
     """Return ranked (tool, score, matched_keywords, fit_line) tuples."""
     tokens = tokenize(query)
 
-    stmt = (
-        select(Tool)
-        .where(Tool.status == ToolStatus.live)
-        .options(selectinload(Tool.seller))
-    )
+    stmt = select(Tool).where(Tool.status == ToolStatus.live).options(selectinload(Tool.seller))
     if categories:
         stmt = stmt.where(Tool.category.in_(categories))
 

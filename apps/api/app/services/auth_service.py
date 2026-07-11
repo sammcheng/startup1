@@ -42,11 +42,17 @@ async def sync_user_from_identity(
             email=email,
             username=await _build_unique_username(
                 db,
-                preferred=(profile.username if profile else None) or identity.username or _username_from_email(email),
+                preferred=(profile.username if profile else None)
+                or identity.username
+                or _username_from_email(email),
                 clerk_id=identity.clerk_id,
             ),
-            display_name=(profile.display_name if profile else None) or identity.display_name or _display_name_from_email(email),
-            avatar_url=_safe_avatar_url((profile.avatar_url if profile else None), identity.avatar_url),
+            display_name=(profile.display_name if profile else None)
+            or identity.display_name
+            or _display_name_from_email(email),
+            avatar_url=_safe_avatar_url(
+                (profile.avatar_url if profile else None), identity.avatar_url
+            ),
             role=UserRole.both,
             is_active=True,
         )
@@ -62,8 +68,12 @@ async def sync_user_from_identity(
         clerk_id=identity.clerk_id,
         current_user_id=user.id,
     )
-    user.display_name = (profile.display_name if profile else None) or identity.display_name or user.display_name
-    user.avatar_url = _safe_avatar_url((profile.avatar_url if profile else None), identity.avatar_url, user.avatar_url)
+    user.display_name = (
+        (profile.display_name if profile else None) or identity.display_name or user.display_name
+    )
+    user.avatar_url = _safe_avatar_url(
+        (profile.avatar_url if profile else None), identity.avatar_url, user.avatar_url
+    )
     user.is_active = True
     await db.commit()
     await db.refresh(user)
@@ -100,7 +110,9 @@ def _username_from_email(email: str) -> str:
 
 
 def _display_name_from_email(email: str) -> str:
-    return _username_from_email(email).replace("-", " ").replace("_", " ").title() or "Hackmarket User"
+    return (
+        _username_from_email(email).replace("-", " ").replace("_", " ").title() or "Hackmarket User"
+    )
 
 
 def _safe_avatar_url(*values: str | None) -> str | None:

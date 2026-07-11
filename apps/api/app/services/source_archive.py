@@ -122,7 +122,10 @@ def extract_safe_zip(
             for info, normalized_name in members:
                 target = destination / normalized_name
                 resolved_target = target.resolve(strict=False)
-                if destination_root != resolved_target and destination_root not in resolved_target.parents:
+                if (
+                    destination_root != resolved_target
+                    and destination_root not in resolved_target.parents
+                ):
                     raise SourceArchiveError(
                         "The uploaded zip contains an unsafe file path.",
                         filename=info.filename,

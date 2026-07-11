@@ -75,10 +75,14 @@ def test_list_tools_only_live(client, seller, live_tool, draft_tool, monkeypatch
 
 
 def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monkeypatch):
-    other_live = tool_factory(seller=seller, status=ToolStatus.live, name="Image Labeler", slug="image-labeler")
+    other_live = tool_factory(
+        seller=seller, status=ToolStatus.live, name="Image Labeler", slug="image-labeler"
+    )
 
     async def fake_list_live_tools(db, filters, page, limit):
-        items = [tool for tool in [live_tool, other_live] if filters.search.lower() in tool.name.lower()]
+        items = [
+            tool for tool in [live_tool, other_live] if filters.search.lower() in tool.name.lower()
+        ]
         return items, len(items)
 
     async def fake_get_view_counts(redis, slugs):
@@ -136,7 +140,9 @@ def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["id"] == str(draft_tool.id)
-    assert response.json()["environment_variables"] == [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
+    assert response.json()["environment_variables"] == [
+        {"key": "OPENAI_API_KEY", "value": "sk-live-secret"}
+    ]
     assert response.json()["source_s3_key"] == "tools/draft/source.zip"
 
 
@@ -187,7 +193,9 @@ def test_public_tool_docs_use_configured_public_api_url(client, live_tool, monke
         return live_tool
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
-    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io")
+    monkeypatch.setattr(
+        "app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io"
+    )
 
     response = client.get(
         f"/v1/tools/{live_tool.slug}/docs",
@@ -206,7 +214,9 @@ def test_public_tool_docs_normalize_versioned_public_api_url(client, live_tool, 
         return live_tool
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
-    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/v1")
+    monkeypatch.setattr(
+        "app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/v1"
+    )
 
     response = client.get(f"/v1/tools/{live_tool.slug}/docs")
 
@@ -222,15 +232,22 @@ def test_public_tool_docs_keep_gateway_public_api_url(client, live_tool, monkeyp
         return live_tool
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
-    monkeypatch.setattr("app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/api/v1")
+    monkeypatch.setattr(
+        "app.services.docs_service.settings.public_api_base_url", "https://api.hackmarket.io/api/v1"
+    )
 
     response = client.get(f"/v1/tools/{live_tool.slug}/docs")
 
     assert response.status_code == 200
-    assert response.json()["endpoint_url"] == f"https://api.hackmarket.io/api/v1/tools/{live_tool.slug}"
+    assert (
+        response.json()["endpoint_url"]
+        == f"https://api.hackmarket.io/api/v1/tools/{live_tool.slug}"
+    )
 
 
-def test_get_my_tool_returns_not_found_for_other_seller(client, auth_overrides, buyer, draft_tool, monkeypatch):
+def test_get_my_tool_returns_not_found_for_other_seller(
+    client, auth_overrides, buyer, draft_tool, monkeypatch
+):
     auth_overrides(current_user=buyer)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -370,7 +387,9 @@ def test_duplicate_slug_handled(client, auth_overrides, seller, tool_factory, mo
     assert second.json()["slug"] == "vision-agent-2"
 
 
-def test_submit_repo_uses_signed_in_user_as_seller(client, auth_overrides, user, tool_factory, monkeypatch):
+def test_submit_repo_uses_signed_in_user_as_seller(
+    client, auth_overrides, user, tool_factory, monkeypatch
+):
     auth_overrides(current_user=user)
     captured: dict[str, object] = {}
 
@@ -398,7 +417,9 @@ def test_submit_repo_uses_signed_in_user_as_seller(client, auth_overrides, user,
 
     async def fake_create_tool(db, seller_id, body):
         captured["seller_id"] = seller_id
-        tool = tool_factory(seller=user, status=ToolStatus.draft, name=body.name, slug="owned-draft")
+        tool = tool_factory(
+            seller=user, status=ToolStatus.draft, name=body.name, slug="owned-draft"
+        )
         tool.tagline = body.tagline
         tool.description = body.description
         tool.ownership_type = body.ownership_type
@@ -456,7 +477,9 @@ def test_submit_repo_anonymous_uses_system_seller(client, seller, tool_factory, 
 
     async def fake_create_tool(db, seller_id, body):
         captured["seller_id"] = seller_id
-        tool = tool_factory(seller=seller, status=ToolStatus.draft, name=body.name, slug="preview-draft")
+        tool = tool_factory(
+            seller=seller, status=ToolStatus.draft, name=body.name, slug="preview-draft"
+        )
         tool.tagline = body.tagline
         tool.description = body.description
         tool.ownership_type = body.ownership_type
@@ -509,9 +532,7 @@ def test_submit_repo_production_requires_sign_in_for_anonymous_preview(client, m
     assert "sign in" in payload["error"]["message"].lower()
 
 
-def test_submit_repo_production_requires_live_analysis(
-    client, auth_overrides, user, monkeypatch
-):
+def test_submit_repo_production_requires_live_analysis(client, auth_overrides, user, monkeypatch):
     auth_overrides(current_user=user)
 
     async def fake_clone_repo(github_url, repo_path):

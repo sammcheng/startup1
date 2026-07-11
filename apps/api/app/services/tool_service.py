@@ -63,7 +63,7 @@ def _slug_candidate(base_slug: str, attempt: int) -> str:
     if attempt == 0:
         return base_slug
     suffix = f"-{attempt + 1}"
-    return f"{base_slug[:100 - len(suffix)]}{suffix}"
+    return f"{base_slug[: 100 - len(suffix)]}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +181,7 @@ async def create_tool(
 
         # Re-fetch with seller relationship loaded for response serialisation
         result = await db.execute(
-            select(Tool)
-            .where(Tool.id == tool.id)
-            .options(selectinload(Tool.seller))
+            select(Tool).where(Tool.id == tool.id).options(selectinload(Tool.seller))
         )
         return result.scalar_one()
 
@@ -196,15 +194,13 @@ def _slug_suffix_attempt(slug: str, base_slug: str) -> int:
     prefix = f"{base_slug}-"
     if not slug.startswith(prefix):
         return 0
-    suffix = slug[len(prefix):]
+    suffix = slug[len(prefix) :]
     return int(suffix) - 1 if suffix.isdigit() else 0
 
 
 async def get_tool_by_slug(db: AsyncSession, slug: str) -> Tool | None:
     result = await db.execute(
-        select(Tool)
-        .where(Tool.slug == slug)
-        .options(selectinload(Tool.seller))
+        select(Tool).where(Tool.slug == slug).options(selectinload(Tool.seller))
     )
     return result.scalar_one_or_none()
 
@@ -236,14 +232,14 @@ async def invalidate_tool_cache(redis: Redis, slug: str) -> None:
 
 async def get_tool_by_id(db: AsyncSession, tool_id: uuid.UUID) -> Tool | None:
     result = await db.execute(
-        select(Tool)
-        .where(Tool.id == tool_id)
-        .options(selectinload(Tool.seller))
+        select(Tool).where(Tool.id == tool_id).options(selectinload(Tool.seller))
     )
     return result.scalar_one_or_none()
 
 
-async def get_tool_for_seller(db: AsyncSession, tool_id: uuid.UUID, seller_id: uuid.UUID) -> Tool | None:
+async def get_tool_for_seller(
+    db: AsyncSession, tool_id: uuid.UUID, seller_id: uuid.UUID
+) -> Tool | None:
     result = await db.execute(
         select(Tool)
         .where(
@@ -265,9 +261,7 @@ async def list_live_tools(
     Return a page of live tools matching *filters*, plus the total count.
     """
     base_query = (
-        select(Tool)
-        .where(Tool.status == ToolStatus.live)
-        .options(selectinload(Tool.seller))
+        select(Tool).where(Tool.status == ToolStatus.live).options(selectinload(Tool.seller))
     )
     count_query = select(func.count()).select_from(Tool).where(Tool.status == ToolStatus.live)
 
@@ -350,7 +344,9 @@ async def list_admin_tools(
     return list(items_result.scalars()), total_result.scalar_one()
 
 
-async def update_tool(db: AsyncSession, tool: Tool, data: ToolUpdate, redis: Redis | None = None) -> Tool:
+async def update_tool(
+    db: AsyncSession, tool: Tool, data: ToolUpdate, redis: Redis | None = None
+) -> Tool:
     """Apply only the fields explicitly provided in *data*."""
     updates = data.model_dump(exclude_unset=True)
     for field, value in updates.items():
@@ -359,9 +355,7 @@ async def update_tool(db: AsyncSession, tool: Tool, data: ToolUpdate, redis: Red
     if redis:
         await invalidate_tool_cache(redis, tool.slug)
     result = await db.execute(
-        select(Tool)
-        .where(Tool.id == tool.id)
-        .options(selectinload(Tool.seller))
+        select(Tool).where(Tool.id == tool.id).options(selectinload(Tool.seller))
     )
     return result.scalar_one()
 
@@ -384,9 +378,7 @@ async def update_tool_review_status(
     if redis:
         await invalidate_tool_cache(redis, tool.slug)
     result = await db.execute(
-        select(Tool)
-        .where(Tool.id == tool.id)
-        .options(selectinload(Tool.seller))
+        select(Tool).where(Tool.id == tool.id).options(selectinload(Tool.seller))
     )
     return result.scalar_one()
 

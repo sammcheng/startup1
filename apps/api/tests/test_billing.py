@@ -113,12 +113,20 @@ class FakePurchaseSession:
         if self.execute_calls == 1:
             return SimpleNamespace(scalar_one_or_none=lambda: self.existing)
         if self.execute_calls == 2:
-            pending = self.pending if self.pending and self.pending.status == PurchaseStatus.pending else None
+            pending = (
+                self.pending
+                if self.pending and self.pending.status == PurchaseStatus.pending
+                else None
+            )
             return SimpleNamespace(scalar_one_or_none=lambda: pending)
         if self.execute_calls == 5:
             return SimpleNamespace(scalar_one_or_none=lambda: self.existing)
         if self.execute_calls == 6:
-            pending = self.pending if self.pending and self.pending.status == PurchaseStatus.pending else None
+            pending = (
+                self.pending
+                if self.pending and self.pending.status == PurchaseStatus.pending
+                else None
+            )
             return SimpleNamespace(scalar_one_or_none=lambda: pending)
         return SimpleNamespace(scalar_one_or_none=lambda: self.pending_transaction)
 
@@ -218,8 +226,18 @@ async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
     period_end = datetime.now(UTC)
     period_start = period_end - timedelta(days=7)
     usage_rows = [
-        SimpleNamespace(tool_id=live_tool.id, name=live_tool.name, seller_id=live_tool.seller_id, amount=Decimal("1.25")),
-        SimpleNamespace(tool_id=live_tool.id, name=live_tool.name, seller_id=live_tool.seller_id, amount=Decimal("2.75")),
+        SimpleNamespace(
+            tool_id=live_tool.id,
+            name=live_tool.name,
+            seller_id=live_tool.seller_id,
+            amount=Decimal("1.25"),
+        ),
+        SimpleNamespace(
+            tool_id=live_tool.id,
+            name=live_tool.name,
+            seller_id=live_tool.seller_id,
+            amount=Decimal("2.75"),
+        ),
     ]
     db = FakeBillingSession(buyer, live_tool, usage_rows)
 
@@ -246,7 +264,12 @@ async def test_platform_fee_calculated(buyer, live_tool, monkeypatch):
     period_end = datetime.now(UTC)
     period_start = period_end - timedelta(days=7)
     usage_rows = [
-        SimpleNamespace(tool_id=live_tool.id, name=live_tool.name, seller_id=live_tool.seller_id, amount=Decimal("10.00")),
+        SimpleNamespace(
+            tool_id=live_tool.id,
+            name=live_tool.name,
+            seller_id=live_tool.seller_id,
+            amount=Decimal("10.00"),
+        ),
     ]
     db = FakeBillingSession(buyer, live_tool, usage_rows)
 
@@ -355,7 +378,9 @@ async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool
 
 
 @pytest.mark.asyncio
-async def test_purchase_tool_creates_pending_purchase_and_checkout_session(buyer, live_tool, monkeypatch):
+async def test_purchase_tool_creates_pending_purchase_and_checkout_session(
+    buyer, live_tool, monkeypatch
+):
     live_tool.ownership_type = OwnershipType.full_sale
     live_tool.one_time_price = Decimal("100.00")
     db = FakePurchaseSession(live_tool)
@@ -410,7 +435,9 @@ async def test_purchase_tool_rejects_untrusted_checkout_session_url(buyer, live_
 
 
 @pytest.mark.asyncio
-async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(buyer, live_tool, monkeypatch):
+async def test_purchase_tool_reuses_winning_pending_purchase_after_db_race(
+    buyer, live_tool, monkeypatch
+):
     live_tool.ownership_type = OwnershipType.full_sale
     live_tool.one_time_price = Decimal("100.00")
     winning_pending = ToolPurchase(
@@ -530,7 +557,9 @@ async def test_purchase_tool_reuses_pending_checkout_session(buyer, live_tool, m
 
 
 @pytest.mark.asyncio
-async def test_purchase_tool_retries_pending_purchase_with_untrusted_checkout_url(buyer, live_tool, monkeypatch):
+async def test_purchase_tool_retries_pending_purchase_with_untrusted_checkout_url(
+    buyer, live_tool, monkeypatch
+):
     live_tool.ownership_type = OwnershipType.full_sale
     live_tool.one_time_price = Decimal("100.00")
     stale_pending = ToolPurchase(
@@ -558,7 +587,9 @@ async def test_purchase_tool_retries_pending_purchase_with_untrusted_checkout_ur
         period_end=datetime.now(UTC),
         created_at=datetime.now(UTC),
     )
-    db = FakePurchaseSession(live_tool, pending=stale_pending, pending_transaction=stale_transaction)
+    db = FakePurchaseSession(
+        live_tool, pending=stale_pending, pending_transaction=stale_transaction
+    )
 
     async def fake_call_stripe(func, *args, **kwargs):
         return {"id": "cs_test_existing", "url": "https://attacker.example/checkout"}
@@ -583,7 +614,9 @@ async def test_purchase_tool_retries_pending_purchase_with_untrusted_checkout_ur
 
 
 @pytest.mark.asyncio
-async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer, live_tool, monkeypatch):
+async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(
+    buyer, live_tool, monkeypatch
+):
     live_tool.ownership_type = OwnershipType.full_sale
     live_tool.one_time_price = Decimal("100.00")
     stale_pending = ToolPurchase(
@@ -638,7 +671,9 @@ async def test_purchase_tool_terminates_stale_pending_and_retries_checkout(buyer
 
 
 @pytest.mark.asyncio
-async def test_purchase_tool_fails_pending_purchase_when_checkout_creation_fails(buyer, live_tool, monkeypatch):
+async def test_purchase_tool_fails_pending_purchase_when_checkout_creation_fails(
+    buyer, live_tool, monkeypatch
+):
     live_tool.ownership_type = OwnershipType.full_sale
     live_tool.one_time_price = Decimal("100.00")
     db = FakePurchaseSession(live_tool)
@@ -666,7 +701,9 @@ async def test_purchase_tool_rejects_seller_buying_own_tool(seller, live_tool):
         await billing_service.purchase_tool(db, seller, live_tool.id)
 
 
-def test_purchase_tool_route_returns_checkout_url(client, auth_overrides, buyer, live_tool, monkeypatch):
+def test_purchase_tool_route_returns_checkout_url(
+    client, auth_overrides, buyer, live_tool, monkeypatch
+):
     auth_overrides(current_user=buyer)
     purchase = ToolPurchase(
         id=uuid.uuid4(),
@@ -700,7 +737,9 @@ def test_purchase_tool_route_returns_checkout_url(client, auth_overrides, buyer,
     assert payload["checkout_url"] == "https://checkout.stripe.com/session"
 
 
-def test_purchase_tool_route_supports_existing_active_purchase(client, auth_overrides, buyer, live_tool, monkeypatch):
+def test_purchase_tool_route_supports_existing_active_purchase(
+    client, auth_overrides, buyer, live_tool, monkeypatch
+):
     auth_overrides(current_user=buyer)
     purchase = ToolPurchase(
         id=uuid.uuid4(),
@@ -749,7 +788,9 @@ def test_stripe_webhook_requires_configured_secret(client, monkeypatch):
     monkeypatch.setattr(billing_service, "verify_webhook", fail_verify_webhook)
     monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
 
-    response = client.post("/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig_test"})
+    response = client.post(
+        "/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig_test"}
+    )
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "misconfiguration"
@@ -770,7 +811,9 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
     monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
 
-    response = client.post("/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "bad"})
+    response = client.post(
+        "/v1/billing/webhook", content=b"{}", headers={"Stripe-Signature": "bad"}
+    )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_signature"
@@ -799,7 +842,9 @@ def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
     )
 
     assert response.status_code == 204
-    assert handled == [{"type": "checkout.session.completed", "data": {"object": {"id": "cs_test"}}}]
+    assert handled == [
+        {"type": "checkout.session.completed", "data": {"object": {"id": "cs_test"}}}
+    ]
 
 
 def test_stripe_webhook_alerts_when_handler_fails(client, monkeypatch):

@@ -26,7 +26,9 @@ async def test_operations_health_reports_healthy_when_queue_worker_and_jobs_are_
         }
 
     monkeypatch.setattr(operations_health_service.queue_service, "queue_depth", fake_queue_depth)
-    monkeypatch.setattr(operations_health_service.job_service, "processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr(
+        operations_health_service.job_service, "processing_job_health", fake_processing_job_health
+    )
     monkeypatch.setattr(operations_health_service.settings, "alert_queue_depth_threshold", 100)
 
     health = await operations_health_service.get_operations_health(db=object(), redis=_FakeRedis())
@@ -51,10 +53,14 @@ async def test_operations_health_reports_degraded_when_queue_worker_and_jobs_are
         }
 
     monkeypatch.setattr(operations_health_service.queue_service, "queue_depth", fake_queue_depth)
-    monkeypatch.setattr(operations_health_service.job_service, "processing_job_health", fake_processing_job_health)
+    monkeypatch.setattr(
+        operations_health_service.job_service, "processing_job_health", fake_processing_job_health
+    )
     monkeypatch.setattr(operations_health_service.settings, "alert_queue_depth_threshold", 100)
 
-    health = await operations_health_service.get_operations_health(db=object(), redis=_FakeRedis(heartbeat=None))
+    health = await operations_health_service.get_operations_health(
+        db=object(), redis=_FakeRedis(heartbeat=None)
+    )
 
     assert health["status"] == "degraded"
     assert health["checks"] == {

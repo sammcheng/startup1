@@ -285,15 +285,11 @@ def _parse_and_validate(text: str, fallback: RepoAnalysis, allow_fallback: bool)
 
     input_contract = parsed.get("inputContract")
     input_contract = (
-        input_contract[:800]
-        if isinstance(input_contract, str)
-        else fallback.input_contract
+        input_contract[:800] if isinstance(input_contract, str) else fallback.input_contract
     )
     output_contract = parsed.get("outputContract")
     output_contract = (
-        output_contract[:800]
-        if isinstance(output_contract, str)
-        else fallback.output_contract
+        output_contract[:800] if isinstance(output_contract, str) else fallback.output_contract
     )
 
     suggested_price = parsed.get("suggestedPrice")
@@ -379,9 +375,7 @@ async def analyze_repo(repo_path: Path, github_url: str) -> RepoAnalysis:
     manifest = _read_first_existing(repo_path, MANIFEST_NAMES)
     tree = _build_file_tree(repo_path, max_depth=2)
 
-    fallback = _heuristic_analysis(
-        github_url, readme[1] if readme else None, manifest
-    )
+    fallback = _heuristic_analysis(github_url, readme[1] if readme else None, manifest)
 
     allow_fallback = _fallback_allowed()
 
@@ -414,9 +408,7 @@ async def analyze_repo(repo_path: Path, github_url: str) -> RepoAnalysis:
             raise RepoAnalysisUnavailable(
                 "Repository analysis is unavailable right now. Please try again later."
             ) from exc
-        logger.warning(
-            "[repo_analyzer] OpenRouter call failed (%s); using heuristic fallback", exc
-        )
+        logger.warning("[repo_analyzer] OpenRouter call failed (%s); using heuristic fallback", exc)
         return fallback
 
     return _parse_and_validate(text, fallback, allow_fallback)

@@ -1,12 +1,17 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.tool import Tool
+    from app.models.user import User
 
 
 class ToolProcessingJobKind(str, enum.Enum):
@@ -56,7 +61,9 @@ class ToolProcessingJob(Base):
     arq_job_id: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
     trigger: Mapped[str] = mapped_column(String(80), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3", nullable=False)
+    max_attempts: Mapped[int] = mapped_column(
+        Integer, default=3, server_default="3", nullable=False
+    )
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

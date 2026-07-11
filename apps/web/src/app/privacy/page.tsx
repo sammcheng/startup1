@@ -57,7 +57,8 @@ export default function PrivacyPage() {
 
       <TrustSection title="Contact">
         <p>
-          For privacy questions, email <a href="mailto:support@hackmarket.io">support@hackmarket.io</a>.
+          For privacy questions, use the <a href="/support">support page</a> and do not post
+          personal information in a public issue.
         </p>
       </TrustSection>
     </TrustPage>

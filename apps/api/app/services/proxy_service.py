@@ -100,7 +100,9 @@ def filter_response_headers(headers) -> dict[str, str]:
     return filtered
 
 
-def normalize_platform_gateway_error(response: httpx.Response) -> tuple[int, bytes, dict[str, str], str] | None:
+def normalize_platform_gateway_error(
+    response: httpx.Response,
+) -> tuple[int, bytes, dict[str, str], str] | None:
     content_type = response.headers.get("content-type", "")
     if "text/html" not in content_type.lower():
         return None

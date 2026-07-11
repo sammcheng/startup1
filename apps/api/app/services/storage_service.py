@@ -9,15 +9,12 @@ from botocore.exceptions import BotoCoreError, ClientError
 from app.config import settings
 from app.exceptions import UploadFailedError
 
-
 LOCAL_STORAGE_ROOT = Path(settings.local_storage_path)
 
 
 def _use_s3() -> bool:
     return bool(
-        settings.s3_bucket_name
-        and settings.aws_access_key_id
-        and settings.aws_secret_access_key
+        settings.s3_bucket_name and settings.aws_access_key_id and settings.aws_secret_access_key
     )
 
 

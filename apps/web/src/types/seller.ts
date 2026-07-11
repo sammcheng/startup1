@@ -10,6 +10,22 @@ export interface SellerRequestsPoint {
   count: number;
 }
 
+export interface SellerLatencyPoint {
+  date: string;
+  avg_response_time_ms: number;
+}
+
+export interface SellerActivityItem {
+  id: string;
+  tool_id: string;
+  tool_name: string;
+  request_timestamp: string;
+  status_code: number;
+  response_time_ms: number;
+  cost: string;
+  error_message: string | null;
+}
+
 export interface SellerToolSummary {
   tool_id: string;
   tool_name: string;
@@ -19,7 +35,12 @@ export interface SellerToolSummary {
   latest_job_error: string | null;
   requests_this_month: number;
   revenue_this_month: string;
+  unique_users_this_month: number;
   avg_response_time_ms: number | null;
+  p50_response_time_ms: number | null;
+  p95_response_time_ms: number | null;
+  p99_response_time_ms: number | null;
+  uptime_percentage: string | null;
 }
 
 export interface SellerTopTool {
@@ -38,6 +59,9 @@ export interface SellerDashboardResponse {
   avg_response_time_ms: number | null;
   top_tool: SellerTopTool | null;
   revenue_chart_data: SellerRevenuePoint[];
+  request_chart_data: SellerRequestsPoint[];
+  latency_chart_data: SellerLatencyPoint[];
+  recent_activity: SellerActivityItem[];
   tools: SellerToolSummary[];
 }
 

@@ -44,15 +44,19 @@ handler.addFilter(RequestIdFilter())
 if settings.environment == "production":
     handler.setFormatter(JSONFormatter())
 else:
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s [request_id=%(request_id)s] %(message)s"
-    ))
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s [request_id=%(request_id)s] %(message)s"
+        )
+    )
 root_logger.addHandler(handler)
 
 logger = logging.getLogger(__name__)
 
 MAX_REQUEST_ID_LENGTH = 128
-REQUEST_ID_ALLOWED_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+REQUEST_ID_ALLOWED_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+)
 
 
 def normalize_request_id(value: str | None) -> str:
@@ -93,7 +97,6 @@ async def _close_app_resources() -> None:
         await engine.dispose()
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Failed to dispose SQLAlchemy engine cleanly.", exc_info=True)
-
 
 
 @asynccontextmanager
@@ -173,6 +176,7 @@ async def enforce_request_body_limit(request: Request, call_next):
         )
     if declared_length is not None and declared_length > settings.max_request_body_bytes:
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=413,
             content={
@@ -214,8 +218,11 @@ async def attach_request_id(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if settings.environment == "production":
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains; preload"
+        )
     return response
+
 
 # ---------------------------------------------------------------------------
 # Error handlers
@@ -273,7 +280,9 @@ async def ready():
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
             if settings.environment == "production":
-                operations_health = await operations_health_service.get_operations_health(session, _redis_client)
+                operations_health = await operations_health_service.get_operations_health(
+                    session, _redis_client
+                )
                 checks.update(operations_health["checks"])
                 queue_details = operations_health["queue"]
                 processing_job_details = operations_health["processing_jobs"]
@@ -311,7 +320,11 @@ async def ready():
                 details={"health_check_key": settings.worker_health_check_key},
             )
 
-    if settings.environment == "production" and processing_job_details is not None and checks.get("processing_jobs") != "ok":
+    if (
+        settings.environment == "production"
+        and processing_job_details is not None
+        and checks.get("processing_jobs") != "ok"
+    ):
         stuck_active = processing_job_details["stuck_active"]
         failed_recent = processing_job_details["failed_recent"]
         failed_threshold = processing_job_details["failed_threshold"]

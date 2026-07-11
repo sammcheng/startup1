@@ -16,11 +16,17 @@ export default function SupportPage() {
     >
       <div className="support-grid">
         <article className="support-card">
-          <h2>Email</h2>
+          <h2>Support requests</h2>
           <p>
-            Reach us at <a href="mailto:support@hackmarket.io">support@hackmarket.io</a>.
+            Open a{" "}
+            <a href="https://github.com/sammcheng/startup1/issues/new" rel="noreferrer" target="_blank">
+              GitHub support issue
+            </a>
+            .
           </p>
-          <p className="support-small">Use this for account, billing, seller, privacy, and abuse requests.</p>
+          <p className="support-small">
+            Do not post API keys, passwords, billing details, personal data, or other secrets.
+          </p>
         </article>
         <article className="support-card">
           <h2>Status checks</h2>
@@ -35,7 +41,7 @@ export default function SupportPage() {
       <TrustSection title="What to include">
         <TrustList
           items={[
-            "Your account email and whether you are acting as a buyer, seller, or admin.",
+            "Whether you are acting as a buyer, seller, or admin, without posting private account details.",
             "Tool name, slug, submission ID, processing job ID, or API request ID when available.",
             "Screenshots or exact error messages for dashboard and checkout issues.",
             "Whether the issue blocks launch, billing, tool access, or production reliability.",
@@ -46,7 +52,9 @@ export default function SupportPage() {
       <TrustSection title="Safety and abuse">
         <p>
           Report suspicious tools, stolen code, hidden data collection, billing fraud, malicious
-          outputs, or attempts to bypass gateway controls to support immediately.
+          outputs, or attempts to bypass gateway controls. For a sensitive report, open a
+          non-sensitive issue requesting private follow-up and do not include exploit details or
+          credentials publicly.
         </p>
       </TrustSection>
     </TrustPage>

@@ -20,6 +20,7 @@ RENDER_BLUEPRINT = REPO_ROOT / "render.yaml"
 WEB_PACKAGE = REPO_ROOT / "apps" / "web" / "package.json"
 WEB_DOCKERFILE = REPO_ROOT / "apps" / "web" / "Dockerfile.prod"
 API_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements.txt"
+API_DEV_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements-dev.txt"
 JOBS_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0007_add_tool_processing_jobs.py"
 )
@@ -325,9 +326,17 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     requirements = API_REQUIREMENTS.read_text(encoding="utf-8")
+    dev_requirements = API_DEV_REQUIREMENTS.read_text(encoding="utf-8")
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     web_dockerfile = WEB_DOCKERFILE.read_text(encoding="utf-8")
     expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
+    expect("PyJWT[crypto]==" in requirements, "API auth must use the audited PyJWT cryptography backend", failures)
+    expect("python-jose" not in requirements, "API runtime must not include the vulnerable python-jose stack", failures)
+    expect(
+        "ruff==" in dev_requirements and "pip-audit==" in dev_requirements,
+        "backend development requirements must include lint and dependency audit tools",
+        failures,
+    )
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
     expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
     expect(ADMIN_AUDIT_MIGRATION.exists(), "admin audit log migration is missing", failures)
@@ -357,6 +366,7 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
+    compact_billing_service = "".join(billing_service.split())
     expect(
         "_existing_usage_invoice_id" in billing_service,
         "billing scheduler must guard usage invoices with DB-backed idempotency",
@@ -387,7 +397,8 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
-        'checkout_session.get("id") or checkout_session.get("payment_intent")' in billing_service,
+        'checkout_session.get("id")orcheckout_session.get("payment_intent")'
+        in compact_billing_service,
         "pending tool purchases must store checkout session IDs so checkout URLs can be recovered",
         failures,
     )
@@ -806,6 +817,10 @@ def check_repo_files(failures: list[str]) -> None:
     expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
 
     expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
+    expect("pip-audit -r requirements.txt" in ci_workflow, "CI must audit backend runtime dependencies", failures)
+    expect("ruff check app tests" in ci_workflow, "CI must enforce backend linting", failures)
+    expect("ruff format --check app tests" in ci_workflow, "CI must enforce backend formatting", failures)
+    expect("npm run test:e2e" in ci_workflow, "CI must run frontend browser tests", failures)
     expect(
         "python ../../scripts/check_migration_safety.py" in ci_workflow,
         "CI must scan Alembic upgrades for destructive migration operations",

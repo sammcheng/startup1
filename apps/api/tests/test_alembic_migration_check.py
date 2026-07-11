@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "check_alembic_migrations.py"
 SPEC = importlib.util.spec_from_file_location("check_alembic_migrations", SCRIPT_PATH)
 assert SPEC and SPEC.loader

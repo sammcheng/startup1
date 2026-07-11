@@ -85,7 +85,7 @@ docker compose -f docker-compose.prod.yml up -d postgres redis
 cd apps/api
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
@@ -168,11 +168,11 @@ Render monorepo note:
 - see `/Users/sammcheng/Desktop/startup1/docs/render-monorepo-runbook.md` for the manual repair checklist
 
 Recommended hosted env values:
-- Vercel `NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1`
-- Vercel `NEXT_PUBLIC_APP_URL=https://hackmarket.io`
+- Vercel `NEXT_PUBLIC_API_URL=https://start-3lbd.onrender.com/v1`
+- Vercel `NEXT_PUBLIC_APP_URL=https://web-six-dusky-20.vercel.app`
 - Vercel `CLERK_SECRET_KEY`: required by the Next.js proxy that protects dashboard, admin, and approver routes
-- Render custom domain `api.hackmarket.io` pointed at the `start` service
-- Render `CORS_ORIGINS=["https://hackmarket.io","https://www.hackmarket.io","https://web-six-dusky-20.vercel.app"]`
+- Render `CORS_ORIGINS=["https://web-six-dusky-20.vercel.app"]`
+- after purchasing a custom domain, replace these URLs in Vercel and Render together and add the new origin to CORS before switching DNS
 - Render `CORS_ORIGIN_REGEX=`
 - Render `ALLOW_VERCEL_PREVIEW_ORIGINS=false`
 - Render `CONVERTER_SECRET`: long random shared secret for converter-to-API imports
@@ -202,7 +202,7 @@ python3 scripts/check_migration_safety.py
 python3 scripts/production_readiness_check.py
 python3 scripts/render_blueprint_report.py --check
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test python3 scripts/check_alembic_migrations.py --upgrade
-python3 scripts/production_smoke_check.py --app-url https://hackmarket.io --api-url https://api.hackmarket.io
+python3 scripts/production_smoke_check.py --app-url https://web-six-dusky-20.vercel.app --api-url https://start-3lbd.onrender.com
 ```
 
 The production smoke check verifies public frontend pages, auth redirects,

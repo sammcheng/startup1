@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import case, func, select
@@ -7,10 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Tool, ToolStatus, Transaction, TransactionStatus, UsageLog
 from app.schemas.seller import (
+    SellerActivityItem,
     SellerAnalyticsResponse,
     SellerDashboardResponse,
     SellerErrorLogItem,
     SellerErrorSummary,
+    SellerLatencyPoint,
     SellerRequestsPoint,
     SellerRevenuePoint,
     SellerToolSummary,
@@ -20,11 +22,11 @@ from app.services import job_service
 
 
 async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> SellerDashboardResponse:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     previous_month_end = month_start
     previous_month_start = (month_start - timedelta(days=1)).replace(day=1)
-    chart_start = (now - timedelta(days=29)).date()
+    chart_start = (now - timedelta(days=89)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     total_tools_result = await db.execute(
         select(
@@ -36,54 +38,72 @@ async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> Seller
 
     total_revenue_all_time = await _sum_seller_revenue(db, seller_id)
     total_revenue_this_month = await _sum_seller_revenue(db, seller_id, month_start, now)
-    previous_month_revenue = await _sum_seller_revenue(db, seller_id, previous_month_start, previous_month_end)
+    previous_month_revenue = await _sum_seller_revenue(
+        db, seller_id, previous_month_start, previous_month_end
+    )
     total_requests_this_month = await _count_seller_requests(db, seller_id, month_start, now)
     avg_response_time_ms = await _avg_response_time(db, seller_id, month_start, now)
 
     revenue_chart_rows = await db.execute(
         select(
-            func.date(UsageLog.request_timestamp).label("day"),
-            func.coalesce(func.sum(UsageLog.cost), 0).label("amount"),
+            func.date(Transaction.created_at).label("day"),
+            func.coalesce(func.sum(Transaction.seller_payout), 0).label("amount"),
         )
-        .join(Tool, Tool.id == UsageLog.tool_id)
         .where(
-            Tool.seller_id == seller_id,
-            UsageLog.request_timestamp >= datetime.combine(chart_start, datetime.min.time(), tzinfo=timezone.utc),
+            Transaction.seller_id == seller_id,
+            Transaction.status == TransactionStatus.completed,
+            Transaction.created_at >= chart_start,
         )
-        .group_by(func.date(UsageLog.request_timestamp))
-        .order_by(func.date(UsageLog.request_timestamp).asc())
+        .group_by(func.date(Transaction.created_at))
+        .order_by(func.date(Transaction.created_at).asc())
     )
     revenue_chart_data = [
         SellerRevenuePoint(date=row.day, amount=Decimal(row.amount or 0))
         for row in revenue_chart_rows.all()
     ]
 
-    top_tool_rows = await db.execute(
+    request_chart_rows = await db.execute(
         select(
-            Tool.id,
-            Tool.name,
-            func.coalesce(func.sum(UsageLog.cost), 0).label("revenue"),
+            func.date(UsageLog.request_timestamp).label("day"),
+            func.count(UsageLog.id).label("count"),
+            func.avg(UsageLog.response_time_ms).label("avg_response_time_ms"),
         )
-        .join(UsageLog, UsageLog.tool_id == Tool.id)
+        .join(Tool, Tool.id == UsageLog.tool_id)
         .where(
             Tool.seller_id == seller_id,
-            UsageLog.request_timestamp >= month_start,
-            UsageLog.request_timestamp < now,
+            UsageLog.request_timestamp >= chart_start,
         )
-        .group_by(Tool.id, Tool.name)
-        .order_by(func.coalesce(func.sum(UsageLog.cost), 0).desc())
-        .limit(1)
+        .group_by(func.date(UsageLog.request_timestamp))
+        .order_by(func.date(UsageLog.request_timestamp).asc())
     )
-    top_tool_row = top_tool_rows.first()
-    top_tool = (
-        SellerTopTool(
-            tool_id=top_tool_row.id,
-            tool_name=top_tool_row.name,
-            revenue_this_month=Decimal(top_tool_row.revenue or 0),
+    request_chart_records = request_chart_rows.all()
+    request_chart_data = [
+        SellerRequestsPoint(date=row.day, count=int(row.count or 0))
+        for row in request_chart_records
+    ]
+    latency_chart_data = [
+        SellerLatencyPoint(
+            date=row.day,
+            avg_response_time_ms=float(row.avg_response_time_ms),
         )
-        if top_tool_row
-        else None
+        for row in request_chart_records
+        if row.avg_response_time_ms is not None
+    ]
+
+    tool_revenue_rows = await db.execute(
+        select(
+            Transaction.tool_id,
+            func.coalesce(func.sum(Transaction.seller_payout), 0).label("revenue"),
+        )
+        .where(
+            Transaction.seller_id == seller_id,
+            Transaction.status == TransactionStatus.completed,
+            Transaction.created_at >= month_start,
+            Transaction.created_at < now,
+        )
+        .group_by(Transaction.tool_id)
     )
+    revenue_by_tool = {row.tool_id: Decimal(row.revenue or 0) for row in tool_revenue_rows.all()}
 
     tool_rows = await db.execute(
         select(
@@ -91,18 +111,38 @@ async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> Seller
             Tool.name,
             Tool.slug,
             Tool.status,
+            Tool.uptime_percentage,
+            Tool.created_at,
             func.count(UsageLog.id).label("requests_this_month"),
-            func.coalesce(func.sum(UsageLog.cost), 0).label("revenue_this_month"),
+            func.count(func.distinct(UsageLog.user_id)).label("unique_users_this_month"),
             func.avg(UsageLog.response_time_ms).label("avg_response_time_ms"),
+            func.percentile_cont(0.50)
+            .within_group(UsageLog.response_time_ms)
+            .label("p50_response_time_ms"),
+            func.percentile_cont(0.95)
+            .within_group(UsageLog.response_time_ms)
+            .label("p95_response_time_ms"),
+            func.percentile_cont(0.99)
+            .within_group(UsageLog.response_time_ms)
+            .label("p99_response_time_ms"),
         )
         .select_from(Tool)
         .outerjoin(
             UsageLog,
-            (UsageLog.tool_id == Tool.id) & (UsageLog.request_timestamp >= month_start) & (UsageLog.request_timestamp < now),
+            (UsageLog.tool_id == Tool.id)
+            & (UsageLog.request_timestamp >= month_start)
+            & (UsageLog.request_timestamp < now),
         )
         .where(Tool.seller_id == seller_id)
-        .group_by(Tool.id, Tool.name, Tool.slug, Tool.status)
-        .order_by(func.coalesce(func.sum(UsageLog.cost), 0).desc(), Tool.created_at.desc())
+        .group_by(
+            Tool.id,
+            Tool.name,
+            Tool.slug,
+            Tool.status,
+            Tool.uptime_percentage,
+            Tool.created_at,
+        )
+        .order_by(Tool.created_at.desc())
     )
     tool_records = list(tool_rows.all())
     latest_jobs = await job_service.list_latest_tool_jobs(db, [row.id for row in tool_records])
@@ -118,10 +158,69 @@ async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> Seller
                 latest_job_status=latest_job.status if latest_job else None,
                 latest_job_error=latest_job.last_error if latest_job else None,
                 requests_this_month=int(row.requests_this_month or 0),
-                revenue_this_month=Decimal(row.revenue_this_month or 0),
-                avg_response_time_ms=float(row.avg_response_time_ms) if row.avg_response_time_ms is not None else None,
+                revenue_this_month=revenue_by_tool.get(row.id, Decimal("0")),
+                unique_users_this_month=int(row.unique_users_this_month or 0),
+                avg_response_time_ms=float(row.avg_response_time_ms)
+                if row.avg_response_time_ms is not None
+                else None,
+                p50_response_time_ms=float(row.p50_response_time_ms)
+                if row.p50_response_time_ms is not None
+                else None,
+                p95_response_time_ms=float(row.p95_response_time_ms)
+                if row.p95_response_time_ms is not None
+                else None,
+                p99_response_time_ms=float(row.p99_response_time_ms)
+                if row.p99_response_time_ms is not None
+                else None,
+                uptime_percentage=Decimal(row.uptime_percentage)
+                if row.uptime_percentage is not None
+                else None,
             )
         )
+
+    tools.sort(
+        key=lambda tool: (tool.revenue_this_month, tool.requests_this_month),
+        reverse=True,
+    )
+    top_tool = (
+        SellerTopTool(
+            tool_id=tools[0].tool_id,
+            tool_name=tools[0].tool_name,
+            revenue_this_month=tools[0].revenue_this_month,
+        )
+        if tools and tools[0].revenue_this_month > 0
+        else None
+    )
+
+    recent_activity_rows = await db.execute(
+        select(
+            UsageLog.id,
+            UsageLog.tool_id,
+            Tool.name.label("tool_name"),
+            UsageLog.request_timestamp,
+            UsageLog.status_code,
+            UsageLog.response_time_ms,
+            UsageLog.cost,
+            UsageLog.error_message,
+        )
+        .join(Tool, Tool.id == UsageLog.tool_id)
+        .where(Tool.seller_id == seller_id)
+        .order_by(UsageLog.request_timestamp.desc())
+        .limit(12)
+    )
+    recent_activity = [
+        SellerActivityItem(
+            id=row.id,
+            tool_id=row.tool_id,
+            tool_name=row.tool_name,
+            request_timestamp=row.request_timestamp,
+            status_code=row.status_code,
+            response_time_ms=row.response_time_ms,
+            cost=Decimal(row.cost or 0),
+            error_message=row.error_message,
+        )
+        for row in recent_activity_rows.all()
+    ]
 
     return SellerDashboardResponse(
         total_tools=int(total_tools or 0),
@@ -133,12 +232,17 @@ async def get_seller_dashboard(db: AsyncSession, seller_id: uuid.UUID) -> Seller
         avg_response_time_ms=avg_response_time_ms,
         top_tool=top_tool,
         revenue_chart_data=revenue_chart_data,
+        request_chart_data=request_chart_data,
+        latency_chart_data=latency_chart_data,
+        recent_activity=recent_activity,
         tools=tools,
     )
 
 
-async def get_tool_analytics(db: AsyncSession, tool_id: uuid.UUID, period: str) -> SellerAnalyticsResponse:
-    now = datetime.now(timezone.utc)
+async def get_tool_analytics(
+    db: AsyncSession, tool_id: uuid.UUID, period: str
+) -> SellerAnalyticsResponse:
+    now = datetime.now(UTC)
     start = _period_start(period, now)
 
     request_rows = await db.execute(
@@ -151,18 +255,21 @@ async def get_tool_analytics(db: AsyncSession, tool_id: uuid.UUID, period: str) 
         .order_by(func.date(UsageLog.request_timestamp).asc())
     )
     requests_over_time = [
-        SellerRequestsPoint(date=row.day, count=int(row.count or 0))
-        for row in request_rows.all()
+        SellerRequestsPoint(date=row.day, count=int(row.count or 0)) for row in request_rows.all()
     ]
 
     revenue_rows = await db.execute(
         select(
-            func.date(UsageLog.request_timestamp).label("day"),
-            func.coalesce(func.sum(UsageLog.cost), 0).label("amount"),
+            func.date(Transaction.created_at).label("day"),
+            func.coalesce(func.sum(Transaction.seller_payout), 0).label("amount"),
         )
-        .where(UsageLog.tool_id == tool_id, UsageLog.request_timestamp >= start)
-        .group_by(func.date(UsageLog.request_timestamp))
-        .order_by(func.date(UsageLog.request_timestamp).asc())
+        .where(
+            Transaction.tool_id == tool_id,
+            Transaction.status == TransactionStatus.completed,
+            Transaction.created_at >= start,
+        )
+        .group_by(func.date(Transaction.created_at))
+        .order_by(func.date(Transaction.created_at).asc())
     )
     revenue_over_time = [
         SellerRevenuePoint(date=row.day, amount=Decimal(row.amount or 0))
@@ -200,12 +307,14 @@ async def get_tool_analytics(db: AsyncSession, tool_id: uuid.UUID, period: str) 
         for row in top_error_rows.all()
     ]
 
-    percentile_rows = await db.execute(
-        select(UsageLog.response_time_ms)
-        .where(UsageLog.tool_id == tool_id, UsageLog.request_timestamp >= start)
-        .order_by(UsageLog.response_time_ms.asc())
+    percentile_result = await db.execute(
+        select(
+            func.percentile_cont(0.50).within_group(UsageLog.response_time_ms),
+            func.percentile_cont(0.95).within_group(UsageLog.response_time_ms),
+            func.percentile_cont(0.99).within_group(UsageLog.response_time_ms),
+        ).where(UsageLog.tool_id == tool_id, UsageLog.request_timestamp >= start)
     )
-    response_times = [int(row[0]) for row in percentile_rows.all()]
+    p50_response_time_ms, p95_response_time_ms, p99_response_time_ms = percentile_result.one()
 
     recent_errors_rows = await db.execute(
         select(
@@ -241,13 +350,21 @@ async def get_tool_analytics(db: AsyncSession, tool_id: uuid.UUID, period: str) 
         requests_over_time=requests_over_time,
         revenue_over_time=revenue_over_time,
         unique_users=int(unique_users or 0),
-        avg_response_time_ms=float(avg_response_time_ms) if avg_response_time_ms is not None else None,
+        avg_response_time_ms=float(avg_response_time_ms)
+        if avg_response_time_ms is not None
+        else None,
         error_rate=error_rate,
         top_errors=top_errors,
         geographic_distribution=[],
-        p50_response_time_ms=_percentile(response_times, 0.50),
-        p95_response_time_ms=_percentile(response_times, 0.95),
-        p99_response_time_ms=_percentile(response_times, 0.99),
+        p50_response_time_ms=float(p50_response_time_ms)
+        if p50_response_time_ms is not None
+        else None,
+        p95_response_time_ms=float(p95_response_time_ms)
+        if p95_response_time_ms is not None
+        else None,
+        p99_response_time_ms=float(p99_response_time_ms)
+        if p99_response_time_ms is not None
+        else None,
         recent_errors=recent_errors,
     )
 
@@ -258,16 +375,23 @@ async def _sum_seller_revenue(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> Decimal:
-    conditions = [Transaction.seller_id == seller_id, Transaction.status == TransactionStatus.completed]
+    conditions = [
+        Transaction.seller_id == seller_id,
+        Transaction.status == TransactionStatus.completed,
+    ]
     if start is not None:
         conditions.append(Transaction.created_at >= start)
     if end is not None:
         conditions.append(Transaction.created_at < end)
-    result = await db.execute(select(func.coalesce(func.sum(Transaction.seller_payout), 0)).where(*conditions))
+    result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.seller_payout), 0)).where(*conditions)
+    )
     return Decimal(result.scalar() or 0)
 
 
-async def _count_seller_requests(db: AsyncSession, seller_id: uuid.UUID, start: datetime, end: datetime) -> int:
+async def _count_seller_requests(
+    db: AsyncSession, seller_id: uuid.UUID, start: datetime, end: datetime
+) -> int:
     result = await db.execute(
         select(func.count(UsageLog.id))
         .join(Tool, Tool.id == UsageLog.tool_id)
@@ -280,7 +404,9 @@ async def _count_seller_requests(db: AsyncSession, seller_id: uuid.UUID, start: 
     return int(result.scalar() or 0)
 
 
-async def _avg_response_time(db: AsyncSession, seller_id: uuid.UUID, start: datetime, end: datetime) -> float | None:
+async def _avg_response_time(
+    db: AsyncSession, seller_id: uuid.UUID, start: datetime, end: datetime
+) -> float | None:
     result = await db.execute(
         select(func.avg(UsageLog.response_time_ms))
         .join(Tool, Tool.id == UsageLog.tool_id)
@@ -302,12 +428,5 @@ def _period_start(period: str, now: datetime) -> datetime:
     if period == "90d":
         return now - timedelta(days=90)
     if period == "all":
-        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+        return datetime(1970, 1, 1, tzinfo=UTC)
     return now - timedelta(days=30)
-
-
-def _percentile(values: list[int], ratio: float) -> float | None:
-    if not values:
-        return None
-    index = max(min(int(round((len(values) - 1) * ratio)), len(values) - 1), 0)
-    return float(values[index])

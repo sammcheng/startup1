@@ -103,14 +103,18 @@ def test_api_cors_requires_exact_production_origin(monkeypatch):
 
 def test_frontend_security_headers_reject_unsafe_production_csp(monkeypatch):
     def fake_request(*args, **kwargs):
-        return 200, "", {
-            "Content-Security-Policy": "default-src 'self'; connect-src 'self' http://localhost:8080; script-src 'self' 'unsafe-eval'",
-            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Referrer-Policy": "strict-origin-when-cross-origin",
-            "Permissions-Policy": "camera=()",
-        }
+        return (
+            200,
+            "",
+            {
+                "Content-Security-Policy": "default-src 'self'; connect-src 'self' http://localhost:8080; script-src 'self' 'unsafe-eval'",
+                "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Permissions-Policy": "camera=()",
+            },
+        )
 
     monkeypatch.setattr(smoke, "request", fake_request)
 
@@ -123,13 +127,17 @@ def test_frontend_security_headers_reject_unsafe_production_csp(monkeypatch):
 
 def test_frontend_security_headers_require_hsts_for_https(monkeypatch):
     def fake_request(*args, **kwargs):
-        return 200, "", {
-            "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://api.hackmarket.io",
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Referrer-Policy": "strict-origin-when-cross-origin",
-            "Permissions-Policy": "camera=()",
-        }
+        return (
+            200,
+            "",
+            {
+                "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://api.hackmarket.io",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Permissions-Policy": "camera=()",
+            },
+        )
 
     monkeypatch.setattr(smoke, "request", fake_request)
 

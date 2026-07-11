@@ -13,6 +13,8 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "B008",  # FastAPI dependency injection intentionally calls Depends in defaults
+    "UP042", # SQLAlchemy persists the current Enum values; StrEnum migration needs a schema plan
 ]
 exclude = [
     ".venv",

@@ -6,6 +6,10 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import CodeBlock from "@/components/docs/CodeBlock";
+import { API_BASE, getGatewayBaseUrl } from "@/lib/env";
+
+const DOCS_API_BASE = API_BASE.replace(/\/+$/, "");
+const DOCS_GATEWAY_BASE = getGatewayBaseUrl().replace(/\/+$/, "");
 
 // ----------------------------------------------------------------------------
 // Section registry – keep IDs in sync with anchor links so /docs#api-reference
@@ -36,7 +40,7 @@ const SIDEBAR: SidebarSection[] = [
       { id: "gateway", label: "Gateway" },
       { id: "discovery", label: "Discovery" },
       { id: "submit", label: "Submit" },
-      { id: "envelope", label: "Response envelope" },
+      { id: "envelope", label: "Gateway response" },
       { id: "errors", label: "Errors" },
     ],
   },
@@ -98,8 +102,8 @@ const gatewayExamples = [
   {
     language: "curl" as const,
     label: "cURL",
-    code: `curl -X POST https://api.hackmarket.io/v1/tools/home-accessibility-checker \\
-  -H "X-API-Key: hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b" \\
+    code: `curl -X POST ${DOCS_GATEWAY_BASE}/tools/home-accessibility-checker \\
+  -H "X-API-Key: $HACKMARKET_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "url": "https://www.zillow.com/homedetails/12-elm-street",
@@ -109,11 +113,12 @@ const gatewayExamples = [
   {
     language: "python" as const,
     label: "Python",
-    code: `import requests
+    code: `import os
+import requests
 
 resp = requests.post(
-    "https://api.hackmarket.io/v1/tools/home-accessibility-checker",
-    headers={"X-API-Key": "hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b"},
+    "${DOCS_GATEWAY_BASE}/tools/home-accessibility-checker",
+    headers={"X-API-Key": os.environ["HACKMARKET_API_KEY"]},
     json={
         "url": "https://www.zillow.com/homedetails/12-elm-street",
         "maxImages": 8,
@@ -127,11 +132,11 @@ print(resp.json()["data"])`,
     language: "javascript" as const,
     label: "JavaScript",
     code: `const res = await fetch(
-  "https://api.hackmarket.io/v1/tools/home-accessibility-checker",
+  "${DOCS_GATEWAY_BASE}/tools/home-accessibility-checker",
   {
     method: "POST",
     headers: {
-      "X-API-Key": "hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b",
+      "X-API-Key": process.env.HACKMARKET_API_KEY,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -149,13 +154,12 @@ const discoveryExamples = [
   {
     language: "curl" as const,
     label: "cURL",
-    code: `curl -X POST https://api.hackmarket.io/v1/tools/discover \\
-  -H "X-API-Key: hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b" \\
+    code: `curl -X POST ${DOCS_API_BASE}/tools/discover \\
   -H "Content-Type: application/json" \\
   -d '{
     "query": "image background removal",
     "limit": 5,
-    "filters": { "pricing_model": "royalty", "min_confidence": 0.8 }
+    "categories": ["computer_vision"]
   }'`,
   },
   {
@@ -164,16 +168,15 @@ const discoveryExamples = [
     code: `import requests
 
 resp = requests.post(
-    "https://api.hackmarket.io/v1/tools/discover",
-    headers={"X-API-Key": "hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b"},
+    "${DOCS_API_BASE}/tools/discover",
     json={
         "query": "image background removal",
         "limit": 5,
-        "filters": {"pricing_model": "royalty", "min_confidence": 0.8},
+        "categories": ["computer_vision"],
     },
 )
-for tool in resp.json()["data"]["tools"]:
-    print(tool["slug"], tool["confidence"])`,
+for match in resp.json()["matches"]:
+    print(match["tool"]["slug"], match["match_score"])`,
   },
 ];
 
@@ -181,34 +184,28 @@ const submitExamples = [
   {
     language: "curl" as const,
     label: "cURL",
-    code: `curl -X POST https://api.hackmarket.io/v1/tools/submit \\
-  -H "X-API-Key: hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b" \\
+    code: `curl -X POST ${DOCS_API_BASE}/tools/submit \\
+  -H "Authorization: Bearer $CLERK_SESSION_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "repo_url": "https://github.com/aria-labs/alt-text-generator",
-    "name": "Alt-Text Generator",
-    "tagline": "Generate WCAG-compliant alt text from any image URL.",
-    "pricing_model": "royalty",
-    "price_per_call_cents": 4
+    "github_url": "https://github.com/aria-labs/alt-text-generator"
   }'`,
   },
   {
     language: "python" as const,
     label: "Python",
-    code: `import requests
+    code: `import os
+import requests
 
 resp = requests.post(
-    "https://api.hackmarket.io/v1/tools/submit",
-    headers={"X-API-Key": "hm_live_5a8c3e9b2d4f7a1c6e8b9d2f4a7c1e5b"},
+    "${DOCS_API_BASE}/tools/submit",
+    headers={"Authorization": f"Bearer {os.environ['CLERK_SESSION_TOKEN']}"},
     json={
-        "repo_url": "https://github.com/aria-labs/alt-text-generator",
-        "name": "Alt-Text Generator",
-        "tagline": "Generate WCAG-compliant alt text from any image URL.",
-        "pricing_model": "royalty",
-        "price_per_call_cents": 4,
+        "github_url": "https://github.com/aria-labs/alt-text-generator",
     },
 )
-print(resp.json()["data"]["submission_id"])`,
+resp.raise_for_status()
+print(resp.json()["tool"]["id"])`,
   },
 ];
 
@@ -216,7 +213,7 @@ const integrationExamples = [
   {
     language: "curl" as const,
     label: "cURL",
-    code: `curl -X POST https://api.hackmarket.io/v1/tools/sentiment-classifier \\
+    code: `curl -X POST ${DOCS_GATEWAY_BASE}/tools/sentiment-classifier \\
   -H "X-API-Key: $HACKMARKET_KEY" \\
   -H "X-HackMarket-Request-Id: req_9f3d_write_2026_05_17_001" \\
   -H "Content-Type: application/json" \\
@@ -229,7 +226,7 @@ const integrationExamples = [
 
 def classify(text: str) -> dict:
     return requests.post(
-        "https://api.hackmarket.io/v1/tools/sentiment-classifier",
+        "${DOCS_GATEWAY_BASE}/tools/sentiment-classifier",
         headers={
             "X-API-Key": os.environ["HACKMARKET_KEY"],
             "X-HackMarket-Request-Id": f"req_{uuid.uuid4().hex}",
@@ -245,7 +242,7 @@ print(classify("Honestly the best burrito I have had this year."))`,
     label: "JavaScript",
     code: `async function classify(text) {
   const res = await fetch(
-    "https://api.hackmarket.io/v1/tools/sentiment-classifier",
+    "${DOCS_GATEWAY_BASE}/tools/sentiment-classifier",
     {
       method: "POST",
       headers: {
@@ -627,10 +624,11 @@ export default function DocsContent() {
               infers the API surface, generates a fixture set, and grades the tool on correctness,
               latency, and error handling. Third, a human reviewer reads the auto-generated Quality
               Report and either approves the listing or returns it with written feedback. Finally,
-              once approved, your tool is live: it gets a slug at{" "}
-              <Code>api.hackmarket.io/v1/tools/&lt;slug&gt;</Code>, a public landing page, and a
-              real-time analytics dashboard. The median time from submit to live listing is under
-              24 hours.
+              once approved, your tool is live at{" "}
+              <Code>{`${DOCS_GATEWAY_BASE}/tools/<slug>`}</Code>, with a public listing and an
+              account-owned analytics dashboard. The seller dashboard shows the actual processing
+              state throughout the flow, including queued, running, retrying, failed, and completed
+              jobs.
             </p>
 
             <SubHeader id="customer-flow">The customer flow</SubHeader>
@@ -653,13 +651,11 @@ export default function DocsContent() {
 
             <SubHeader id="base-url">Base URL &amp; authentication</SubHeader>
             <p style={bodyText}>
-              All API traffic flows through a single base URL:{" "}
-              <Code>https://api.hackmarket.io/v1</Code>. Every request must carry your API key in
-              the <Code>X-API-Key</Code> header. Keys are environment-scoped — keep your{" "}
-              <Code>hm_live_*</Code> key on the server and use a separate <Code>hm_test_*</Code>{" "}
-              key for local development. Rotating a key invalidates the previous value immediately;
-              there is no grace window, so update your secrets manager before regenerating in
-              production.
+              Catalog and account endpoints use <Code>{DOCS_API_BASE}</Code>. Published tool calls
+              use <Code>{DOCS_GATEWAY_BASE}</Code> and require an account API key in the{" "}
+              <Code>X-API-Key</Code> header. Keep each <Code>hm_live_*</Code> key in a server-side
+              secrets manager. Seller submission endpoints use the signed-in Clerk session instead
+              of a buyer API key.
             </p>
             <div style={callout}>
               <strong style={{ color: "var(--text)" }}>Heads up.</strong> Hackmarket never accepts
@@ -671,141 +667,127 @@ export default function DocsContent() {
             <SubHeader id="gateway">Gateway — invoke a tool</SubHeader>
             <p style={bodyText}>
               The gateway endpoint proxies your request through to the underlying tool, applying
-              authentication, rate limiting, metering, and a uniform response envelope along the
-              way. The HTTP method is whatever the tool defines — most accept <Code>POST</Code>,
+              authentication, rate limiting, metering, and platform error handling along the way.
+              The HTTP method is whatever the tool defines — most accept <Code>POST</Code>,
               some <Code>GET</Code>. The request body is passed through verbatim, so the tool sees
-              exactly the JSON you sent.
+              exactly the JSON you sent. Successful response bodies are passed through unchanged;
+              request IDs, timing, and rate-limit details are returned as response headers.
             </p>
             <EndpointCard
               method="ANY"
-              path="/v1/tools/{slug}"
-              description="Invoke a published tool. The slug is the unique identifier shown on the listing page. The gateway forwards your body, returns the tool's response wrapped in the standard envelope, and records the call against your usage meter."
+              path="/api/v1/tools/{slug}"
+              description="Invoke a published tool. The slug is the unique identifier shown on the listing page. The gateway forwards your request, returns the tool's response, and records the call against your usage meter."
               examples={gatewayExamples}
             />
             <p style={{ ...bodyText, marginBottom: 8 }}>Sample response:</p>
             <JsonBlock>{`{
   "success": true,
-  "data": {
-    "score": 72,
-    "issues": [
-      { "severity": "high", "title": "Front entrance has 3 steps, no ramp visible" },
-      { "severity": "medium", "title": "Bathroom door appears narrower than 32 inches" }
-    ],
-    "evaluated_images": 8
-  },
-  "module": "home-accessibility-checker",
-  "version": "1.4.2",
-  "request_id": "req_01HZ4G9N7Y3K2VX8C1B5W6D2QH"
+  "analysis": {
+    "overall_score": 72,
+    "analyzed_images": 8,
+    "accessibility_features": ["Step-free side entrance"],
+    "barriers": ["Front entrance has steps and no visible ramp"],
+    "recommendations": ["Confirm an accessible entrance before visiting"]
+  }
 }`}</JsonBlock>
 
             <SubHeader id="discovery">Discovery — search the catalog</SubHeader>
             <p style={bodyText}>
-              Discovery is a semantic search endpoint that returns matching tools ranked by
-              embedding similarity to your query. Useful when you want to build a meta-agent that
-              picks tools at runtime rather than hard-coding slugs.
+              Discovery tokenizes a natural-language query and ranks live tools using their name,
+              tagline, description, category, and declared schemas. It is useful when a client
+              needs to select from the current catalog instead of hard-coding a slug.
             </p>
             <EndpointCard
               method="POST"
               path="/v1/tools/discover"
-              description="Semantic search across the marketplace. Returns up to 25 tools matching the query, with relevance scores, pricing, and the AI confidence rating. Supports filters by pricing model, language, and minimum confidence."
+              description="Search the live marketplace. Returns up to 24 ranked matches and supports an optional list of marketplace categories."
               examples={discoveryExamples}
             />
             <JsonBlock>{`{
-  "success": true,
-  "data": {
-    "tools": [
-      {
+  "matches": [
+    {
+      "tool": {
         "slug": "remove-bg-pro",
         "name": "RemoveBG Pro",
         "tagline": "One-shot background removal for product photos.",
-        "pricing_model": "royalty",
-        "price_per_call_cents": 3,
-        "confidence": 0.91,
-        "relevance": 0.88,
-        "p95_latency_ms": 142
-      }
-    ],
-    "total": 1
-  },
-  "module": "discovery",
-  "version": "2.0.0",
-  "request_id": "req_01HZ4GBC4D1Y5N3M7P0K2X9R8L"
+        "category": "computer_vision",
+        "price_per_request": "0.030000"
+      },
+      "fit_line": "Matches image background removal",
+      "match_score": 0.88,
+      "matched_keywords": ["image", "background", "removal"],
+      "source": "verified"
+    }
+  ],
+  "query": "image background removal"
 }`}</JsonBlock>
 
             <SubHeader id="submit">Submit — list a new tool</SubHeader>
             <p style={bodyText}>
-              Submit accepts a GitHub repository URL plus listing metadata and kicks off the
-              review pipeline. The response includes a <Code>submission_id</Code> you can poll for
-              status, or wire to a webhook so the platform pings you when the state changes.
+              Submit accepts a public GitHub repository URL from a signed-in seller. Hackmarket
+              analyzes the repository and returns the account-owned draft plus the extracted
+              listing fields. The seller can review those fields before configuring and queuing the
+              deployment job.
             </p>
             <EndpointCard
               method="POST"
               path="/v1/tools/submit"
-              description="Create a new submission. The repo must be public or have a hackmarket-bot deploy key. Hackmarket reads the README and manifest, clones at the latest commit on the default branch, and queues the AI test agent."
+              description="Analyze a public GitHub repository and create a draft owned by the signed-in seller. Production requests require a valid Clerk session token."
               examples={submitExamples}
             />
             <JsonBlock>{`{
-  "success": true,
-  "data": {
-    "submission_id": "sub_01HZ4GD9XK6Q4N2H7P1Y3X8W2K",
-    "status": "submitted",
-    "next_stage": "ai_testing",
-    "estimated_review_at": "2026-05-18T03:00:00Z"
+  "tool": {
+    "id": "b9988663-e8e5-4d60-8773-c40d9d71bd24",
+    "name": "Alt-Text Generator",
+    "slug": "alt-text-generator",
+    "status": "draft"
   },
-  "module": "submissions",
-  "version": "1.2.0",
-  "request_id": "req_01HZ4GD9XK6Q4N2H7P1Y3X8W2K"
+  "analysis": {
+    "name": "Alt-Text Generator",
+    "category": "generation",
+    "tech_stack": ["Python", "FastAPI"],
+    "pricing_model": "royalty"
+  },
+  "message": "Repository analyzed and draft created."
 }`}</JsonBlock>
 
-            <SubHeader id="envelope">Response envelope</SubHeader>
+            <SubHeader id="envelope">Gateway response</SubHeader>
             <p style={bodyText}>
-              Every successful response is wrapped in a consistent envelope. The <Code>data</Code>{" "}
-              field carries the tool-specific payload; the metadata fields below it are added by
-              the gateway and are identical across endpoints.
+              A successful gateway call preserves the tool&apos;s status code, content type, and
+              response body. Hackmarket adds the following headers so clients can trace requests,
+              observe gateway timing, and manage rate limits without changing the tool&apos;s payload.
             </p>
             <table style={tableStyle}>
               <thead>
                 <tr>
-                  <th style={thStyle}>Field</th>
-                  <th style={thStyle}>Type</th>
-                  <th style={thStyle}>Notes</th>
+                  <th style={thStyle}>Header</th>
+                  <th style={thStyle}>Meaning</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td style={tdStyle}>
-                    <Code>success</Code>
+                    <Code>X-HackMarket-Request-Id</Code>
                   </td>
-                  <td style={tdStyle}>boolean</td>
-                  <td style={tdStyle}>True on 2xx; absent on 4xx/5xx (see error format below).</td>
+                  <td style={tdStyle}>Stable request ID to include when troubleshooting a call.</td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>
-                    <Code>data</Code>
+                    <Code>X-HackMarket-Response-Time-Ms</Code>
                   </td>
-                  <td style={tdStyle}>object | array</td>
-                  <td style={tdStyle}>Tool-defined payload. Schema lives on the listing page.</td>
+                  <td style={tdStyle}>Total gateway-observed response time in milliseconds.</td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>
-                    <Code>module</Code>
+                    <Code>X-RateLimit-Remaining</Code>
                   </td>
-                  <td style={tdStyle}>string</td>
-                  <td style={tdStyle}>Slug of the tool that handled the request.</td>
+                  <td style={tdStyle}>Requests remaining in the current 60-second window.</td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>
-                    <Code>version</Code>
+                    <Code>X-RateLimit-Limit</Code>
                   </td>
-                  <td style={tdStyle}>string</td>
-                  <td style={tdStyle}>Semver of the build that served the response.</td>
-                </tr>
-                <tr>
-                  <td style={tdStyle}>
-                    <Code>request_id</Code>
-                  </td>
-                  <td style={tdStyle}>string</td>
-                  <td style={tdStyle}>ULID. Echo this in support tickets so we can trace.</td>
+                  <td style={tdStyle}>Maximum requests allowed in that window for the API key.</td>
                 </tr>
               </tbody>
             </table>
@@ -818,14 +800,14 @@ export default function DocsContent() {
             </p>
             <JsonBlock>{`{
   "error": {
-    "code": "rate_limited",
-    "message": "Rate limit exceeded: 100 requests/minute on plan free.",
+    "code": "rate_limit_exceeded",
+    "message": "Rate limit exceeded.",
     "status": 429,
     "request_id": "req_01HZ4GF0Q1Y8N3X7K2P5W6D9R3",
     "details": {
       "limit": 100,
-      "window": "60s",
-      "retry_after_ms": 18500
+      "remaining": 0,
+      "retry_after_seconds": 60
     }
   }
 }`}</JsonBlock>
@@ -841,36 +823,36 @@ export default function DocsContent() {
                 <tr>
                   <td style={tdStyle}>401</td>
                   <td style={tdStyle}>
-                    <Code>invalid_key</Code>
+                    <Code>invalid_api_key</Code>
                   </td>
                   <td style={tdStyle}>
-                    Key missing, malformed, revoked, or sent in the wrong environment.
+                    Key missing, malformed, revoked, or inactive.
                   </td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>429</td>
                   <td style={tdStyle}>
-                    <Code>rate_limited</Code>
+                    <Code>rate_limit_exceeded</Code>
                   </td>
                   <td style={tdStyle}>
-                    You exceeded your plan&apos;s requests/minute. Check{" "}
-                    <Code>retry_after_ms</Code> before retrying.
+                    The API key exceeded its requests-per-minute limit. Check{" "}
+                    <Code>retry_after_seconds</Code> before retrying.
                   </td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>502</td>
                   <td style={tdStyle}>
-                    <Code>tool_unavailable</Code>
+                    <Code>TOOL_UNAVAILABLE</Code>
                   </td>
                   <td style={tdStyle}>
-                    The upstream tool is deployed but not responding. Hackmarket retries twice
-                    before surfacing this.
+                    The upstream tool could not be reached. Retry only when your operation is safe
+                    to repeat.
                   </td>
                 </tr>
                 <tr>
                   <td style={tdStyle}>504</td>
                   <td style={tdStyle}>
-                    <Code>tool_timeout</Code>
+                    <Code>TOOL_TIMEOUT</Code>
                   </td>
                   <td style={tdStyle}>
                     Tool exceeded its declared timeout (default 30s). Consider an async pattern if

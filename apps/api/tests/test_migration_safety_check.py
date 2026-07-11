@@ -2,7 +2,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "check_migration_safety.py"
 SPEC = importlib.util.spec_from_file_location("check_migration_safety", SCRIPT_PATH)
 assert SPEC and SPEC.loader

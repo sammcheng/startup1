@@ -31,7 +31,11 @@ class CreateToolSession:
     async def commit(self):
         self.commits += 1
         if self.commits == 1:
-            raise IntegrityError("insert into tools", {}, Exception("duplicate key value violates unique constraint tools_slug_key"))
+            raise IntegrityError(
+                "insert into tools",
+                {},
+                Exception("duplicate key value violates unique constraint tools_slug_key"),
+            )
 
     async def rollback(self):
         self.rollbacks += 1

@@ -41,7 +41,9 @@ def _display_name(clerk_user: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/sync", response_model=AuthSyncResponse, summary="Create or refresh the signed-in user")
+@router.post(
+    "/sync", response_model=AuthSyncResponse, summary="Create or refresh the signed-in user"
+)
 async def sync_authenticated_user(
     body: AuthSyncRequest,
     identity: AuthIdentity = Depends(get_current_identity),
@@ -50,7 +52,9 @@ async def sync_authenticated_user(
     try:
         user = await sync_user_from_identity(db, identity, body)
     except ValueError as exc:
-        raise Unauthorized("Verified account email is required. Check your Clerk JWT claims or webhook sync.") from exc
+        raise Unauthorized(
+            "Verified account email is required. Check your Clerk JWT claims or webhook sync."
+        ) from exc
     return AuthSyncResponse(
         id=str(user.id),
         clerk_id=user.clerk_id,
@@ -101,7 +105,7 @@ async def clerk_webhook(
     try:
         wh = Webhook(secret)
         event: dict = wh.verify(body, svix_headers)
-    except WebhookVerificationError:
+    except WebhookVerificationError as exc:
         logger.warning("Clerk webhook signature verification failed")
         await alert_service.send_alert(
             "clerk_webhook_invalid_signature",
@@ -113,7 +117,7 @@ async def clerk_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             error_code="invalid_signature",
             message="Webhook signature invalid.",
-        )
+        ) from exc
 
     event_type: str = event.get("type", "")
     clerk_user: dict = event.get("data", {})
@@ -136,9 +140,7 @@ async def clerk_webhook(
 # ---------------------------------------------------------------------------
 
 
-async def _handle_user_created(
-    db: AsyncSession, clerk_id: str, clerk_user: dict
-) -> None:
+async def _handle_user_created(db: AsyncSession, clerk_id: str, clerk_user: dict) -> None:
     # Idempotent: skip if already exists (e.g. webhook re-delivery)
     existing = await db.execute(select(User).where(User.clerk_id == clerk_id))
     if existing.scalar_one_or_none():
@@ -170,9 +172,7 @@ async def _handle_user_created(
     logger.info("user.created: Created local user for clerk_id=%s", clerk_id)
 
 
-async def _handle_user_updated(
-    db: AsyncSession, clerk_id: str, clerk_user: dict
-) -> None:
+async def _handle_user_updated(db: AsyncSession, clerk_id: str, clerk_user: dict) -> None:
     email = _primary_email(clerk_user)
     if not email:
         logger.error("user.updated: No primary email for clerk_id=%s", clerk_id)
@@ -198,8 +198,6 @@ async def _handle_user_updated(
 
 
 async def _handle_user_deleted(db: AsyncSession, clerk_id: str) -> None:
-    await db.execute(
-        update(User).where(User.clerk_id == clerk_id).values(is_active=False)
-    )
+    await db.execute(update(User).where(User.clerk_id == clerk_id).values(is_active=False))
     await db.commit()
     logger.info("user.deleted: Soft-deleted local user for clerk_id=%s", clerk_id)

@@ -34,7 +34,9 @@ async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str) -> tup
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise Forbidden("An API key with this configuration could not be created right now.") from exc
+        raise Forbidden(
+            "An API key with this configuration could not be created right now."
+        ) from exc
     await db.refresh(api_key)
     return api_key, raw_key
 
@@ -55,9 +57,7 @@ async def count_active_api_keys(db: AsyncSession, user_id: uuid.UUID) -> int:
 
 async def list_api_keys(db: AsyncSession, user_id: uuid.UUID) -> list[APIKey]:
     result = await db.execute(
-        select(APIKey)
-        .where(APIKey.user_id == user_id)
-        .order_by(APIKey.created_at.desc())
+        select(APIKey).where(APIKey.user_id == user_id).order_by(APIKey.created_at.desc())
     )
     return list(result.scalars())
 
@@ -67,7 +67,9 @@ async def get_api_key_by_id(db: AsyncSession, key_id: uuid.UUID) -> APIKey | Non
     return result.scalar_one_or_none()
 
 
-async def get_api_key_for_user(db: AsyncSession, key_id: uuid.UUID, user_id: uuid.UUID) -> APIKey | None:
+async def get_api_key_for_user(
+    db: AsyncSession, key_id: uuid.UUID, user_id: uuid.UUID
+) -> APIKey | None:
     result = await db.execute(
         select(APIKey).where(
             APIKey.id == key_id,

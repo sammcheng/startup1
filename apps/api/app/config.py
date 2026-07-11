@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     environment: str = "development"
-    cors_origins: list[str] = ["http://localhost:3000", "https://hackmarket.io", "https://www.hackmarket.io"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "https://hackmarket.io",
+        "https://www.hackmarket.io",
+    ]
     cors_origin_regex: str = r"^https://.*\.vercel\.app$"
     allow_vercel_preview_origins: bool = False
     app_base_url: str = "http://localhost:3000"
@@ -211,8 +215,7 @@ class Settings(BaseSettings):
         ]
         if test_mode_keys:
             raise ValueError(
-                "Production provider keys must use live mode: "
-                + ", ".join(test_mode_keys)
+                "Production provider keys must use live mode: " + ", ".join(test_mode_keys)
             )
 
         if self.debug:
@@ -233,22 +236,32 @@ class Settings(BaseSettings):
             )
 
         if self.alert_failed_processing_jobs_threshold < 1:
-            raise ValueError("ALERT_FAILED_PROCESSING_JOBS_THRESHOLD must be at least 1 in production.")
+            raise ValueError(
+                "ALERT_FAILED_PROCESSING_JOBS_THRESHOLD must be at least 1 in production."
+            )
 
         if self.alert_failed_processing_jobs_window_seconds < 60:
-            raise ValueError("ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS must be at least 60 in production.")
+            raise ValueError(
+                "ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS must be at least 60 in production."
+            )
 
         if self.gateway_rate_limit_violation_alert_threshold < 1:
-            raise ValueError("GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD must be at least 1 in production.")
+            raise ValueError(
+                "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD must be at least 1 in production."
+            )
 
         if self.gateway_rate_limit_violation_window_seconds < 60:
-            raise ValueError("GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS must be at least 60 in production.")
+            raise ValueError(
+                "GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS must be at least 60 in production."
+            )
 
         if self.max_active_api_keys_per_user < 1:
             raise ValueError("MAX_ACTIVE_API_KEYS_PER_USER must be at least 1 in production.")
 
         if self.run_billing_scheduler_in_api:
-            raise ValueError("RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead.")
+            raise ValueError(
+                "RUN_BILLING_SCHEDULER_IN_API must be false in production; run the worker service instead."
+            )
 
         if self.enable_bootstrap_tool_seed:
             raise ValueError("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production.")
@@ -257,7 +270,9 @@ class Settings(BaseSettings):
             raise ValueError("MAX_SOURCE_ZIP_ENTRIES must be at least 1 in production.")
 
         if self.max_source_zip_uncompressed_bytes < self.max_request_body_bytes:
-            raise ValueError("MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES must be at least MAX_REQUEST_BODY_BYTES in production.")
+            raise ValueError(
+                "MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES must be at least MAX_REQUEST_BODY_BYTES in production."
+            )
 
         insecure_urls = [
             key

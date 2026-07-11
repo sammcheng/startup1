@@ -4,8 +4,8 @@ test("unauthenticated user can browse but not create tools", async ({ page }) =>
   await page.goto("/marketplace");
   await expect(page.locator("body")).toContainText(/marketplace/i);
 
-  await page.goto("/dashboard/tools/new");
-  await expect(page).toHaveURL(/sign-in|sign-up|dashboard\/tools\/new/);
+  await page.goto("/dashboard");
+  await expect(page).toHaveURL(/sign-in|sign-up/);
 });
 
 test("sign up flow works", async ({ page }) => {
@@ -21,6 +21,6 @@ test("can generate API key after auth", async ({ page }) => {
   );
 
   await page.goto(process.env.PLAYWRIGHT_AUTHENTICATED_DASHBOARD_URL!);
-  await page.goto("/dashboard/api-keys");
-  await expect(page.getByRole("button", { name: /create new api key/i })).toBeVisible();
+  await page.goto("/dashboard");
+  await expect(page.getByRole("button", { name: /create api key/i })).toBeVisible();
 });

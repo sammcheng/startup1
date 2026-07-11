@@ -53,7 +53,7 @@ export default function TermsPage() {
 
       <TrustSection title="Contact">
         <p>
-          For terms or account questions, email <a href="mailto:support@hackmarket.io">support@hackmarket.io</a>.
+          For terms or account questions, use the <a href="/support">support page</a>.
         </p>
       </TrustSection>
     </TrustPage>

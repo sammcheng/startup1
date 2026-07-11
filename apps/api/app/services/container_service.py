@@ -87,7 +87,9 @@ class ContainerBuilder:
 
         if analysis.language == "python":
             if not analysis.dependencies_file:
-                raise ContainerBuildError("Python projects need a requirements.txt or pyproject.toml file.")
+                raise ContainerBuildError(
+                    "Python projects need a requirements.txt or pyproject.toml file."
+                )
             install_line = (
                 f"RUN pip install --no-cache-dir -r {analysis.dependencies_file}"
                 if analysis.dependencies_file.endswith(".txt")
@@ -110,7 +112,11 @@ class ContainerBuilder:
 
         if analysis.language == "node":
             dependencies_file = analysis.dependencies_file or "package.json"
-            copy_line = "COPY package*.json ." if dependencies_file == "package.json" else f"COPY {dependencies_file} ."
+            copy_line = (
+                "COPY package*.json ."
+                if dependencies_file == "package.json"
+                else f"COPY {dependencies_file} ."
+            )
             return "\n".join(
                 [
                     "FROM node:20-slim",
@@ -147,7 +153,7 @@ class ContainerBuilder:
                     "FROM golang:1.22 as builder",
                     "WORKDIR /app",
                     "COPY . .",
-                    'RUN CGO_ENABLED=0 GOOS=linux go build -o /tmp/app ./...',
+                    "RUN CGO_ENABLED=0 GOOS=linux go build -o /tmp/app ./...",
                     "FROM debian:bookworm-slim",
                     "WORKDIR /app",
                     "COPY --from=builder /tmp/app /app/app",
@@ -185,7 +191,9 @@ class ContainerBuilder:
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            raise ContainerBuildError(self._clean_process_error("Docker build failed", stdout, stderr))
+            raise ContainerBuildError(
+                self._clean_process_error("Docker build failed", stdout, stderr)
+            )
 
         return image_uri
 
@@ -216,7 +224,9 @@ class ContainerBuilder:
             )
             stdout, stderr = await process.communicate()
             if process.returncode != 0:
-                raise ContainerBuildError(self._clean_process_error("Container startup failed", stdout, stderr))
+                raise ContainerBuildError(
+                    self._clean_process_error("Container startup failed", stdout, stderr)
+                )
 
             await self._wait_for_healthcheck(assigned_port)
             return f"http://localhost:{assigned_port}"
@@ -225,7 +235,9 @@ class ContainerBuilder:
             await self.port_manager.release(assigned_port)
             raise
 
-    async def process_upload(self, tool_id: UUID, *, final_attempt: bool = True) -> ProcessUploadResult:
+    async def process_upload(
+        self, tool_id: UUID, *, final_attempt: bool = True
+    ) -> ProcessUploadResult:
         async with AsyncSessionLocal() as db:
             tool = await tool_service.get_tool_by_id(db, tool_id)
             if not tool:
@@ -247,18 +259,26 @@ class ContainerBuilder:
                     inferred_entry = analysis.entry_point and not tool.entry_command
                     inferred_port = analysis.port and tool.port == 8080
                     if inferred_entry and analysis.entry_point:
-                        config.entry_command = self._default_entry_command(analysis.language, analysis.entry_point)
+                        config.entry_command = self._default_entry_command(
+                            analysis.language, analysis.entry_point
+                        )
                     if inferred_port and analysis.port:
                         config.port = analysis.port
 
                     image_uri: str | None = None
                     if render_service.render_deployments_enabled() and tool.github_url:
-                        api_endpoint = await render_service.deploy_tool_to_render(tool, analysis, config)
+                        api_endpoint = await render_service.deploy_tool_to_render(
+                            tool, analysis, config
+                        )
                     elif render_service.render_image_deployments_enabled() and tool.source_s3_key:
                         dockerfile = await self.generate_dockerfile(analysis, config)
                         image_uri = await self.build_and_push(tool_id, str(source_dir), dockerfile)
                         api_endpoint = await render_service.deploy_image_to_render(tool, image_uri)
-                    elif render_service.render_deployments_enabled() and tool.source_s3_key and settings.environment == "production":
+                    elif (
+                        render_service.render_deployments_enabled()
+                        and tool.source_s3_key
+                        and settings.environment == "production"
+                    ):
                         raise ContainerBuildError(
                             "Automatic Render hosting for zip uploads still needs GHCR credentials and a Docker-capable builder host."
                         )
@@ -340,7 +360,9 @@ class ContainerBuilder:
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            raise ContainerBuildError(self._clean_process_error("Failed to clone GitHub repository", stdout, stderr))
+            raise ContainerBuildError(
+                self._clean_process_error("Failed to clone GitHub repository", stdout, stderr)
+            )
 
     async def _try_download_github_archive(self, github_url: str, destination: Path) -> bool:
         parsed = urlparse(github_url)
@@ -360,6 +382,7 @@ class ContainerBuilder:
 
         try:
             from app.services.proxy_service import get_http_client
+
             client = get_http_client()
             response = await client.get(archive_url, timeout=30, follow_redirects=True)
             response.raise_for_status()
@@ -393,8 +416,11 @@ class ContainerBuilder:
     async def _github_default_branch(self, owner: str, repo: str) -> str:
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
         from app.services.proxy_service import get_http_client
+
         client = get_http_client()
-        response = await client.get(api_url, timeout=15, headers={"Accept": "application/vnd.github+json"})
+        response = await client.get(
+            api_url, timeout=15, headers={"Accept": "application/vnd.github+json"}
+        )
         response.raise_for_status()
         payload = response.json()
         branch = payload.get("default_branch")
@@ -425,7 +451,9 @@ class ContainerBuilder:
                     except httpx.HTTPError:
                         continue
                 await asyncio.sleep(2)
-        raise ContainerBuildError("The container started but did not become healthy within 30 seconds.")
+        raise ContainerBuildError(
+            "The container started but did not become healthy within 30 seconds."
+        )
 
     def _tool_config_from_tool(self, tool: Tool) -> ToolConfig:
         environment_variables = {
@@ -518,7 +546,16 @@ class ContainerBuilder:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or ".git" in path.parts:
                 continue
-            if path.suffix.lower() not in {".py", ".js", ".ts", ".json", ".toml", ".go", ".rs", ".txt"}:
+            if path.suffix.lower() not in {
+                ".py",
+                ".js",
+                ".ts",
+                ".json",
+                ".toml",
+                ".go",
+                ".rs",
+                ".txt",
+            }:
                 continue
             try:
                 snippets.append(path.read_text(encoding="utf-8", errors="ignore")[:4000])
@@ -532,7 +569,9 @@ class ContainerBuilder:
         if "FROM " not in dockerfile.upper():
             raise ContainerBuildError("The existing Dockerfile is missing a FROM instruction.")
         if "CMD " not in dockerfile.upper() and "ENTRYPOINT " not in dockerfile.upper():
-            raise ContainerBuildError("The existing Dockerfile needs a CMD or ENTRYPOINT instruction.")
+            raise ContainerBuildError(
+                "The existing Dockerfile needs a CMD or ENTRYPOINT instruction."
+            )
 
     def _build_arg_lines(self, environment_variables: dict[str, str]) -> list[str]:
         lines: list[str] = []

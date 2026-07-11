@@ -86,7 +86,9 @@ async def get_admin_operations_health(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
 ) -> AdminOperationsHealthResponse:
-    return AdminOperationsHealthResponse.model_validate(await operations_health_service.get_operations_health(db, redis))
+    return AdminOperationsHealthResponse.model_validate(
+        await operations_health_service.get_operations_health(db, redis)
+    )
 
 
 @router.get(
@@ -108,7 +110,9 @@ async def list_admin_tools(
 
     return ToolListResponse(
         items=[
-            ToolResponse.model_validate(tool).model_copy(update={"view_count": views.get(tool.slug, 0)})
+            ToolResponse.model_validate(tool).model_copy(
+                update={"view_count": views.get(tool.slug, 0)}
+            )
             for tool in tools
         ],
         total=total,

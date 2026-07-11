@@ -90,7 +90,7 @@ async def upload_tool_source(
         except ValidationError as exc:
             raise AppError(
                 message="The GitHub URL is invalid.",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 error_code="invalid_github_url",
                 details={"errors": exc.errors()},
             ) from exc
@@ -133,13 +133,15 @@ async def configure_tool(
     if not body.deployment_url and not body.entry_command:
         raise AppError(
             message="Provide either an entry command for Hackmarket to run or a live deployment URL.",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             error_code="runtime_configuration_incomplete",
         )
 
     normalized_deployment_url = None
     if body.deployment_url:
-        normalized_deployment_url = await endpoint_service.verify_live_endpoint(str(body.deployment_url))
+        normalized_deployment_url = await endpoint_service.verify_live_endpoint(
+            str(body.deployment_url)
+        )
 
     config_payload = body.model_dump()
     config_s3_key = f"tools/{tool_id}/config.json"
@@ -163,7 +165,9 @@ async def configure_tool(
     if normalized_deployment_url:
         return ToolResponse.model_validate(updated)
 
-    if updated.status in {ToolStatus.draft, ToolStatus.rejected} and (updated.source_s3_key or updated.github_url):
+    if updated.status in {ToolStatus.draft, ToolStatus.rejected} and (
+        updated.source_s3_key or updated.github_url
+    ):
         updated = await tool_service.update_tool(
             db,
             updated,
@@ -222,7 +226,9 @@ async def _enqueue_processing_job(db: AsyncSession, tool: Tool, *, trigger: str)
         )
     except Exception as exc:
         tool.status = ToolStatus.rejected
-        tool.processing_error = "The processing queue is unavailable. Please retry the upload or configuration step."
+        tool.processing_error = (
+            "The processing queue is unavailable. Please retry the upload or configuration step."
+        )
         await db.commit()
         raise AppError(
             message="We saved your source, but could not queue it for processing. Please try again in a moment.",

@@ -4,15 +4,16 @@ const PROD_APP_URL = "https://hackmarket.io";
 const CONFIGURED_CONVERTER_URL =
   process.env.NEXT_PUBLIC_CONVERTER_URL?.trim() ?? "";
 
-function readPublicEnv(name: string, fallback: string): string {
-  const value = process.env[name]?.trim();
-  return value && value.length > 0 ? value : fallback;
+function readPublicEnv(value: string | undefined, fallback: string): string {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : fallback;
 }
 
-export const API_BASE = readPublicEnv("NEXT_PUBLIC_API_URL", LOCAL_API_URL);
-export const APP_URL = readPublicEnv("NEXT_PUBLIC_APP_URL", PROD_APP_URL);
+// Next.js replaces direct NEXT_PUBLIC_* references in browser bundles at build time.
+export const API_BASE = readPublicEnv(process.env.NEXT_PUBLIC_API_URL, LOCAL_API_URL);
+export const APP_URL = readPublicEnv(process.env.NEXT_PUBLIC_APP_URL, PROD_APP_URL);
 export const CONVERTER_URL = readPublicEnv(
-  "NEXT_PUBLIC_CONVERTER_URL",
+  process.env.NEXT_PUBLIC_CONVERTER_URL,
   LOCAL_CONVERTER_URL,
 );
 export const CONVERTER_ENABLED =

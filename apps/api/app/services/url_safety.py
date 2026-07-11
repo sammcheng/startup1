@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 from app.config import settings
 from app.exceptions import AppError
 
-
 BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal"}
 BLOCKED_SUFFIXES = (".localhost", ".local", ".internal")
 
@@ -45,7 +44,9 @@ def _is_blocked_hostname(hostname: str) -> bool:
     )
 
 
-def _resolve_hostname_addresses(hostname: str, port: int) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+def _resolve_hostname_addresses(
+    hostname: str, port: int
+) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     try:
         records = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:

@@ -26,7 +26,9 @@ def generate_demo_config(tool: Tool) -> DemoConfig:
     fields = input_schema.get("fields")
 
     if isinstance(fields, list) and fields:
-        input_components = [_component_from_field(field) for field in fields if isinstance(field, dict)]
+        input_components = [
+            _component_from_field(field) for field in fields if isinstance(field, dict)
+        ]
     else:
         input_components = [_default_component_for_input_type(tool.input_type, input_schema)]
 
@@ -34,7 +36,9 @@ def generate_demo_config(tool: Tool) -> DemoConfig:
     example_input = (
         input_schema.get("example")
         or input_schema.get("example_input")
-        or tool.output_schema.get("example_input") if tool.output_schema else None
+        or tool.output_schema.get("example_input")
+        if tool.output_schema
+        else None
     )
 
     return DemoConfig(
@@ -50,11 +54,17 @@ def _component_from_field(field: dict[str, Any]) -> DemoInputComponent:
     name = str(field.get("name") or label.lower().replace(" ", "_"))
 
     if field_type == "number":
-        return DemoInputComponent(type="text", name=name, label=label, required=bool(field.get("required")))
+        return DemoInputComponent(
+            type="text", name=name, label=label, required=bool(field.get("required"))
+        )
     if field_type == "file":
-        return DemoInputComponent(type="file", name=name, label=label, required=bool(field.get("required")))
+        return DemoInputComponent(
+            type="file", name=name, label=label, required=bool(field.get("required"))
+        )
     if field_type == "url":
-        return DemoInputComponent(type="url", name=name, label=label, required=bool(field.get("required")))
+        return DemoInputComponent(
+            type="url", name=name, label=label, required=bool(field.get("required"))
+        )
 
     return DemoInputComponent(
         type="text",
@@ -65,17 +75,31 @@ def _component_from_field(field: dict[str, Any]) -> DemoInputComponent:
     )
 
 
-def _default_component_for_input_type(input_type: InputType | None, input_schema: dict[str, Any]) -> DemoInputComponent:
+def _default_component_for_input_type(
+    input_type: InputType | None, input_schema: dict[str, Any]
+) -> DemoInputComponent:
     placeholder = input_schema.get("placeholder")
 
     if input_type == InputType.image:
-        return DemoInputComponent(type="image", name="input", label="Image", required=True, accept="image/*")
+        return DemoInputComponent(
+            type="image", name="input", label="Image", required=True, accept="image/*"
+        )
     if input_type == InputType.json:
-        return DemoInputComponent(type="json", name="input", label="JSON", required=True, placeholder=placeholder)
+        return DemoInputComponent(
+            type="json", name="input", label="JSON", required=True, placeholder=placeholder
+        )
     if input_type == InputType.csv:
-        return DemoInputComponent(type="file", name="input", label="CSV file", required=True, accept=".csv,text/csv")
+        return DemoInputComponent(
+            type="file", name="input", label="CSV file", required=True, accept=".csv,text/csv"
+        )
     if input_type == InputType.url:
-        return DemoInputComponent(type="url", name="input", label="URL", required=True, placeholder=placeholder or "https://example.com")
+        return DemoInputComponent(
+            type="url",
+            name="input",
+            label="URL",
+            required=True,
+            placeholder=placeholder or "https://example.com",
+        )
     if input_type == InputType.file:
         return DemoInputComponent(type="file", name="input", label="File", required=True)
 

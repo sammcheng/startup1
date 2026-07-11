@@ -45,7 +45,9 @@ class InvalidAPIKeyError(AppError):
 
 
 class RateLimitExceededError(AppError):
-    def __init__(self, limit: int, remaining: int = 0, retry_after_seconds: int | None = None) -> None:
+    def __init__(
+        self, limit: int, remaining: int = 0, retry_after_seconds: int | None = None
+    ) -> None:
         details: dict[str, Any] = {
             "limit": limit,
             "remaining": remaining,
@@ -70,7 +72,9 @@ class InsufficientFundsError(AppError):
 
 
 class UploadFailedError(AppError):
-    def __init__(self, message: str = "Source upload failed.", *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, message: str = "Source upload failed.", *, details: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(
             message=message,
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -80,7 +84,9 @@ class UploadFailedError(AppError):
 
 
 class ContainerBuildError(AppError):
-    def __init__(self, message: str = "Container build failed.", *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, message: str = "Container build failed.", *, details: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(
             message=message,
             status_code=status.HTTP_502_BAD_GATEWAY,

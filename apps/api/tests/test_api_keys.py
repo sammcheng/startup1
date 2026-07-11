@@ -59,7 +59,9 @@ def test_deactivate_key(client, auth_overrides, buyer, api_key, monkeypatch):
     assert api_key.is_active is False
 
 
-def test_deactivate_key_returns_not_found_for_missing_or_not_owned_key(client, auth_overrides, buyer, api_key, monkeypatch):
+def test_deactivate_key_returns_not_found_for_missing_or_not_owned_key(
+    client, auth_overrides, buyer, api_key, monkeypatch
+):
     auth_overrides(current_user=buyer)
     deactivated = []
 

@@ -71,7 +71,7 @@ function converterToTool(c: ConverterTool): Tool {
     documentation: c.endpoints.length > 0
       ? `## Endpoints\n\n${c.endpoints.map(ep => `### ${ep.method} ${ep.path}\n${ep.summary}`).join("\n\n")}`
       : null,
-    avg_response_time_ms: 180, total_requests: 0, uptime_percentage: "99.9",
+    avg_response_time_ms: null, total_requests: 0, uptime_percentage: null,
     is_featured: false, view_count: 0, created_at: c.created_at, updated_at: c.created_at,
   };
 }
@@ -129,6 +129,15 @@ const CAT_COLORS: Record<string, string> = {
   automation: "#10b981", generation: "#ec4899", other: "#6b7280",
 };
 
+const CATEGORY_VISUALS: Record<string, { glyph: string; label: string; accent: string }> = {
+  nlp: { glyph: "Aa", label: "Text AI", accent: "#60a5fa" },
+  computer_vision: { glyph: "◉", label: "Vision", accent: "#a78bfa" },
+  data_analysis: { glyph: "▥", label: "Data", accent: "#fbbf24" },
+  automation: { glyph: "↯", label: "Workflow", accent: "#34d399" },
+  generation: { glyph: "✦", label: "Generate", accent: "#f472b6" },
+  other: { glyph: "API", label: "Tool", accent: "#94a3b8" },
+};
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatCount(n: number): string {
@@ -143,6 +152,14 @@ function formatPrice(p: string | null): string {
   if (n < 0.001) return `$${n.toFixed(6)}`;
   if (n < 0.01) return `$${n.toFixed(4)}`;
   return `$${n.toFixed(3)}/req`;
+}
+
+function cardPattern(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) % 997;
+  }
+  return `${18 + (hash % 34)}px ${16 + ((hash * 7) % 32)}px`;
 }
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -187,7 +204,9 @@ function XIcon({ size = 12 }: { size?: number }) {
 
 function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
   const color = CAT_COLORS[tool.category] ?? "#6b7280";
+  const visual = CATEGORY_VISUALS[tool.category] ?? CATEGORY_VISUALS.other;
   const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
+  const patternPosition = cardPattern(tool.slug);
   return (
     <Link href={`/tools/${tool.slug}`} className="group block">
       <article
@@ -196,7 +215,7 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
         onMouseEnter={(e) => {
           const el = e.currentTarget;
           el.style.borderColor = `${color}55`;
-          el.style.boxShadow = `0 0 24px ${color}0a, inset 0 0 0 1px ${color}22`;
+          el.style.boxShadow = `0 18px 45px ${color}16, inset 0 0 0 1px ${color}22`;
         }}
         onMouseLeave={(e) => {
           const el = e.currentTarget;
@@ -206,6 +225,72 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
       >
         <div className="absolute top-0 left-0 right-0 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-300"
           style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)` }} />
+        <div
+          aria-hidden="true"
+          className="relative h-32 overflow-hidden"
+          style={{
+            background:
+              `radial-gradient(circle at ${patternPosition}, ${visual.accent}66, transparent 34%), ` +
+              `linear-gradient(135deg, ${color}24 0%, rgba(255,255,255,0.04) 48%, ${visual.accent}18 100%)`,
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundImage:
+                `linear-gradient(90deg, ${color}22 1px, transparent 1px), ` +
+                `linear-gradient(0deg, ${color}18 1px, transparent 1px)`,
+              backgroundSize: "26px 26px",
+              maskImage: "linear-gradient(135deg, black, transparent 78%)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: 18,
+              top: 18,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,0.2)",
+              background: "rgba(0,0,0,0.16)",
+              color: "var(--text)",
+              backdropFilter: "blur(10px)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: color }} />
+            {visual.label}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              right: 18,
+              bottom: 14,
+              width: 72,
+              height: 72,
+              borderRadius: 24,
+              display: "grid",
+              placeItems: "center",
+              background: `linear-gradient(135deg, ${color}, ${visual.accent})`,
+              color: "#fff",
+              fontFamily: "var(--font-display)",
+              fontWeight: 800,
+              fontSize: visual.glyph.length > 2 ? 18 : 28,
+              boxShadow: `0 16px 34px ${color}40`,
+              transform: `rotate(${index % 2 === 0 ? "-3deg" : "3deg"})`,
+            }}
+          >
+            {visual.glyph}
+          </div>
+        </div>
         <div className="p-5 flex flex-col h-full">
           <div className="flex items-start justify-between gap-2 mb-3">
             <span className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider px-2.5 py-1 rounded-md"
@@ -266,15 +351,18 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
 
 function SkeletonCard() {
   return (
-    <div className="rounded-xl border p-5 h-52" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-      <div className="animate-shimmer h-5 w-24 rounded-md mb-4" />
-      <div className="animate-shimmer h-5 w-3/4 rounded mb-2" />
-      <div className="animate-shimmer h-4 w-full rounded mb-1" />
-      <div className="animate-shimmer h-4 w-2/3 rounded mb-5" />
-      <div className="border-t pt-4 flex gap-6" style={{ borderColor: "var(--border)" }}>
-        <div className="animate-shimmer h-4 w-14 rounded" />
-        <div className="animate-shimmer h-4 w-14 rounded" />
-        <div className="animate-shimmer h-4 w-14 rounded" />
+    <div className="rounded-xl border overflow-hidden" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <div className="animate-shimmer h-32 w-full" />
+      <div className="p-5">
+        <div className="animate-shimmer h-5 w-24 rounded-md mb-4" />
+        <div className="animate-shimmer h-5 w-3/4 rounded mb-2" />
+        <div className="animate-shimmer h-4 w-full rounded mb-1" />
+        <div className="animate-shimmer h-4 w-2/3 rounded mb-5" />
+        <div className="border-t pt-4 flex gap-6" style={{ borderColor: "var(--border)" }}>
+          <div className="animate-shimmer h-4 w-14 rounded" />
+          <div className="animate-shimmer h-4 w-14 rounded" />
+          <div className="animate-shimmer h-4 w-14 rounded" />
+        </div>
       </div>
     </div>
   );
@@ -383,7 +471,7 @@ export default function MarketplaceClient({
   const [livePreview, setLivePreview] = useState<ScoredTool[]>([]);
   const [livePreviewTotal, setLivePreviewTotal] = useState(0);
   const [liveQuery, setLiveQuery] = useState("");
-  const livePreviewRef = useRef<ReturnType<typeof setTimeout>>();
+  const livePreviewRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleLiveChange = useCallback((text: string) => {
     clearTimeout(livePreviewRef.current);
@@ -422,7 +510,7 @@ export default function MarketplaceClient({
     }, 120);
   }, []);
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Drive thinking animation — gate final transition on apiReady
   useEffect(() => {

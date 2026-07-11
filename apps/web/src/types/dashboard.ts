@@ -26,6 +26,12 @@ export interface DashboardPurchasedTool {
   last_used_at: string | null;
 }
 
+export interface DashboardUsagePoint {
+  date: string;
+  calls: number;
+  spend: string;
+}
+
 export interface DashboardSummaryResponse {
   display_name: string;
   role: string;
@@ -33,4 +39,5 @@ export interface DashboardSummaryResponse {
   active_api_keys: number;
   purchased_tools: DashboardPurchasedTool[];
   recent_activity: DashboardActivityItem[];
+  usage_chart_data: DashboardUsagePoint[];
 }

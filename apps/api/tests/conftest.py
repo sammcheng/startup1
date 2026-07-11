@@ -1,12 +1,14 @@
 import os
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test")
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/hackmarket_test"
+)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_mock")
@@ -18,11 +20,18 @@ from fastapi.testclient import TestClient
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("redis")
 pytest.importorskip("stripe")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("svix")
 pytest.importorskip("pydantic_settings")
 
-from app.dependencies import get_current_user, get_db, get_optional_current_user, get_redis, require_seller, validate_api_key
+from app.dependencies import (
+    get_current_user,
+    get_db,
+    get_optional_current_user,
+    get_redis,
+    require_seller,
+    validate_api_key,
+)
 from app.main import app
 from app.models import APIKey, Tool, User
 from app.models.tool import InputType, OutputType, OwnershipType, ToolCategory, ToolStatus
@@ -113,7 +122,7 @@ def make_user(*, role: UserRole, email: str, username: str) -> User:
 
 
 def make_tool(*, seller: User, status: ToolStatus, name: str, slug: str) -> Tool:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     tool = Tool(
         id=uuid.uuid4(),
         seller_id=seller.id,
@@ -150,7 +159,7 @@ def make_api_key(*, user: User, is_active: bool = True) -> APIKey:
         key_prefix="hm_live_abcd",
         name="production",
         is_active=is_active,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -276,7 +285,12 @@ def override_api_key_auth(user: User, key: APIKey):
 
 @pytest.fixture
 def auth_overrides():
-    def _apply(*, current_user: User | None = None, seller_user: User | None = None, api_key_context: tuple[User, APIKey] | None = None) -> None:
+    def _apply(
+        *,
+        current_user: User | None = None,
+        seller_user: User | None = None,
+        api_key_context: tuple[User, APIKey] | None = None,
+    ) -> None:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_optional_current_user, None)
         app.dependency_overrides.pop(require_seller, None)

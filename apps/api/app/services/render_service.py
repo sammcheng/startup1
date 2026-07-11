@@ -4,8 +4,7 @@ import asyncio
 import logging
 import re
 import shutil
-from typing import Any
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -76,7 +75,9 @@ async def deploy_image_to_render(tool: Tool, local_image_uri: str) -> str:
 
     service_name = build_render_service_name(tool)
     existing_service = await _find_service_by_name(service_name)
-    payload = _build_image_service_payload(tool, service_name, remote_image_uri, registry_credential_id)
+    payload = _build_image_service_payload(
+        tool, service_name, remote_image_uri, registry_credential_id
+    )
 
     if existing_service:
         service_id = _extract_service_id(existing_service)
@@ -135,7 +136,10 @@ def _build_service_payload(
         "name": service_name,
         "repo": tool.github_url,
         "autoDeploy": "yes" if settings.render_tool_auto_deploy else "no",
-        "envVars": [{"key": key, "value": value} for key, value in sorted(config.environment_variables.items())],
+        "envVars": [
+            {"key": key, "value": value}
+            for key, value in sorted(config.environment_variables.items())
+        ],
         "serviceDetails": service_details,
     }
 
@@ -190,7 +194,11 @@ def _build_command_for_analysis(analysis: ProjectAnalysis) -> str:
     if analysis.language == "node":
         return "npm ci"
     if analysis.language == "python":
-        return "pip install --no-cache-dir ." if analysis.dependencies_file == "pyproject.toml" else "pip install --no-cache-dir -r requirements.txt"
+        return (
+            "pip install --no-cache-dir ."
+            if analysis.dependencies_file == "pyproject.toml"
+            else "pip install --no-cache-dir -r requirements.txt"
+        )
     if analysis.language == "go":
         return "go build ./..."
     if analysis.language == "rust":
@@ -201,7 +209,9 @@ def _build_command_for_analysis(analysis: ProjectAnalysis) -> str:
 def build_remote_image_uri(tool: Tool) -> str:
     namespace = settings.image_registry_namespace.strip().strip("/")
     if not namespace:
-        raise RuntimeError("IMAGE_REGISTRY_NAMESPACE must be configured before pushing hosted tool images.")
+        raise RuntimeError(
+            "IMAGE_REGISTRY_NAMESPACE must be configured before pushing hosted tool images."
+        )
     slug = re.sub(r"[^a-z0-9-]+", "-", tool.slug.lower()).strip("-")
     slug = slug[:50] if slug else "tool"
     tag = str(tool.id).replace("-", "")[:12]
@@ -327,7 +337,9 @@ async def _publish_image_to_ghcr(local_image_uri: str, remote_image_uri: str) ->
     )
 
 
-async def _run_command(command: list[str], *, input_bytes: bytes | None = None, error_prefix: str) -> None:
+async def _run_command(
+    command: list[str], *, input_bytes: bytes | None = None, error_prefix: str
+) -> None:
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
@@ -371,7 +383,9 @@ async def _render_request(
         try:
             return response.json()
         except ValueError as exc:
-            raise RuntimeError("Render returned a non-JSON response while provisioning the tool.") from exc
+            raise RuntimeError(
+                "Render returned a non-JSON response while provisioning the tool."
+            ) from exc
 
     detail = _extract_error_detail(response)
     raise RuntimeError(f"Render deployment failed. {detail}")

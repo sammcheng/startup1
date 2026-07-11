@@ -1,7 +1,6 @@
 "use client";
 
-// Builder Dashboard — uses live account/tool data for signed-in users and
-// keeps a local preview path only for unsigned-in submission drafts.
+// Builder Dashboard — uses live account/tool data for signed-in users.
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -22,17 +21,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  listSubmissions,
-  type SubmissionRecord,
-} from "@/lib/submissions";
 import { api, ApiError } from "@/lib/api";
 import { syncCurrentUser } from "@/lib/auth-sync";
 import { useCurrentAccount } from "@/hooks/useAuth";
-import { toolToSubmissionRecord } from "@/lib/submission-adapter";
 import type { DashboardSummaryResponse } from "@/types/dashboard";
 import type { SellerDashboardResponse } from "@/types/seller";
-import type { Tool } from "@/types/tool";
+import ApiKeyManager from "@/components/dashboard/ApiKeyManager";
 
 // Inline name sanitizer — avoids an extra import that webpack tree-shaking
 // or stale cached chunks have been confused by. Strips HTML tags + entities.
@@ -70,10 +64,6 @@ function dayLabel(d: Date, range: RangeKey): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function flatSpark(value: number, length = 24): number[] {
-  return Array.from({ length }, () => Math.max(0, Math.round(value)));
-}
-
 function centsFromDecimal(value: string | number | null | undefined): number {
   return Math.round(Number(value ?? 0) * 100);
 }
@@ -97,81 +87,6 @@ const COLORS = [
   "#ec4899",
   "#8b5cf6",
 ];
-
-const HEALTH_COLOR: Record<string, string> = {
-  healthy: "#16a34a",
-  degraded: "#d97706",
-  outage: "#dc2626",
-};
-
-// ─── derive aggregates ──────────────────────────────────────────────────
-
-interface Aggregate {
-  liveTools: SubmissionRecord[];
-  inReview: number;
-  testing: number;
-  totalInstalls: number;
-  totalCalls7d: number;
-  totalEarnings7d: number;
-  avgUptime: number;
-  avgLatencyMs: number;
-  topReviews: { user: string; rating: number; tool: string; comment: string; when: string }[];
-}
-
-function aggregate(submissions: SubmissionRecord[]): Aggregate {
-  const liveTools = submissions.filter((s) => s.stage === "listed");
-  const inReview = submissions.filter((s) => s.stage === "manual_review").length;
-  const testing = submissions.filter((s) => s.stage === "testing").length;
-  const totalInstalls = liveTools.reduce(
-    (sum, s) => sum + (s.live?.installs ?? 0),
-    0,
-  );
-  const totalCalls7d = liveTools.reduce(
-    (sum, s) => sum + (s.live?.api_calls_7d ?? 0),
-    0,
-  );
-  const totalEarnings7d = liveTools.reduce(
-    (sum, s) => sum + (s.live?.earnings_cents_7d ?? 0),
-    0,
-  );
-  const avgUptime = liveTools.length
-    ? liveTools.reduce((sum, s) => sum + (s.live?.uptime_pct ?? 0), 0) /
-      liveTools.length
-    : 0;
-  const avgLatencyMs = liveTools.length
-    ? liveTools.reduce(
-        (sum, s) => sum + (s.metrics.avg_response_ms ?? 0),
-        0,
-      ) / liveTools.length
-    : 0;
-  const topReviews = liveTools
-    .flatMap((s) =>
-      (s.live?.reviews ?? []).map((r) => ({
-        user: r.user,
-        rating: r.rating,
-        tool: s.name,
-        comment: r.comment,
-        when: r.posted_at,
-      })),
-    )
-    .sort(
-      (a, b) =>
-        new Date(b.when).getTime() - new Date(a.when).getTime(),
-    )
-    .slice(0, 6);
-
-  return {
-    liveTools,
-    inReview,
-    testing,
-    totalInstalls,
-    totalCalls7d,
-    totalEarnings7d,
-    avgUptime,
-    avgLatencyMs,
-    topReviews,
-  };
-}
 
 // ─── time series builders ───────────────────────────────────────────────
 
@@ -200,77 +115,92 @@ function buildRevenueSeries(range: RangeKey, sellerSummary: SellerDashboardRespo
   });
 }
 
+interface RequestPoint {
+  day: string;
+  requests: number;
+}
+
+function buildRequestSeries(range: RangeKey, sellerSummary: SellerDashboardResponse | null): RequestPoint[] {
+  const requestsByDay = new Map(
+    (sellerSummary?.request_chart_data ?? []).map((point) => [point.date, point.count]),
+  );
+  return buildDatedSeries(range, requestsByDay).map(({ day, value }) => ({
+    day,
+    requests: value,
+  }));
+}
+
+interface LatencyPoint {
+  day: string;
+  latency: number;
+}
+
+function buildLatencySeries(range: RangeKey, sellerSummary: SellerDashboardResponse | null): LatencyPoint[] {
+  const latencyByDay = new Map(
+    (sellerSummary?.latency_chart_data ?? []).map((point) => [
+      point.date,
+      point.avg_response_time_ms,
+    ]),
+  );
+  return buildDatedSeries(range, latencyByDay).map(({ day, value }) => ({
+    day,
+    latency: value,
+  }));
+}
+
+function buildDatedSeries(range: RangeKey, valuesByDay: Map<string, number>) {
+  const days = RANGE_DAYS[range];
+  const today = new Date();
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (days - 1 - index));
+    return {
+      day: dayLabel(date, range),
+      value: valuesByDay.get(isoDateKey(date)) ?? 0,
+    };
+  });
+}
+
 interface MixSlice {
   name: string;
   value: number;
   slug: string;
 }
 
-function buildRevenueMix(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): MixSlice[] {
-  if (sellerSummary) {
-    return sellerSummary.tools
-      .map((tool) => ({
-        name: sanitizeName(tool.tool_name),
-        slug: tool.slug,
-        value: centsFromDecimal(tool.revenue_this_month),
-      }))
-      .sort((a, b) => b.value - a.value);
-  }
-
-  return agg.liveTools
-    .map((t) => ({
-      name: t.name,
-      slug: t.slug,
-      value: t.live?.earnings_cents_7d ?? 0,
+function buildRevenueMix(sellerSummary: SellerDashboardResponse | null): MixSlice[] {
+  return (sellerSummary?.tools ?? [])
+    .map((tool) => ({
+      name: sanitizeName(tool.tool_name),
+      slug: tool.slug,
+      value: centsFromDecimal(tool.revenue_this_month),
     }))
+    .filter((tool) => tool.value > 0)
     .sort((a, b) => b.value - a.value);
 }
 
 interface LeaderRow {
   name: string;
   slug: string;
-  installs: number;
-  calls_7d: number;
-  earnings_7d: number;
-  uptime: number;
-  health: string;
+  requests: number;
+  revenue: number;
+  uniqueUsers: number;
   statusLabel: string;
   statusColor: string;
 }
 
-function buildLeaderboard(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): LeaderRow[] {
-  if (sellerSummary) {
-    return sellerSummary.tools
-      .map((tool) => {
-        const status = sellerToolStatusLabel(tool.status, tool.latest_job_status);
-        return {
-          name: sanitizeName(tool.tool_name),
-          slug: tool.slug,
-          installs: 0,
-          calls_7d: tool.requests_this_month,
-          earnings_7d: centsFromDecimal(tool.revenue_this_month),
-          uptime: tool.status === "live" ? 100 : 0,
-          health: tool.status === "live" ? "healthy" : "degraded",
-          statusLabel: status.label,
-          statusColor: status.color,
-        };
-      })
-      .sort((a, b) => b.earnings_7d - a.earnings_7d);
-  }
-
-  return agg.liveTools
-    .map((t) => ({
-      name: sanitizeName(t.name),
-      slug: t.slug,
-      installs: t.live?.installs ?? 0,
-      calls_7d: t.live?.api_calls_7d ?? 0,
-      earnings_7d: t.live?.earnings_cents_7d ?? 0,
-      uptime: t.live?.uptime_pct ?? 0,
-      health: t.live?.health ?? "healthy",
-      statusLabel: t.stage,
-      statusColor: "#16a34a",
-    }))
-    .sort((a, b) => b.earnings_7d - a.earnings_7d);
+function buildLeaderboard(sellerSummary: SellerDashboardResponse | null): LeaderRow[] {
+  return (sellerSummary?.tools ?? []).map((tool) => {
+    const status = sellerToolStatusLabel(tool.status, tool.latest_job_status);
+    return {
+      name: sanitizeName(tool.tool_name),
+      slug: tool.slug,
+      requests: tool.requests_this_month,
+      revenue: centsFromDecimal(tool.revenue_this_month),
+      uniqueUsers: tool.unique_users_this_month,
+      statusLabel: status.label,
+      statusColor: status.color,
+    };
+  });
 }
 
 function sellerToolStatusLabel(
@@ -295,60 +225,38 @@ interface LatencyRow {
   p99: number;
 }
 
-function buildLatency(agg: Aggregate): LatencyRow[] {
-  return agg.liveTools
-    .map((t) => ({
-      name: t.name,
-      p50: t.metrics.p50_response_ms,
-      p95: t.metrics.p95_response_ms,
-      p99: t.metrics.p99_response_ms,
+function buildSellerLatency(sellerSummary: SellerDashboardResponse | null): LatencyRow[] {
+  return (sellerSummary?.tools ?? [])
+    .map((tool) => ({
+      name: sanitizeName(tool.tool_name),
+      p50: Math.round(tool.p50_response_time_ms ?? 0),
+      p95: Math.round(tool.p95_response_time_ms ?? 0),
+      p99: Math.round(tool.p99_response_time_ms ?? 0),
     }))
     .filter((row) => row.p50 > 0 || row.p95 > 0 || row.p99 > 0);
 }
 
 interface ActivityItem {
-  kind: "install" | "earning" | "review" | "request" | "deploy";
+  id: string;
+  kind: "request" | "error";
   text: string;
   when: string;
 }
 
-function buildActivity(agg: Aggregate): ActivityItem[] {
-  const items: ActivityItem[] = [];
-  agg.liveTools.forEach((t) => {
-    const live = t.live;
-    if (!live) return;
-
-    items.push({
-      kind: "earning",
-      text: `${dollars(live.earnings_cents_7d)} earned from ${t.name} this week`,
-      when: live.listed_at,
-    });
-    if (live.installs > 0) {
-      items.push({
-        kind: "install",
-        text: `${num(live.installs)} active installs on ${t.name}`,
-        when: live.listed_at,
-      });
-    }
-    (live.reviews ?? []).slice(0, 2).forEach((r) => {
-      items.push({
-        kind: r.is_feature_request ? "request" : "review",
-        text: r.is_feature_request
-          ? `Feature request on ${t.name}: ${r.comment.slice(0, 80)}…`
-          : `★ ${r.rating} from ${r.user} on ${t.name}`,
-        when: r.posted_at,
-      });
-    });
-  });
-  return items
-    .sort(
-      (a, b) => new Date(b.when).getTime() - new Date(a.when).getTime(),
-    )
-    .slice(0, 10);
+function buildSellerActivity(sellerSummary: SellerDashboardResponse | null): ActivityItem[] {
+  return (sellerSummary?.recent_activity ?? []).map((item) => ({
+    id: item.id,
+    kind: item.status_code >= 400 ? "error" : "request",
+    text: `${sanitizeName(item.tool_name)} returned ${item.status_code} in ${item.response_time_ms}ms`,
+    when: item.request_timestamp,
+  }));
 }
 
 function timeAgo(iso: string): string {
-  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (!iso) return "never";
+  const timestamp = new Date(iso).getTime();
+  if (Number.isNaN(timestamp)) return "unknown";
+  const m = Math.round((Date.now() - timestamp) / 60_000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
   const h = Math.round(m / 60);
@@ -357,59 +265,17 @@ function timeAgo(iso: string): string {
 }
 
 const ACTIVITY_GLYPH: Record<ActivityItem["kind"], { icon: string; color: string }> = {
-  install: { icon: "↗", color: "#2563eb" },
-  earning: { icon: "$", color: "#16a34a" },
-  review: { icon: "★", color: "#d97706" },
   request: { icon: "✦", color: "#6366f1" },
-  deploy: { icon: "↑", color: "#16a34a" },
+  error: { icon: "!", color: "#dc2626" },
 };
-
-// ─── milestones ────────────────────────────────────────────────────────
-
-interface Milestone {
-  label: string;
-  current: number;
-  target: number;
-  unit: string;
-  format: (n: number) => string;
-}
-
-function buildMilestones(agg: Aggregate, sellerSummary: SellerDashboardResponse | null): Milestone[] {
-  const monthlyRevenueCents = sellerSummary
-    ? centsFromDecimal(sellerSummary.total_revenue_this_month)
-    : agg.totalEarnings7d;
-  const activeTools = sellerSummary?.active_tools ?? agg.liveTools.length;
-  const monthlyRequests = sellerSummary?.total_requests_this_month ?? agg.totalCalls7d;
-  return [
-    {
-      label: "Monthly revenue",
-      current: monthlyRevenueCents,
-      target: 50_000_00, // $50k
-      unit: "cents",
-      format: (n) => dollars(n),
-    },
-    {
-      label: "Live tools",
-      current: activeTools,
-      target: 10,
-      unit: "tools",
-      format: (n) => num(n),
-    },
-    {
-      label: "API calls / month",
-      current: monthlyRequests,
-      target: 250_000,
-      unit: "calls",
-      format: (n) => num(n),
-    },
-  ];
-}
 
 interface BuyerSnapshot {
   spendCents: number;
   callsThisMonth: number;
   savedTools: number;
   apiKeys: number;
+  spendSeries: number[];
+  callSeries: number[];
   purchasedTools: {
     name: string;
     slug: string;
@@ -453,12 +319,15 @@ function buildBuyerSnapshot(
         when: item.request_timestamp,
       }))
     : [];
+  const usageSeries = summary?.usage_chart_data ?? [];
 
   return {
     spendCents,
     callsThisMonth,
     savedTools: purchasedTools.length,
     apiKeys: summary?.active_api_keys ?? 0,
+    spendSeries: usageSeries.map((point) => centsFromDecimal(point.spend)),
+    callSeries: usageSeries.map((point) => point.calls),
     purchasedTools,
     activity,
   };
@@ -468,7 +337,6 @@ function buildBuyerSnapshot(
 
 export default function DashboardPage() {
   const account = useCurrentAccount();
-  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [range, setRange] = useState<RangeKey>("30d");
   const [mode, setMode] = useState<DashboardMode>("buyer");
   const [mounted, setMounted] = useState(false);
@@ -486,7 +354,6 @@ export default function DashboardPage() {
       setRemoteStatus("guest");
       setAccountSummary(null);
       setSellerSummary(null);
-      setSubmissions(listSubmissions());
       return;
     }
 
@@ -507,24 +374,14 @@ export default function DashboardPage() {
             throw error;
           }),
         ]);
-        const sellerTools = seller
-          ? await api.get<Tool[]>("/tools/me", { token }).catch((error) => {
-              if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-                return [];
-              }
-              throw error;
-            })
-          : [];
         if (!active) return;
         setAccountSummary(dashboard);
         setSellerSummary(seller);
-        setSubmissions(sellerTools.map((tool) => toolToSubmissionRecord(tool)));
         setRemoteStatus("ready");
       } catch {
         if (!active) return;
         setAccountSummary(null);
         setSellerSummary(null);
-        setSubmissions([]);
         setRemoteStatus("error");
       }
     }
@@ -535,23 +392,35 @@ export default function DashboardPage() {
     };
   }, [account]);
 
-  const agg = useMemo(() => aggregate(submissions), [submissions]);
   const revSeries = useMemo(() => buildRevenueSeries(range, sellerSummary), [range, sellerSummary]);
-  const mix = useMemo(() => buildRevenueMix(agg, sellerSummary), [agg, sellerSummary]);
-  const leaderboard = useMemo(() => buildLeaderboard(agg, sellerSummary), [agg, sellerSummary]);
-  const latency = useMemo(() => buildLatency(agg), [agg]);
-  const activity = useMemo(() => buildActivity(agg), [agg]);
-  const milestones = useMemo(() => buildMilestones(agg, sellerSummary), [agg, sellerSummary]);
+  const requestSeries = useMemo(() => buildRequestSeries(range, sellerSummary), [range, sellerSummary]);
+  const latencySeries = useMemo(() => buildLatencySeries(range, sellerSummary), [range, sellerSummary]);
+  const mix = useMemo(() => buildRevenueMix(sellerSummary), [sellerSummary]);
+  const leaderboard = useMemo(() => buildLeaderboard(sellerSummary), [sellerSummary]);
+  const latency = useMemo(() => buildSellerLatency(sellerSummary), [sellerSummary]);
+  const activity = useMemo(() => buildSellerActivity(sellerSummary), [sellerSummary]);
+  const attentionTools = useMemo(
+    () => (sellerSummary?.tools ?? []).filter(
+      (tool) => tool.latest_job_status === "failed" || tool.status === "rejected" || tool.status === "paused",
+    ),
+    [sellerSummary],
+  );
 
   const sellerRevenueCents = sellerSummary
     ? centsFromDecimal(sellerSummary.total_revenue_this_month)
-    : agg.totalEarnings7d;
+    : 0;
   const sellerPreviousRevenueCents = sellerSummary
     ? centsFromDecimal(sellerSummary.previous_month_revenue)
     : 0;
-  const sellerRequests = sellerSummary?.total_requests_this_month ?? agg.totalCalls7d;
-  const sellerActiveTools = sellerSummary?.active_tools ?? agg.liveTools.length;
-  const sellerAvgLatency = sellerSummary?.avg_response_time_ms ?? agg.avgLatencyMs;
+  const sellerRequests = sellerSummary?.total_requests_this_month ?? 0;
+  const sellerActiveTools = sellerSummary?.active_tools ?? 0;
+  const sellerAvgLatency = sellerSummary?.avg_response_time_ms ?? 0;
+  const sellerTesting = (sellerSummary?.tools ?? []).filter(
+    (tool) => tool.status === "processing" || ["queued", "running", "retrying"].includes(tool.latest_job_status ?? ""),
+  ).length;
+  const sellerInReview = (sellerSummary?.tools ?? []).filter(
+    (tool) => tool.status === "draft" && !tool.latest_job_status,
+  ).length;
   const revDelta = percentDelta(sellerRevenueCents, sellerPreviousRevenueCents);
   const accountName =
     accountSummary?.display_name ||
@@ -616,9 +485,9 @@ export default function DashboardPage() {
             >
               {mode === "buyer"
                 ? `${accountName}'s tools, keys, and usage.`
-                : agg.liveTools.length === 0
+                : sellerActiveTools === 0
                   ? "Submit a build to get started."
-                  : `You're earning across ${agg.liveTools.length} live tool${agg.liveTools.length === 1 ? "" : "s"}.`}
+                  : `You're earning across ${sellerActiveTools} live tool${sellerActiveTools === 1 ? "" : "s"}.`}
             </h1>
             <p style={{ color: "var(--muted)", fontSize: 13 }}>
               {mode === "seller"
@@ -631,7 +500,7 @@ export default function DashboardPage() {
                     ? "Loading account data"
                     : account.isSignedIn
                       ? "Signed in account"
-                      : "Guest preview until sign-in is configured"}
+                      : "Sign in to load account-owned data"}
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -651,11 +520,22 @@ export default function DashboardPage() {
           </div>
         </header>
 
+        <DashboardDataNotice
+          status={remoteStatus}
+          isSignedIn={account.isSignedIn}
+          mode={mode}
+        />
+
         {mode === "buyer" ? (
           <BuyerDashboard
             accountName={accountName}
             isSignedIn={account.isSignedIn}
             snapshot={buyerSnapshot}
+            onActiveApiKeyCountChange={(count) => {
+              setAccountSummary((current) => current
+                ? { ...current, active_api_keys: count }
+                : current);
+            }}
           />
         ) : (
           <>
@@ -679,21 +559,20 @@ export default function DashboardPage() {
             label="API calls · month"
             value={num(sellerRequests)}
             delta={null}
-            spark={flatSpark(sellerRequests / 24)}
+            spark={requestSeries.map((point) => point.requests)}
             color="#2563eb"
           />
           <KpiCard
             label="Live tools"
             value={num(sellerActiveTools)}
             delta={null}
-            spark={flatSpark(sellerActiveTools)}
             color="#6366f1"
           />
           <KpiCard
             label="Avg latency"
-            value={`${Math.round(sellerAvgLatency)}ms`}
+            value={sellerSummary?.avg_response_time_ms == null ? "No data" : `${Math.round(sellerAvgLatency)}ms`}
             delta={null}
-            spark={flatSpark(sellerAvgLatency)}
+            spark={sellerSummary?.latency_chart_data.length ? latencySeries.map((point) => point.latency) : undefined}
             color={sellerAvgLatency <= 500 ? "#16a34a" : "#d97706"}
           />
         </section>
@@ -702,7 +581,7 @@ export default function DashboardPage() {
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "1.6fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
             gap: 12,
             marginBottom: 16,
           }}
@@ -760,7 +639,7 @@ export default function DashboardPage() {
               sub={`This month · ${mix.length} tools`}
             />
             {mix.length === 0 ? (
-              <EmptyChart text="No live tools yet." />
+              <EmptyChart text="No completed seller revenue yet." />
             ) : (
               <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                 <div style={{ width: 160, height: 180 }}>
@@ -850,25 +729,11 @@ export default function DashboardPage() {
           </Card>
         </section>
 
-        {/* ── Milestones strip */}
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          {milestones.map((m) => (
-            <MilestoneCard key={m.label} milestone={m} />
-          ))}
-        </section>
-
         {/* ── Leaderboard + Latency */}
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "1.4fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
             gap: 12,
             marginBottom: 16,
           }}
@@ -884,8 +749,8 @@ export default function DashboardPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {leaderboard.map((row, i) => {
-                  const max = leaderboard[0].earnings_7d || 1;
-                  const widthPct = (row.earnings_7d / max) * 100;
+                  const max = leaderboard[0].revenue || 1;
+                  const widthPct = (row.revenue / max) * 100;
                   return (
                     <Link
                       key={row.slug}
@@ -935,18 +800,10 @@ export default function DashboardPage() {
                         >
                           {row.name}
                         </span>
-                        {sellerSummary ? (
-                          <ToolStatusPill label={row.statusLabel} color={row.statusColor} />
-                        ) : (
-                          <HealthDot health={row.health} uptime={row.uptime} />
-                        )}
-                        {sellerSummary ? (
-                          <Stat tiny label="status" value={row.statusLabel} color={row.statusColor} />
-                        ) : (
-                          <Stat tiny label="installs" value={num(row.installs)} />
-                        )}
-                        <Stat tiny label={sellerSummary ? "requests" : "calls"} value={num(row.calls_7d)} />
-                        <Stat tiny label="revenue" value={dollars(row.earnings_7d)} color="#16a34a" />
+                        <ToolStatusPill label={row.statusLabel} color={row.statusColor} />
+                        <Stat tiny label="users" value={num(row.uniqueUsers)} />
+                        <Stat tiny label="requests" value={num(row.requests)} />
+                        <Stat tiny label="revenue" value={dollars(row.revenue)} color="#16a34a" />
                       </div>
                     </Link>
                   );
@@ -995,26 +852,26 @@ export default function DashboardPage() {
           </Card>
         </section>
 
-        {/* ── Activity feed + Reviews */}
+        {/* ── Activity feed + operational attention */}
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
             gap: 12,
             marginBottom: 16,
           }}
         >
           <Card>
-            <CardHead title="Recent activity" sub="Across all live tools" />
+            <CardHead title="Recent activity" sub="Real gateway requests across your tools" />
             <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
               {activity.length === 0 ? (
                 <li style={{ color: "var(--muted)", fontSize: 13, padding: 10 }}>No activity yet.</li>
               ) : (
-                activity.map((a, i) => {
+                activity.map((a) => {
                   const g = ACTIVITY_GLYPH[a.kind];
                   return (
                     <li
-                      key={i}
+                      key={a.id}
                       style={{
                         display: "flex",
                         alignItems: "flex-start",
@@ -1062,16 +919,18 @@ export default function DashboardPage() {
 
           <Card>
             <CardHead
-              title="Latest reviews & requests"
-              sub={`${agg.topReviews.length} from your customers`}
+              title="Needs attention"
+              sub={`${attentionTools.length} tools with a failed, rejected, or paused state`}
             />
             <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-              {agg.topReviews.length === 0 ? (
-                <li style={{ color: "var(--muted)", fontSize: 13, padding: 10 }}>No reviews yet.</li>
+              {attentionTools.length === 0 ? (
+                <li style={{ color: "var(--muted)", fontSize: 13, padding: 10 }}>No tools need attention.</li>
               ) : (
-                agg.topReviews.map((r, i) => (
+                attentionTools.map((tool) => {
+                  const status = sellerToolStatusLabel(tool.status, tool.latest_job_status);
+                  return (
                   <li
-                    key={i}
+                    key={tool.tool_id}
                     style={{
                       padding: "10px 12px",
                       borderRadius: 10,
@@ -1079,29 +938,11 @@ export default function DashboardPage() {
                       background: "var(--bg)",
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 4,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, color: "var(--text)", fontSize: 13 }}>{r.user}</span>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 11,
-                          color: "var(--muted)",
-                        }}
-                      >
-                        on {r.tool}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontWeight: 700, color: "var(--text)", fontSize: 13, flex: 1 }}>
+                        {sanitizeName(tool.tool_name)}
                       </span>
-                      <span style={{ marginLeft: "auto", color: "#d97706", fontSize: 11.5 }}>
-                        {"★".repeat(r.rating)}
-                        <span style={{ opacity: 0.3 }}>{"★".repeat(5 - r.rating)}</span>
-                      </span>
+                      <ToolStatusPill label={status.label} color={status.color} />
                     </div>
                     <div
                       style={{
@@ -1110,20 +951,14 @@ export default function DashboardPage() {
                         lineHeight: 1.5,
                       }}
                     >
-                      {r.comment}
+                      {tool.latest_job_error || "Review this tool's current state before making it live again."}
                     </div>
-                    <div
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10.5,
-                        color: "var(--faint)",
-                        marginTop: 4,
-                      }}
-                    >
-                      {timeAgo(r.when)}
-                    </div>
+                    <Link href={`/submit/${tool.tool_id}/status`} style={{ ...smallLinkStyle, display: "inline-flex", marginTop: 8 }}>
+                      View processing status
+                    </Link>
                   </li>
-                ))
+                  );
+                })
               )}
             </ul>
           </Card>
@@ -1133,27 +968,27 @@ export default function DashboardPage() {
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
             gap: 12,
           }}
         >
           <PipelineCard
             label="Testing"
-            count={agg.testing}
+            count={sellerTesting}
             color="#6366f1"
-            href="/approver"
-            hint={agg.testing === 0 ? "Inbox zero" : "Auto-completes within 18s"}
+            href="/submit"
+            hint={sellerTesting === 0 ? "No active jobs" : "Queued, running, or retrying"}
           />
           <PipelineCard
             label="Pending review"
-            count={agg.inReview}
+            count={sellerInReview}
             color="#d97706"
-            href="/approver"
-            hint={agg.inReview === 0 ? "Inbox zero" : "Waiting on approver"}
+            href="/submit"
+            hint={sellerInReview === 0 ? "No drafts waiting" : "Drafts awaiting review"}
           />
           <PipelineCard
             label="Live tools"
-            count={agg.liveTools.length}
+            count={sellerActiveTools}
             color="#16a34a"
             href="/marketplace"
             hint={`${dollars(sellerRevenueCents)} earned this month`}
@@ -1228,10 +1063,12 @@ function BuyerDashboard({
   accountName,
   isSignedIn,
   snapshot,
+  onActiveApiKeyCountChange,
 }: {
   accountName: string;
   isSignedIn: boolean;
   snapshot: BuyerSnapshot;
+  onActiveApiKeyCountChange: (count: number) => void;
 }) {
   return (
     <>
@@ -1291,28 +1128,26 @@ function BuyerDashboard({
           label="Spend · month"
           value={dollars(snapshot.spendCents)}
           delta={null}
-          spark={flatSpark(snapshot.spendCents / 24)}
+          spark={snapshot.spendSeries}
           color="#2563eb"
         />
         <KpiCard
           label="API calls · month"
           value={num(snapshot.callsThisMonth)}
           delta={null}
-          spark={flatSpark(snapshot.callsThisMonth / 24)}
+          spark={snapshot.callSeries}
           color="#16a34a"
         />
         <KpiCard
           label="Saved tools"
           value={num(snapshot.savedTools)}
           delta={null}
-          spark={flatSpark(snapshot.savedTools)}
           color="#d97706"
         />
         <KpiCard
           label="API keys"
           value={num(snapshot.apiKeys)}
           delta={null}
-          spark={flatSpark(snapshot.apiKeys)}
           color="#6366f1"
         />
       </section>
@@ -1320,7 +1155,7 @@ function BuyerDashboard({
       <section
         style={{
           display: "grid",
-          gridTemplateColumns: "1.35fr 1fr",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
           gap: 12,
           marginBottom: 16,
         }}
@@ -1391,9 +1226,7 @@ function BuyerDashboard({
               <span style={{ color: "var(--muted)" }}>Dashboard mode</span>
               <span style={{ color: "var(--text)", fontWeight: 700 }}>Buyer</span>
             </div>
-            <Link href="/docs" style={{ ...primaryBtn, justifyContent: "center", marginTop: 4 }}>
-              View API docs
-            </Link>
+            <ApiKeyManager onActiveCountChange={onActiveApiKeyCountChange} />
           </div>
         </Card>
       </section>
@@ -1435,6 +1268,80 @@ function BuyerDashboard({
         </div>
       </Card>
     </>
+  );
+}
+
+function DashboardDataNotice({
+  status,
+  isSignedIn,
+  mode,
+}: {
+  status: "idle" | "loading" | "ready" | "guest" | "error";
+  isSignedIn: boolean;
+  mode: DashboardMode;
+}) {
+  if (status === "ready" || status === "idle") return null;
+
+  const copy = (() => {
+    if (!isSignedIn || status === "guest") {
+      return {
+        tone: "info",
+        title: "Sign in to load your live account.",
+        body: "This dashboard will stay empty until a real GitHub or email account is connected.",
+        action: "Sign in",
+        href: "/sign-in",
+      };
+    }
+    if (status === "loading") {
+      return {
+        tone: "info",
+        title: "Loading live dashboard data.",
+        body: mode === "seller"
+          ? "Fetching your seller tools, processing jobs, revenue, and request metrics."
+          : "Fetching your purchases, API keys, usage, and recent requests.",
+        action: null,
+        href: null,
+      };
+    }
+    return {
+      tone: "error",
+      title: "Live dashboard data could not load.",
+      body: "We are not showing fallback demo metrics here. Retry after the API is reachable so this stays production-accurate.",
+      action: "Browse marketplace",
+      href: "/marketplace",
+    };
+  })();
+
+  const isError = copy.tone === "error";
+  return (
+    <section
+      style={{
+        border: `1px solid ${isError ? "rgba(220,38,38,0.28)" : "rgba(37,99,235,0.24)"}`,
+        borderRadius: 12,
+        background: isError ? "rgba(220,38,38,0.07)" : "rgba(37,99,235,0.07)",
+        padding: 14,
+        marginBottom: 16,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+      }}
+    >
+      <div>
+        <div style={{ color: "var(--text)", fontWeight: 800, fontSize: 13.5 }}>
+          {copy.title}
+        </div>
+        <div style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 2 }}>
+          {copy.body}
+        </div>
+      </div>
+      {copy.href && copy.action ? (
+        <Link href={copy.href} style={smallLinkStyle}>
+          {copy.action}
+        </Link>
+      ) : null}
+    </section>
   );
 }
 
@@ -1578,10 +1485,10 @@ function KpiCard({
   label: string;
   value: string;
   delta: number | null;
-  spark: number[];
+  spark?: number[];
   color: string;
 }) {
-  const data = spark.map((v, i) => ({ i, v }));
+  const data = (spark ?? []).map((v, i) => ({ i, v }));
   return (
     <Card>
       <Eyebrow style={{ fontSize: 10 }}>{label}</Eyebrow>
@@ -1611,17 +1518,23 @@ function KpiCard({
         )}
       </div>
       <div style={{ height: 32, marginTop: 8, marginRight: -6, marginLeft: -6 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data}>
-            <Line
-              type="monotone"
-              dataKey="v"
-              stroke={color}
-              strokeWidth={1.8}
-              dot={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        {data.length > 1 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <Line
+                type="monotone"
+                dataKey="v"
+                stroke={color}
+                strokeWidth={1.8}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <span style={{ color: "var(--faint)", fontFamily: "var(--font-mono)", fontSize: 10.5 }}>
+            Current account total
+          </span>
+        )}
       </div>
     </Card>
   );
@@ -1686,89 +1599,6 @@ function RangeToggle({
         </button>
       ))}
     </div>
-  );
-}
-
-function MilestoneCard({ milestone }: { milestone: Milestone }) {
-  const progress = Math.min(100, (milestone.current / milestone.target) * 100);
-  return (
-    <Card>
-      <Eyebrow style={{ fontSize: 10 }}>{milestone.label}</Eyebrow>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-          marginTop: 6,
-          marginBottom: 8,
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 700,
-            fontSize: 20,
-            color: "var(--text)",
-            lineHeight: 1,
-          }}
-        >
-          {milestone.format(milestone.current)}
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--muted)",
-          }}
-        >
-          / {milestone.format(milestone.target)} ({progress.toFixed(0)}%)
-        </div>
-      </div>
-      <div
-        style={{
-          height: 6,
-          background: "var(--bg)",
-          borderRadius: 999,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: `${progress}%`,
-            height: "100%",
-            background: progress >= 100 ? "#16a34a" : "var(--blue)",
-            transition: "width 0.6s ease",
-          }}
-        />
-      </div>
-    </Card>
-  );
-}
-
-function HealthDot({ health, uptime }: { health: string; uptime: number }) {
-  const color = HEALTH_COLOR[health] ?? "#6b6860";
-  return (
-    <span
-      title={`${health} · ${uptime.toFixed(2)}% uptime`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        fontFamily: "var(--font-mono)",
-        fontSize: 10.5,
-        color,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: color,
-        }}
-      />
-      {uptime.toFixed(1)}%
-    </span>
   );
 }
 

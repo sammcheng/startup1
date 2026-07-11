@@ -120,7 +120,9 @@ async def test_billing_scheduler_alerts_on_failure(monkeypatch):
         return True
 
     monkeypatch.setattr(worker.settings, "stripe_secret_key", "sk_test")
-    monkeypatch.setattr(worker.billing_service, "run_scheduled_jobs_once", fake_run_scheduled_jobs_once)
+    monkeypatch.setattr(
+        worker.billing_service, "run_scheduled_jobs_once", fake_run_scheduled_jobs_once
+    )
     monkeypatch.setattr(worker.alert_service, "send_alert", fake_send_alert)
 
     with pytest.raises(RuntimeError):

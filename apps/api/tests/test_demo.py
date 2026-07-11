@@ -29,7 +29,9 @@ def test_public_demo_forwards_live_tool_request(client, live_tool, monkeypatch):
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
     monkeypatch.setattr(proxy_service, "forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", fake_increment_total_requests)
-    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", fake_flush_total_requests_if_needed)
+    monkeypatch.setattr(
+        tool_service, "flush_total_requests_if_needed", fake_flush_total_requests_if_needed
+    )
 
     response = client.post(f"/v1/tools/{live_tool.slug}/demo", json={"text": "hello"})
 

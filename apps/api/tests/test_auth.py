@@ -164,8 +164,8 @@ def test_resolve_jwks_url_falls_back_to_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_issuer_url", "")
     monkeypatch.setattr(
         auth_dependencies.jwt,
-        "get_unverified_claims",
-        lambda token: {"iss": "https://cool-magpie-14.clerk.accounts.dev"},
+        "decode",
+        lambda token, options: {"iss": "https://cool-magpie-14.clerk.accounts.dev"},
     )
 
     jwks_url = auth_dependencies._resolve_jwks_url("fake-token")
@@ -178,8 +178,8 @@ def test_resolve_jwks_url_rejects_untrusted_issuer(monkeypatch):
     monkeypatch.setattr(auth_dependencies.settings, "clerk_issuer_url", "")
     monkeypatch.setattr(
         auth_dependencies.jwt,
-        "get_unverified_claims",
-        lambda token: {"iss": "https://attacker.example.com"},
+        "decode",
+        lambda token, options: {"iss": "https://attacker.example.com"},
     )
 
     with pytest.raises(Unauthorized):
@@ -205,11 +205,12 @@ async def test_verify_clerk_identity_validates_configured_issuer(monkeypatch):
         assert jwks_url == "https://pleasing-racer-55.clerk.accounts.dev/.well-known/jwks.json"
         return [{"kid": "kid_123"}]
 
-    def fake_decode(token, jwk, *, algorithms, issuer):
+    def fake_decode(token, signing_key, *, algorithms, issuer, options):
         assert token == "fake-token"
-        assert jwk == {"kid": "kid_123"}
+        assert signing_key == "public-key"
         assert algorithms == ["RS256"]
         assert issuer == "https://pleasing-racer-55.clerk.accounts.dev"
+        assert options == {"verify_aud": False}
         return {
             "sub": "clerk_verified",
             "email": "verified@example.com",
@@ -223,7 +224,14 @@ async def test_verify_clerk_identity_validates_configured_issuer(monkeypatch):
         "clerk_issuer_url",
         "https://pleasing-racer-55.clerk.accounts.dev/",
     )
-    monkeypatch.setattr(auth_dependencies.jwt, "get_unverified_header", lambda token: {"kid": "kid_123"})
+    monkeypatch.setattr(
+        auth_dependencies.jwt, "get_unverified_header", lambda token: {"kid": "kid_123"}
+    )
+    monkeypatch.setattr(
+        auth_dependencies.jwt.PyJWK,
+        "from_dict",
+        lambda jwk: type("SigningKey", (), {"key": "public-key"})(),
+    )
     monkeypatch.setattr(auth_dependencies, "_get_jwks", fake_get_jwks)
     monkeypatch.setattr(auth_dependencies.jwt, "decode", fake_decode)
 

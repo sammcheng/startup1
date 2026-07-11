@@ -209,7 +209,9 @@ def test_admin_users_lists_accounts(client, auth_overrides, admin_user, buyer, m
     assert payload["items"][0]["role"] == "buyer"
 
 
-def test_admin_user_update_can_suspend_account(client, auth_overrides, admin_user, buyer, monkeypatch):
+def test_admin_user_update_can_suspend_account(
+    client, auth_overrides, admin_user, buyer, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     captured: dict[str, object] = {}
     audit_calls = []
@@ -271,11 +273,15 @@ def test_admin_user_update_rejects_self_lockout(client, auth_overrides, admin_us
     assert response.json()["error"]["code"] == "admin_self_lockout"
 
 
-def test_admin_processing_jobs_lists_failed_jobs(client, auth_overrides, admin_user, draft_tool, monkeypatch):
+def test_admin_processing_jobs_lists_failed_jobs(
+    client, auth_overrides, admin_user, draft_tool, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     failed_job = make_processing_job(draft_tool)
 
-    async def fake_list_admin_processing_jobs(db, *, status_filter, tool_id, seller_id, page, limit):
+    async def fake_list_admin_processing_jobs(
+        db, *, status_filter, tool_id, seller_id, page, limit
+    ):
         assert status_filter == ToolProcessingJobStatus.failed
         assert tool_id is None
         assert seller_id is None
@@ -295,7 +301,9 @@ def test_admin_processing_jobs_lists_failed_jobs(client, auth_overrides, admin_u
     assert payload["items"][0]["seller_email"] == draft_tool.seller.email
 
 
-def test_admin_operations_health_returns_healthy_summary(client, auth_overrides, admin_user, fake_redis, monkeypatch):
+def test_admin_operations_health_returns_healthy_summary(
+    client, auth_overrides, admin_user, fake_redis, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     fake_redis.values["hackmarket:jobs:health"] = "1"
 
@@ -311,9 +319,16 @@ def test_admin_operations_health_returns_healthy_summary(client, auth_overrides,
             "failed_window_seconds": 900,
         }
 
-    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_processing_job_health)
-    monkeypatch.setattr("app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth)
-    monkeypatch.setattr("app.services.operations_health_service.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr(
+        "app.services.operations_health_service.job_service.processing_job_health",
+        fake_processing_job_health,
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.settings.alert_queue_depth_threshold", 100
+    )
 
     response = client.get("/v1/admin/operations-health")
 
@@ -326,7 +341,9 @@ def test_admin_operations_health_returns_healthy_summary(client, auth_overrides,
     assert payload["processing_jobs"]["stuck_active"] == 0
 
 
-def test_admin_operations_health_returns_degraded_summary(client, auth_overrides, admin_user, fake_redis, monkeypatch):
+def test_admin_operations_health_returns_degraded_summary(
+    client, auth_overrides, admin_user, fake_redis, monkeypatch
+):
     auth_overrides(current_user=admin_user)
 
     async def fake_queue_depth(redis):
@@ -341,9 +358,16 @@ def test_admin_operations_health_returns_degraded_summary(client, auth_overrides
             "failed_window_seconds": 900,
         }
 
-    monkeypatch.setattr("app.services.operations_health_service.job_service.processing_job_health", fake_processing_job_health)
-    monkeypatch.setattr("app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth)
-    monkeypatch.setattr("app.services.operations_health_service.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr(
+        "app.services.operations_health_service.job_service.processing_job_health",
+        fake_processing_job_health,
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.settings.alert_queue_depth_threshold", 100
+    )
 
     response = client.get("/v1/admin/operations-health")
 
@@ -357,7 +381,9 @@ def test_admin_operations_health_returns_degraded_summary(client, auth_overrides
     assert payload["processing_jobs"]["failed_recent"] == 4
 
 
-def test_admin_audit_logs_lists_recent_actions(client, auth_overrides, admin_user, draft_tool, monkeypatch):
+def test_admin_audit_logs_lists_recent_actions(
+    client, auth_overrides, admin_user, draft_tool, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     audit_log = make_audit_log(admin_user, target_id=draft_tool.id)
 
@@ -378,7 +404,9 @@ def test_admin_audit_logs_lists_recent_actions(client, auth_overrides, admin_use
     assert payload["items"][0]["target_id"] == str(draft_tool.id)
 
 
-def test_admin_processing_job_retry_creates_new_job(client, auth_overrides, admin_user, draft_tool, monkeypatch):
+def test_admin_processing_job_retry_creates_new_job(
+    client, auth_overrides, admin_user, draft_tool, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     failed_job = make_processing_job(draft_tool)
     retry_job = make_processing_job(draft_tool, status=ToolProcessingJobStatus.queued)
@@ -397,7 +425,9 @@ def test_admin_processing_job_retry_creates_new_job(client, auth_overrides, admi
         audit_calls.append(kwargs)
 
     monkeypatch.setattr(job_service, "get_job_with_details", fake_get_job_with_details)
-    monkeypatch.setattr(job_service, "retry_failed_tool_processing_job", fake_retry_failed_tool_processing_job)
+    monkeypatch.setattr(
+        job_service, "retry_failed_tool_processing_job", fake_retry_failed_tool_processing_job
+    )
     monkeypatch.setattr(admin_audit_service, "record_admin_action", fake_record_admin_action)
 
     response = client.post(
@@ -412,7 +442,9 @@ def test_admin_processing_job_retry_creates_new_job(client, auth_overrides, admi
     assert audit_calls[0]["details"]["retry_job_id"] == str(retry_job.id)
 
 
-def test_admin_processing_job_retry_rejects_active_job(client, auth_overrides, admin_user, draft_tool, monkeypatch):
+def test_admin_processing_job_retry_rejects_active_job(
+    client, auth_overrides, admin_user, draft_tool, monkeypatch
+):
     auth_overrides(current_user=admin_user)
     running_job = make_processing_job(draft_tool, status=ToolProcessingJobStatus.running)
 

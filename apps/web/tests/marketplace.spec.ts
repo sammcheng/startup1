@@ -2,33 +2,47 @@ import { expect, test } from "@playwright/test";
 
 test("landing page loads and shows featured tools", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText(/hackmarket/i)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Hackmarket", exact: true })).toBeVisible();
 });
 
 test("can browse marketplace and filter by category", async ({ page }) => {
   await page.goto("/marketplace");
-  await expect(page.getByRole("heading", { name: /marketplace/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What are you building?" })).toBeVisible();
 
-  const filter = page.locator("select").first();
-  if (await filter.count()) {
-    await filter.selectOption("nlp");
-  }
+  await page.getByRole("button", { name: "NLP", exact: true }).click();
 
-  await expect(page.locator("body")).toContainText(/nlp|tool|marketplace/i);
+  await expect(page.getByRole("heading", { name: "Document Signal Extractor" })).toBeVisible();
 });
 
 test("can view tool detail page", async ({ page }) => {
   await page.goto("/marketplace");
-  const firstToolLink = page.locator('a[href^="/tools/"]').first();
-  await expect(firstToolLink).toBeVisible();
-  await firstToolLink.click();
-  await expect(page).toHaveURL(/\/tools\//);
+  const toolLink = page.locator('a[href="/tools/document-signal-extractor"]');
+  await expect(toolLink).toBeVisible();
+  await toolLink.click();
+  await expect(page).toHaveURL(/\/tools\/document-signal-extractor/);
 });
 
 test("demo form renders based on input type", async ({ page }) => {
   await page.goto("/marketplace");
-  const firstToolLink = page.locator('a[href^="/tools/"]').first();
-  await firstToolLink.click();
+  await page.locator('a[href="/tools/document-signal-extractor"]').click();
   await page.locator("#demo").scrollIntoViewIfNeeded();
-  await expect(page.getByRole("button", { name: /run/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+});
+
+test("marketplace cards fit a mobile viewport without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/marketplace");
+  await expect(page.getByRole("heading", { name: "Document Signal Extractor" })).toBeVisible();
+
+  const layout = await page.evaluate(() => ({
+    viewportWidth: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    cardWidths: Array.from(document.querySelectorAll("article")).map((card) => (
+      Math.round(card.getBoundingClientRect().width)
+    )),
+  }));
+
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+  expect(layout.cardWidths.length).toBeGreaterThan(0);
+  expect(Math.max(...layout.cardWidths)).toBeLessThanOrEqual(layout.viewportWidth);
 });

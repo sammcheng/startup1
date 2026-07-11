@@ -72,7 +72,9 @@ def test_upload_waits_for_configuration(client, auth_overrides, seller, draft_to
     assert queue_calls == []
 
 
-def test_upload_queues_processing_when_runtime_is_configured(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_upload_queues_processing_when_runtime_is_configured(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
     draft_tool.entry_command = "python app.py"
     queued_job_id = uuid.uuid4()
@@ -121,7 +123,13 @@ def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft
 
     response = client.post(
         f"/v1/tools/{draft_tool.id}/upload",
-        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"../secrets.env": "nope"}), "application/zip")},
+        files={
+            "source_zip": (
+                "tool.zip",
+                _zip_bytes_with_entries({"../secrets.env": "nope"}),
+                "application/zip",
+            )
+        },
     )
 
     assert response.status_code == 502
@@ -129,7 +137,9 @@ def test_upload_rejects_zip_path_traversal(client, auth_overrides, seller, draft
     assert response.json()["error"]["message"] == "The uploaded zip contains an unsafe file path."
 
 
-def test_upload_rejects_zip_windows_path_traversal(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_upload_rejects_zip_windows_path_traversal(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -143,7 +153,13 @@ def test_upload_rejects_zip_windows_path_traversal(client, auth_overrides, selle
 
     response = client.post(
         f"/v1/tools/{draft_tool.id}/upload",
-        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"src\\..\\secrets.env": "nope"}), "application/zip")},
+        files={
+            "source_zip": (
+                "tool.zip",
+                _zip_bytes_with_entries({"src\\..\\secrets.env": "nope"}),
+                "application/zip",
+            )
+        },
     )
 
     assert response.status_code == 502
@@ -170,10 +186,15 @@ def test_upload_rejects_zip_symlink(client, auth_overrides, seller, draft_tool, 
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "upload_failed"
-    assert response.json()["error"]["message"] == "The uploaded zip contains a symbolic link, which is not supported."
+    assert (
+        response.json()["error"]["message"]
+        == "The uploaded zip contains a symbolic link, which is not supported."
+    )
 
 
-def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_upload_rejects_zip_with_too_many_entries(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -202,7 +223,9 @@ def test_upload_rejects_zip_with_too_many_entries(client, auth_overrides, seller
     assert response.json()["error"]["details"]["limit"] == 1
 
 
-def test_upload_rejects_zip_with_large_uncompressed_size(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_upload_rejects_zip_with_large_uncompressed_size(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -217,15 +240,26 @@ def test_upload_rejects_zip_with_large_uncompressed_size(client, auth_overrides,
 
     response = client.post(
         f"/v1/tools/{draft_tool.id}/upload",
-        files={"source_zip": ("tool.zip", _zip_bytes_with_entries({"app.py": "print('large')"}), "application/zip")},
+        files={
+            "source_zip": (
+                "tool.zip",
+                _zip_bytes_with_entries({"app.py": "print('large')"}),
+                "application/zip",
+            )
+        },
     )
 
     assert response.status_code == 502
-    assert response.json()["error"]["message"] == "The uploaded zip expands beyond the allowed source size."
+    assert (
+        response.json()["error"]["message"]
+        == "The uploaded zip expands beyond the allowed source size."
+    )
     assert response.json()["error"]["details"]["limit"] == 4
 
 
-def test_configure_starts_processing_when_source_exists(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_configure_starts_processing_when_source_exists(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
     queue_calls: list[str] = []
     draft_tool.source_s3_key = f"tools/{draft_tool.id}/source.zip"
@@ -266,7 +300,9 @@ def test_configure_starts_processing_when_source_exists(client, auth_overrides, 
     assert queue_calls == [f"runtime_configuration:{draft_tool.id}"]
 
 
-def test_configure_marks_tool_rejected_when_queue_is_unavailable(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_configure_marks_tool_rejected_when_queue_is_unavailable(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
     draft_tool.source_s3_key = f"tools/{draft_tool.id}/source.zip"
     draft_tool.status = ToolStatus.draft
@@ -304,7 +340,9 @@ def test_configure_marks_tool_rejected_when_queue_is_unavailable(client, auth_ov
     assert draft_tool.status == ToolStatus.rejected
 
 
-def test_configure_returns_not_found_for_other_sellers_tool(client, auth_overrides, user, draft_tool, monkeypatch):
+def test_configure_returns_not_found_for_other_sellers_tool(
+    client, auth_overrides, user, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=user)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -328,7 +366,9 @@ def test_configure_returns_not_found_for_other_sellers_tool(client, auth_overrid
     assert response.json()["error"]["code"] == "tool_not_found"
 
 
-def test_configure_requires_entry_command_or_deployment_url(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_configure_requires_entry_command_or_deployment_url(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):
@@ -350,7 +390,9 @@ def test_configure_requires_entry_command_or_deployment_url(client, auth_overrid
     assert response.json()["error"]["code"] == "runtime_configuration_incomplete"
 
 
-def test_seller_submission_status_returns_latest_processing_job(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_seller_submission_status_returns_latest_processing_job(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
     now = datetime.now(UTC)
     job = ToolProcessingJob(
@@ -410,7 +452,9 @@ def test_seller_submission_status_returns_not_found_for_other_seller(
     assert response.json()["error"]["code"] == "tool_not_found"
 
 
-def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_configure_with_deployed_api_goes_live(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
     draft_tool.status = ToolStatus.draft
 
@@ -449,7 +493,9 @@ def test_configure_with_deployed_api_goes_live(client, auth_overrides, seller, d
     assert draft_tool.api_endpoint == "https://api.example.com"
 
 
-def test_configure_rejects_local_deployment_url_in_production(client, auth_overrides, seller, draft_tool, monkeypatch):
+def test_configure_rejects_local_deployment_url_in_production(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
     auth_overrides(seller_user=seller)
 
     async def fake_get_tool_for_seller(db, tool_id, seller_id):

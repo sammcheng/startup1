@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlparse
 
+import jwt
 import redis.asyncio as aioredis
 from fastapi import Depends, Header
-from jose import JWTError, jwt
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -94,8 +94,11 @@ def _resolve_jwks_url(token: str) -> str:
         return f"{settings.clerk_issuer_url.rstrip('/')}/.well-known/jwks.json"
 
     try:
-        claims = jwt.get_unverified_claims(token)
-    except JWTError as exc:
+        claims = jwt.decode(
+            token,
+            options={"verify_signature": False, "verify_exp": False, "verify_aud": False},
+        )
+    except jwt.PyJWTError as exc:
         raise Unauthorized("Malformed JWT claims.") from exc
 
     issuer = claims.get("iss")
@@ -111,6 +114,7 @@ async def _get_jwks(jwks_url: str) -> list[dict]:
         return cached["keys"]
 
     from app.services.proxy_service import get_http_client
+
     client = get_http_client()
     resp = await client.get(jwks_url, timeout=10)
     resp.raise_for_status()
@@ -124,7 +128,7 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
     """Validate a Clerk JWT and return its decoded claims."""
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise Unauthorized("Malformed JWT.") from exc
 
     kid = header.get("kid")
@@ -142,13 +146,15 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
         raise Unauthorized("Token signing key not found.")
 
     try:
+        signing_key = jwt.PyJWK.from_dict(jwk).key
         claims: dict = jwt.decode(
             token,
-            jwk,
+            signing_key,
             algorithms=["RS256"],
             issuer=settings.clerk_issuer_url.rstrip("/") or None,
+            options={"verify_aud": False},
         )
-    except JWTError as exc:
+    except (jwt.PyJWTError, ValueError) as exc:
         raise Unauthorized("Token verification failed.") from exc
 
     email = claims.get("email")
@@ -164,7 +170,9 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
         given_name = claims.get("given_name")
         family_name = claims.get("family_name")
         if isinstance(given_name, str) or isinstance(family_name, str):
-            name = " ".join(part for part in [given_name, family_name] if isinstance(part, str) and part).strip()
+            name = " ".join(
+                part for part in [given_name, family_name] if isinstance(part, str) and part
+            ).strip()
         else:
             name = None
 
@@ -184,7 +192,7 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
 def _extract_bearer(authorization: str | None) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise Unauthorized("Authorization header required.")
-    return authorization[len("Bearer "):]
+    return authorization[len("Bearer ") :]
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +294,7 @@ async def validate_api_key(
         raise InvalidAPIKeyError("API key owner not found.")
 
     await db.execute(
-        update(APIKey)
-        .where(APIKey.id == api_key.id)
-        .values(last_used_at=datetime.now(UTC))
+        update(APIKey).where(APIKey.id == api_key.id).values(last_used_at=datetime.now(UTC))
     )
     await db.commit()
 

@@ -24,6 +24,8 @@ build/
 .next/
 out/
 .vercel
+playwright-report/
+test-results/
 
 # Environment
 .env

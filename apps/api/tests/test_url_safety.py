@@ -11,7 +11,10 @@ def _dns_record(address: str):
 def test_public_tool_endpoint_allows_local_urls_outside_production(monkeypatch):
     monkeypatch.setattr(url_safety.settings, "environment", "development")
 
-    assert url_safety.validate_public_tool_endpoint("http://localhost:8080/api/") == "http://localhost:8080/api"
+    assert (
+        url_safety.validate_public_tool_endpoint("http://localhost:8080/api/")
+        == "http://localhost:8080/api"
+    )
 
 
 @pytest.mark.parametrize(
@@ -40,14 +43,21 @@ def test_public_tool_endpoint_rejects_unsafe_production_urls(endpoint, monkeypat
 
 def test_public_tool_endpoint_allows_public_https_in_production(monkeypatch):
     monkeypatch.setattr(url_safety.settings, "environment", "production")
-    monkeypatch.setattr(url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("93.184.216.34")])
+    monkeypatch.setattr(
+        url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("93.184.216.34")]
+    )
 
-    assert url_safety.validate_public_tool_endpoint("https://tool.example.com/api/") == "https://tool.example.com/api"
+    assert (
+        url_safety.validate_public_tool_endpoint("https://tool.example.com/api/")
+        == "https://tool.example.com/api"
+    )
 
 
 def test_public_tool_endpoint_rejects_hostname_that_resolves_to_private_ip(monkeypatch):
     monkeypatch.setattr(url_safety.settings, "environment", "production")
-    monkeypatch.setattr(url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("10.0.0.12")])
+    monkeypatch.setattr(
+        url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("10.0.0.12")]
+    )
 
     with pytest.raises(AppError) as exc:
         url_safety.validate_public_tool_endpoint("https://tool.example.com/api")
@@ -86,7 +96,9 @@ def test_public_tool_endpoint_rejects_unresolvable_production_hostname(monkeypat
 @pytest.mark.asyncio
 async def test_async_public_tool_endpoint_rejects_private_dns_answers(monkeypatch):
     monkeypatch.setattr(url_safety.settings, "environment", "production")
-    monkeypatch.setattr(url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("192.168.1.10")])
+    monkeypatch.setattr(
+        url_safety.socket, "getaddrinfo", lambda *args, **kwargs: [_dns_record("192.168.1.10")]
+    )
 
     with pytest.raises(AppError) as exc:
         await url_safety.validate_public_tool_endpoint_async("https://tool.example.com")

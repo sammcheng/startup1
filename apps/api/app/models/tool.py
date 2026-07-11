@@ -2,12 +2,32 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.tool_processing_job import ToolProcessingJob
+    from app.models.tool_purchase import ToolPurchase
+    from app.models.transaction import Transaction
+    from app.models.usage_log import UsageLog
+    from app.models.user import User
 
 
 class ToolCategory(str, enum.Enum):
@@ -59,9 +79,7 @@ class Tool(Base):
         Index("ix_tools_status_featured", "status", "is_featured"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     seller_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -76,8 +94,12 @@ class Tool(Base):
         server_default=ToolStatus.draft.value,
     )
     ownership_type: Mapped[OwnershipType] = mapped_column(Enum(OwnershipType, name="ownershiptype"))
-    input_type: Mapped[InputType | None] = mapped_column(Enum(InputType, name="inputtype"), nullable=True)
-    output_type: Mapped[OutputType | None] = mapped_column(Enum(OutputType, name="outputtype"), nullable=True)
+    input_type: Mapped[InputType | None] = mapped_column(
+        Enum(InputType, name="inputtype"), nullable=True
+    )
+    output_type: Mapped[OutputType | None] = mapped_column(
+        Enum(OutputType, name="outputtype"), nullable=True
+    )
     input_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     output_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     environment_variables: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
@@ -98,9 +120,7 @@ class Tool(Base):
     total_requests: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     uptime_percentage: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -109,7 +129,9 @@ class Tool(Base):
     seller: Mapped["User"] = relationship("User", back_populates="tools", foreign_keys=[seller_id])
     api_key_usage: Mapped[list["UsageLog"]] = relationship("UsageLog", back_populates="tool")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="tool")
-    tool_purchases: Mapped[list["ToolPurchase"]] = relationship("ToolPurchase", back_populates="tool")
+    tool_purchases: Mapped[list["ToolPurchase"]] = relationship(
+        "ToolPurchase", back_populates="tool"
+    )
     processing_jobs: Mapped[list["ToolProcessingJob"]] = relationship(
         "ToolProcessingJob",
         back_populates="tool",

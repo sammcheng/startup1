@@ -5,7 +5,16 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.dependencies import AsyncSessionLocal
-from app.models import InputType, OutputType, OwnershipType, Tool, ToolCategory, ToolStatus, User, UserRole
+from app.models import (
+    InputType,
+    OutputType,
+    OwnershipType,
+    Tool,
+    ToolCategory,
+    ToolStatus,
+    User,
+    UserRole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +29,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
         return
 
     async with AsyncSessionLocal() as session:
-        seller = await session.scalar(
-            select(User).where(User.email == CURATED_SELLER_EMAIL)
-        )
+        seller = await session.scalar(select(User).where(User.email == CURATED_SELLER_EMAIL))
 
         if seller is None:
             seller = User(
@@ -57,7 +64,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                 input_schema={
                     "example_input": {
                         "url": "https://www.zillow.com/homedetails/example-listing",
-                        "maxImages": 8
+                        "maxImages": 8,
                     },
                     "fields": [
                         {
@@ -78,7 +85,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                             "required": False,
                             "placeholder": "8",
                         },
-                    ]
+                    ],
                 },
                 output_schema={
                     "example_output": {
@@ -128,7 +135,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
             tool.input_schema = {
                 "example_input": {
                     "url": "https://www.zillow.com/homedetails/example-listing",
-                    "maxImages": 8
+                    "maxImages": 8,
                 },
                 "fields": [
                     {
@@ -149,7 +156,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                         "required": False,
                         "placeholder": "8",
                     },
-                ]
+                ],
             }
             tool.output_schema = {
                 "example_output": {

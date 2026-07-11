@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DashboardStatSummary(BaseModel):
@@ -33,6 +33,12 @@ class DashboardPurchasedTool(BaseModel):
     last_used_at: datetime | None = None
 
 
+class DashboardUsagePoint(BaseModel):
+    date: date
+    calls: int
+    spend: Decimal
+
+
 class DashboardSummaryResponse(BaseModel):
     display_name: str
     role: str
@@ -40,3 +46,4 @@ class DashboardSummaryResponse(BaseModel):
     active_api_keys: int
     purchased_tools: list[DashboardPurchasedTool]
     recent_activity: list[DashboardActivityItem]
+    usage_chart_data: list[DashboardUsagePoint] = Field(default_factory=list)

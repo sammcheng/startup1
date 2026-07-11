@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.models.tool import InputType, OutputType, OwnershipType, ToolCategory, ToolStatus
 
-
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------

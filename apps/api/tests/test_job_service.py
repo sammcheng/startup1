@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -30,7 +30,7 @@ async def test_processing_job_health_returns_stuck_and_failed_counts(monkeypatch
     monkeypatch.setattr(job_service.settings, "alert_failed_processing_jobs_threshold", 3)
     monkeypatch.setattr(job_service.settings, "alert_failed_processing_jobs_window_seconds", 900)
 
-    health = await job_service.processing_job_health(db, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    health = await job_service.processing_job_health(db, now=datetime(2026, 1, 1, tzinfo=UTC))
 
     assert health == {
         "stuck_active": 2,
