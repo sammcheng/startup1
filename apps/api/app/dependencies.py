@@ -244,9 +244,12 @@ async def get_current_identity(
 async def require_seller(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    """Return the current user only if they have seller capability."""
-    if current_user.role not in (UserRole.seller, UserRole.both, UserRole.admin):
-        raise Forbidden("A seller account is required for this action.")
+    """Return the authenticated account for account-owned seller actions.
+
+    Every Hackmarket account can buy and sell. Routes using this compatibility
+    dependency still enforce resource ownership before reading or changing a
+    tool; only administrator routes remain role-gated.
+    """
     return current_user
 
 

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import ToolStatus
+from app.schemas.seller import SellerDashboardResponse
 from app.services import seller_service
 
 
@@ -31,6 +32,32 @@ class Session:
     async def execute(self, statement):
         self.statements.append(statement)
         return self.results.pop(0)
+
+
+def test_seller_dashboard_is_available_to_every_authenticated_account(
+    client, auth_overrides, buyer, monkeypatch
+):
+    auth_overrides(current_user=buyer)
+
+    async def empty_dashboard(db, seller_id):
+        assert seller_id == buyer.id
+        return SellerDashboardResponse(
+            total_tools=0,
+            total_revenue_all_time=Decimal("0"),
+            total_revenue_this_month=Decimal("0"),
+            previous_month_revenue=Decimal("0"),
+            total_requests_this_month=0,
+            active_tools=0,
+            revenue_chart_data=[],
+            tools=[],
+        )
+
+    monkeypatch.setattr(seller_service, "get_seller_dashboard", empty_dashboard)
+
+    response = client.get("/v1/seller/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["total_tools"] == 0
 
 
 @pytest.mark.asyncio

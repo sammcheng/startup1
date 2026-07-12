@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAX_FILE_BYTES = 2_000_000
@@ -116,11 +114,7 @@ def tracked_files() -> list[Path]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return [
-        REPO_ROOT / path.decode("utf-8")
-        for path in result.stdout.split(b"\0")
-        if path
-    ]
+    return [REPO_ROOT / path.decode("utf-8") for path in result.stdout.split(b"\0") if path]
 
 
 def should_skip(path: Path) -> bool:
@@ -150,7 +144,8 @@ def line_number(content: str, offset: int) -> int:
 
 
 def scan_file(path: Path) -> list[str]:
-    if should_skip(path) or path.stat().st_size > MAX_FILE_BYTES:
+    # `git ls-files` includes tracked files deleted in an unstaged worktree.
+    if not path.is_file() or should_skip(path) or path.stat().st_size > MAX_FILE_BYTES:
         return []
 
     try:
@@ -164,7 +159,9 @@ def scan_file(path: Path) -> list[str]:
         if pattern.name == "sensitive env assignment" and not should_scan_env_assignments(path):
             continue
         for match in pattern.regex.finditer(content):
-            candidate = match.group(1) if pattern.name == "sensitive env assignment" else match.group(0)
+            candidate = (
+                match.group(1) if pattern.name == "sensitive env assignment" else match.group(0)
+            )
             if is_placeholder(candidate):
                 continue
             findings.append(f"{relative}:{line_number(content, match.start())}: {pattern.name}")
@@ -177,7 +174,9 @@ def main() -> int:
         findings.extend(scan_file(path))
 
     if findings:
-        print("Security scan failed. Remove these committed secrets or replace them with placeholders:")
+        print(
+            "Security scan failed. Remove these committed secrets or replace them with placeholders:"
+        )
         for finding in findings:
             print(f"- {finding}")
         return 1

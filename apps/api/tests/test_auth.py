@@ -44,6 +44,11 @@ def test_auth_sync_returns_user_payload(client, buyer, monkeypatch):
     assert payload["role"] == buyer.role.value
 
 
+@pytest.mark.asyncio
+async def test_account_can_use_seller_capabilities_from_buyer_role(buyer):
+    assert await auth_dependencies.require_seller(buyer) is buyer
+
+
 def test_clerk_webhook_requires_configured_secret(client, monkeypatch):
     monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "")
 

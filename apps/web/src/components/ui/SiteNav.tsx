@@ -2,16 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, UserRound } from "lucide-react";
+import { LogOut, Menu, UserRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { safeCssImageUrl } from "@/lib/safe-url";
 
+const NAV_LINKS = [
+  { href: "/marketplace", label: "Marketplace" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/docs", label: "Docs" },
+] as const;
+
 export default function SiteNav() {
   const pathname = usePathname();
   const { isLoaded, isSignedIn, signOut, user } = useCurrentAccount();
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const avatarBackgroundImage = safeCssImageUrl(user?.imageUrl);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -40,13 +48,8 @@ export default function SiteNav() {
       </Link>
 
       {/* Center links */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {[
-          { href: "/marketplace", label: "Marketplace" },
-          { href: "/pricing", label: "Pricing" },
-          { href: "/dashboard", label: "Dashboard" },
-          { href: "/docs", label: "Docs" },
-        ].map((l) => (
+      <div className="site-nav__links" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {NAV_LINKS.map((l) => (
           <Link key={l.href} href={l.href} style={{
             padding: "6px 12px", borderRadius: 6, fontSize: 13.5,
             color: pathname.startsWith(l.href) ? "var(--text)" : "var(--muted)",
@@ -58,7 +61,7 @@ export default function SiteNav() {
       </div>
 
       {/* Right actions */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div className="site-nav__actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {isLoaded && isSignedIn ? (
           <>
             <Link
@@ -153,6 +156,63 @@ export default function SiteNav() {
           Submit Your Build
         </Link>
       </div>
+
+      <button
+        type="button"
+        className="site-nav__menu-button"
+        aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+        aria-expanded={menuOpen}
+        aria-controls="site-nav-mobile-menu"
+        onClick={() => setMenuOpen((current) => !current)}
+      >
+        {menuOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+
+      {menuOpen && (
+        <div id="site-nav-mobile-menu" className="site-nav__mobile-panel">
+          {NAV_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={pathname.startsWith(link.href) ? "active" : undefined}
+              onClick={() => setMenuOpen(false)}
+            >
+              {link.label}
+            </Link>
+          ))}
+          <div className="site-nav__mobile-divider" />
+          {isLoaded && isSignedIn ? (
+            <>
+              <Link href="/dashboard" onClick={() => setMenuOpen(false)}>
+                <UserRound size={17} />
+                {user?.firstName ?? user?.username ?? "Account"}
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void signOut?.();
+                }}
+              >
+                <LogOut size={17} />
+                Sign out
+              </button>
+            </>
+          ) : (
+            <Link href="/sign-in" onClick={() => setMenuOpen(false)}>
+              <UserRound size={17} />
+              Sign in
+            </Link>
+          )}
+          <Link
+            href="/submit"
+            className="site-nav__mobile-cta"
+            onClick={() => setMenuOpen(false)}
+          >
+            Submit your build
+          </Link>
+        </div>
+      )}
     </nav>
   );
 }

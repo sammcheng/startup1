@@ -2,9 +2,9 @@
 
 // Approver Dashboard — dense, viewport-fitting layout with three stages:
 //
-//   STAGE A — testing in progress (live CI-pipeline visualization)
+//   STAGE A — durable processing job status
 //   STAGE B — review ready (scorecard + approve/reject + PDF report)
-//   STAGE C — listed & live (uptime / installs / reviews + revoke/alert)
+//   STAGE C — listed & live (verified usage + revoke)
 //
 // Layout: two-column on ≥1280px (queue 360px · detail flex), single column
 // stacking on narrow viewports. Both panels are bounded to viewport height
@@ -14,28 +14,31 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
-  useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
-  buildLiveTestPlan,
-  liveTestDurationMs,
   sanitizeName,
-  type LiveTestStage,
   type SandboxLine,
   type SubmissionRecord,
 } from "@/lib/submissions";
-import { downloadReport, reportBlobUrl } from "@/lib/pdfReport";
 import { api, ApiError } from "@/lib/api";
 import { syncCurrentUser } from "@/lib/auth-sync";
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { toolToSubmissionRecord } from "@/lib/submission-adapter";
 import { safeGithubUrl } from "@/lib/safe-url";
 import type { Tool, ToolListResponse, ToolStatus } from "@/types/tool";
+import type { ToolProcessingJob } from "@/types/seller";
 
 type AdminReviewStatus = Extract<ToolStatus, "draft" | "processing" | "live" | "paused" | "rejected">;
+
+interface AdminProcessingJobListResponse {
+  items: ToolProcessingJob[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
 
 // ─── Auth wrapper ─────────────────────────────────────────────────────────
 
@@ -154,12 +157,23 @@ function Dashboard({ token }: { token: string }) {
   const [queueError, setQueueError] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
 
-  const loadQueue = useCallback(async () => {
-    setQueueStatus("loading");
-    setQueueError(null);
+  const loadQueue = useCallback(async (silent = false) => {
+    if (!silent) {
+      setQueueStatus("loading");
+      setQueueError(null);
+    }
     try {
-      const response = await api.get<ToolListResponse>("/admin/tools?limit=100", { token });
-      setSubmissions(response.items.map((tool) => toolToSubmissionRecord(tool)));
+      const [response, jobsResponse] = await Promise.all([
+        api.get<ToolListResponse>("/admin/tools?limit=100", { token }),
+        api.get<AdminProcessingJobListResponse>("/admin/processing-jobs?limit=100", { token }),
+      ]);
+      const latestJobByTool = new Map<string, ToolProcessingJob>();
+      for (const job of jobsResponse.items) {
+        if (!latestJobByTool.has(job.tool_id)) latestJobByTool.set(job.tool_id, job);
+      }
+      setSubmissions(
+        response.items.map((tool) => toolToSubmissionRecord(tool, latestJobByTool.get(tool.id))),
+      );
       setQueueStatus("ready");
     } catch (error) {
       const message =
@@ -167,12 +181,14 @@ function Dashboard({ token }: { token: string }) {
           ? error.message
           : "Could not load the live approver queue.";
       setQueueError(message);
-      setQueueStatus("error");
+      if (!silent) setQueueStatus("error");
     }
   }, [token]);
 
   useEffect(() => {
     void loadQueue();
+    const interval = window.setInterval(() => void loadQueue(true), 10_000);
+    return () => window.clearInterval(interval);
   }, [loadQueue]);
 
   useEffect(() => {
@@ -203,8 +219,13 @@ function Dashboard({ token }: { token: string }) {
   const [toast, setToast] = useState<string | null>(null);
   function flash(msg: string) {
     setToast(msg);
-    setTimeout(() => setToast(null), 3200);
   }
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   async function updateToolReviewStatus(
     submission: SubmissionRecord,
@@ -250,12 +271,6 @@ function Dashboard({ token }: { token: string }) {
                 submission={s}
                 focused={focused?.id === s.id}
                 onClick={() => setFocusId(s.id)}
-                onCompleted={() =>
-                  void updateToolReviewStatus(s, "draft", {
-                    processingError: null,
-                    successMessage: `${s.name} automated tests complete — ready for review.`,
-                  })
-                }
               />
             ))}
           </QueueGroup>
@@ -297,15 +312,7 @@ function Dashboard({ token }: { token: string }) {
         <section className="appr-detail">
           {focused ? (
             focused.stage === "testing" ? (
-              <TestingPanel
-                submission={focused}
-                onCompleted={() =>
-                  void updateToolReviewStatus(focused, "draft", {
-                    processingError: null,
-                    successMessage: `${focused.name} moved to manual review.`,
-                  })
-                }
-              />
+              <TestingPanel submission={focused} />
             ) : focused.stage === "manual_review" ? (
               <ReviewPanel
                 submission={focused}
@@ -331,7 +338,6 @@ function Dashboard({ token }: { token: string }) {
                     successMessage: `Revoked ${submission.name}.`,
                   })
                 }
-                flash={flash}
               />
             ) : (
               <ArchivedPanel submission={focused} />
@@ -493,48 +499,13 @@ interface CardProps {
   onClick: () => void;
 }
 
-function TestingCard({
-  submission,
-  focused,
-  onClick,
-  onCompleted,
-}: CardProps & { onCompleted: () => void | Promise<void> }) {
-  // Tick a 1s timer while the card is mounted so the elapsed display updates.
-  const [, setNow] = useState(0);
-  const completedRef = useRef(false);
-  const startedAt = submission.testing_started_at
-    ? new Date(submission.testing_started_at).getTime()
-    : new Date(submission.submitted_at).getTime();
-  const total = liveTestDurationMs(submission);
-
-  useEffect(() => {
-    const i = setInterval(() => setNow((n) => n + 1), 1000);
-    return () => clearInterval(i);
-  }, []);
-
-  // Auto-complete when the timer is up.
-  useEffect(() => {
-    const elapsed = Date.now() - startedAt;
-    const remaining = total - elapsed;
-    if (remaining <= 0) {
-      if (!completedRef.current) {
-        completedRef.current = true;
-        void onCompleted();
-      }
-      return;
-    }
-    const t = setTimeout(() => {
-      if (!completedRef.current) {
-        completedRef.current = true;
-        void onCompleted();
-      }
-    }, remaining);
-    return () => clearTimeout(t);
-  }, [startedAt, total, onCompleted]);
-
-  const elapsed = Math.max(0, Date.now() - startedAt);
-  const pct = Math.min(99, Math.round((elapsed / total) * 100));
-  const eta = Math.max(0, Math.ceil((total - elapsed) / 1000));
+function TestingCard({ submission, focused, onClick }: CardProps) {
+  const job = submission.processing_job;
+  const status = job?.status ?? "running";
+  const statusLabel = status === "retrying" ? "Retrying" : status === "queued" ? "Queued" : "Running";
+  const statusColor = status === "retrying" ? "#d97706" : "#6366f1";
+  const statusBackground = status === "retrying" ? "rgba(217,119,6,0.14)" : "rgba(99,102,241,0.14)";
+  const statusTime = job?.started_at ?? job?.enqueued_at ?? submission.testing_started_at;
 
   return (
     <CardShell focused={focused} onClick={onClick}>
@@ -548,8 +519,8 @@ function TestingCard({
               gap: 5,
               padding: "2px 8px",
               borderRadius: 999,
-              background: "rgba(99,102,241,0.14)",
-              color: "#6366f1",
+              background: statusBackground,
+              color: statusColor,
               fontFamily: "var(--font-mono)",
               fontSize: 10,
               fontWeight: 600,
@@ -558,13 +529,13 @@ function TestingCard({
             }}
           >
             <span className="appr-pulse" />
-            Testing…
+            {statusLabel}
           </span>
         }
       />
       <CardSub>
-        {submission.tech_stack.slice(0, 2).join(" + ") || submission.language}{" "}
-        · ETA {eta}s
+        {submission.tech_stack.slice(0, 2).join(" + ") || submission.language}
+        {statusTime ? ` · ${timeAgo(statusTime)}` : ""}
       </CardSub>
       <div
         style={{
@@ -578,9 +549,9 @@ function TestingCard({
         <div
           style={{
             height: "100%",
-            background: "#6366f1",
-            width: `${pct}%`,
-            transition: "width 0.6s linear",
+            background: statusColor,
+            width: "100%",
+            opacity: 0.38,
           }}
         />
       </div>
@@ -590,6 +561,7 @@ function TestingCard({
 
 function ReviewCard({ submission, focused, onClick }: CardProps) {
   const m = submission.metrics;
+  const hasMetrics = submission.metrics_available === true;
   return (
     <CardShell focused={focused} onClick={onClick}>
       <CardLine
@@ -600,10 +572,10 @@ function ReviewCard({ submission, focused, onClick }: CardProps) {
               fontFamily: "var(--font-mono)",
               fontSize: 11,
               fontWeight: 700,
-              color: scoreColor(m.confidence),
+              color: hasMetrics ? scoreColor(m.confidence) : "var(--muted)",
             }}
           >
-            {m.confidence}/100
+            {hasMetrics ? `${m.confidence}/100` : "UNMEASURED"}
           </span>
         }
       />
@@ -612,7 +584,9 @@ function ReviewCard({ submission, focused, onClick }: CardProps) {
         <span style={{ marginLeft: "auto" }}>{timeAgo(submission.submitted_at)}</span>
       </CardSub>
       <CardSub style={{ fontSize: 11 }}>
-        {m.endpoints_passing}/{m.endpoints_total} pass · p95 {m.p95_response_ms}ms
+        {hasMetrics
+          ? `${m.endpoints_passing}/${m.endpoints_total} pass · p95 ${m.p95_response_ms}ms`
+          : "No automated quality report is stored for this tool."}
       </CardSub>
     </CardShell>
   );
@@ -632,11 +606,8 @@ function LiveCard({ submission, focused, onClick }: CardProps) {
               gap: 4,
               padding: "2px 6px",
               borderRadius: 999,
-              background:
-                live?.health === "healthy"
-                  ? "rgba(22,163,74,0.12)"
-                  : "rgba(217,119,6,0.14)",
-              color: live?.health === "healthy" ? "#16a34a" : "#d97706",
+              background: "rgba(22,163,74,0.12)",
+              color: "#16a34a",
               fontFamily: "var(--font-mono)",
               fontSize: 10,
               fontWeight: 600,
@@ -644,18 +615,18 @@ function LiveCard({ submission, focused, onClick }: CardProps) {
               letterSpacing: "0.06em",
             }}
           >
-            ● {live?.uptime_pct?.toFixed(2) ?? "—"}%
+            ● LIVE
           </span>
         }
       />
       <CardSub>
-        <span>{live?.installs ?? 0} installs</span>
+        <span>{(live?.api_calls_total ?? 0).toLocaleString()} total calls</span>
         <span style={{ marginLeft: "auto" }}>
-          ${(live?.earnings_cents_7d ?? 0) / 100}/wk
+          {live ? `updated ${timeAgo(live.last_updated_at)}` : ""}
         </span>
       </CardSub>
       <CardSub style={{ fontSize: 11 }}>
-        {(live?.api_calls_7d ?? 0).toLocaleString()} calls last 7d
+        Live monitoring details appear only after measured telemetry is available.
       </CardSub>
     </CardShell>
   );
@@ -672,6 +643,7 @@ function CardShell({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         width: "100%",
@@ -832,55 +804,37 @@ function DetailHeader({ submission }: { submission: SubmissionRecord }) {
 
 // ─── Stage A: Testing Panel (live CI-pipeline-style monitor) ─────────────
 
-function TestingPanel({
-  submission,
-  onCompleted,
-}: {
-  submission: SubmissionRecord;
-  onCompleted: () => void | Promise<void>;
-}) {
-  const plan: LiveTestStage[] = useMemo(
-    () => buildLiveTestPlan(submission),
-    [submission],
-  );
-
-  const startedAt = submission.testing_started_at
-    ? new Date(submission.testing_started_at).getTime()
-    : Date.now();
-
-  const [now, setNow] = useState(Date.now());
-  const completedRef = useRef(false);
-  useEffect(() => {
-    const i = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(i);
-  }, []);
-
-  // Compute current stage and stage-relative elapsed.
-  const totalElapsed = Math.max(0, now - startedAt);
-  let acc = 0;
-  let stageIdx = 0;
-  let stageElapsed = 0;
-  for (let i = 0; i < plan.length; i++) {
-    if (totalElapsed < acc + plan[i].ms) {
-      stageIdx = i;
-      stageElapsed = totalElapsed - acc;
-      break;
-    }
-    acc += plan[i].ms;
-    stageIdx = i + 1;
-    stageElapsed = 0;
-  }
-
-  const totalDuration = liveTestDurationMs(submission);
-  const overallPct = Math.min(100, Math.round((totalElapsed / totalDuration) * 100));
-
-  // Auto-complete when finished.
-  useEffect(() => {
-    if (totalElapsed >= totalDuration && !completedRef.current) {
-      completedRef.current = true;
-      void onCompleted();
-    }
-  }, [totalElapsed, totalDuration, onCompleted]);
+function TestingPanel({ submission }: { submission: SubmissionRecord }) {
+  const job = submission.processing_job;
+  const statusLabel = job?.status === "retrying"
+    ? "Retrying"
+    : job?.status === "queued"
+      ? "Queued"
+      : "Running";
+  const statusColor = job?.status === "retrying" ? "#d97706" : "#6366f1";
+  const eventLines: SandboxLine[] = job
+    ? [
+      { text: `Job ${job.id}`, style: "header" },
+      { text: `Status: ${job.status}`, style: "neutral" },
+      { text: `Attempt ${job.attempts} of ${job.max_attempts}`, style: "neutral" },
+      { text: `Trigger: ${job.trigger}`, style: "neutral" },
+      ...(job.enqueued_at
+        ? [{ text: `Queued: ${new Date(job.enqueued_at).toLocaleString()}` }]
+        : []),
+      ...(job.started_at
+        ? [{ text: `Started: ${new Date(job.started_at).toLocaleString()}` }]
+        : []),
+      ...(job.last_error
+        ? [{ text: `Last error: ${job.last_error}`, style: "warn" as const }]
+        : []),
+    ]
+    : [
+      {
+        text: "Tool is processing; durable job details are not available.",
+        style: "warn",
+      },
+    ];
+  const startedAtValue = job?.started_at ?? job?.enqueued_at ?? submission.testing_started_at;
 
   return (
     <DetailFrame
@@ -905,19 +859,18 @@ function TestingPanel({
                 gap: 5,
                 padding: "3px 8px",
                 borderRadius: 999,
-                background: "rgba(99,102,241,0.14)",
-                color: "#6366f1",
+                background: job?.status === "retrying" ? "rgba(217,119,6,0.14)" : "rgba(99,102,241,0.14)",
+                color: statusColor,
                 fontWeight: 600,
               }}
             >
-              <span className="appr-pulse-large" /> LIVE
+              <span className="appr-pulse-large" /> {statusLabel.toUpperCase()}
             </span>
             <span>
-              Stage {Math.min(stageIdx + 1, plan.length)} of {plan.length}:{" "}
-              {plan[Math.min(stageIdx, plan.length - 1)]?.name}
+              Durable worker job{job ? ` · attempt ${job.attempts}/${job.max_attempts}` : ""}
             </span>
             <span style={{ marginLeft: "auto" }}>
-              {Math.round(totalElapsed / 1000)}s / {Math.round(totalDuration / 1000)}s
+              {startedAtValue ? timeAgo(startedAtValue) : "Waiting for job metadata"}
             </span>
           </div>
           <div
@@ -932,266 +885,69 @@ function TestingPanel({
             <div
               style={{
                 height: "100%",
-                width: `${overallPct}%`,
-                background: "linear-gradient(90deg, #6366f1, #a5b4fc)",
-                transition: "width 0.3s linear",
+                width: "100%",
+                background: statusColor,
+                opacity: 0.38,
               }}
             />
           </div>
         </>
       }
       body={
-        <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 18 }}>
-          {/* Stage tracker */}
+        <div
+          style={{
+            background: "#0b0f17",
+            borderRadius: 10,
+            border: "1px solid #1f2937",
+            overflow: "hidden",
+          }}
+        >
           <div
             style={{
+              padding: "9px 13px",
+              background: "#0f172a",
+              borderBottom: "1px solid #1f2937",
               display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              fontSize: 12.5,
+              justifyContent: "space-between",
+              alignItems: "center",
               fontFamily: "var(--font-mono)",
+              fontSize: 10.5,
+              color: "#94a3b8",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
             }}
           >
-            {plan.map((s, i) => {
-              const done = i < stageIdx;
-              const active = i === stageIdx;
-              return (
-                <div
-                  key={s.name}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    color: done
-                      ? "#16a34a"
-                      : active
-                        ? "var(--text)"
-                        : "var(--muted)",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 999,
-                      border: `2px solid ${
-                        done
-                          ? "#16a34a"
-                          : active
-                            ? "#6366f1"
-                            : "var(--border)"
-                      }`,
-                      background: done ? "#16a34a" : "transparent",
-                      color: "#fff",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: 10,
-                      flexShrink: 0,
-                      animation: active ? "apprPulse 1.6s ease-in-out infinite" : undefined,
-                    }}
-                  >
-                    {done ? "✓" : ""}
-                  </span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {s.name}
-                  </span>
-                </div>
-              );
-            })}
+            <span>Durable worker</span>
+            <span style={{ color: statusColor }}>{statusLabel}</span>
           </div>
-
-          {/* Terminal-style live output */}
-          <LiveTerminal
-            plan={plan}
-            stageIdx={stageIdx}
-            stageElapsed={stageElapsed}
-            startedAt={startedAt}
-          />
+          <div
+            style={{
+              padding: "15px 16px",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              lineHeight: 1.7,
+              color: "#cbd5e1",
+              minHeight: 180,
+            }}
+          >
+            {eventLines.map((line, index) => (
+              <Line key={`${line.text}-${index}`} line={line} />
+            ))}
+          </div>
         </div>
       }
       actions={
         <>
           <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
-            Auto-promotes to manual review when testing completes.
+            Status refreshes from the durable queue every 10 seconds. This browser never advances jobs.
           </span>
-          <div style={{ flex: 1 }} />
-          <button
-            onClick={() => {
-              if (!completedRef.current) {
-                completedRef.current = true;
-                void onCompleted();
-              }
-            }}
-            style={ghostBtnStyle}
-          >
-            Skip → review now
-          </button>
         </>
       }
     />
   );
 }
 
-// Each terminal line is paced 1.6x its declared delay (with a floor) so the
-// user actually reads it instead of seeing all lines arrive at once.
-const LINE_PACE_SCALE = 1.6;
-const LINE_PACE_MIN_MS = 280;
-
-function pacedLineDelay(ms: number | undefined): number {
-  return Math.max(LINE_PACE_MIN_MS, Math.round((ms ?? 220) * LINE_PACE_SCALE));
-}
-
-function fmtTimestamp(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `[${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}]`;
-}
-
-function LiveTerminal({
-  plan,
-  stageIdx,
-  stageElapsed,
-  startedAt,
-}: {
-  plan: LiveTestStage[];
-  stageIdx: number;
-  stageElapsed: number;
-  startedAt: number;
-}) {
-  const safeIdx = Math.min(stageIdx, plan.length - 1);
-
-  // Build the canonical timeline of every line in the plan with both
-  // (a) the running offsetMs from start used to gate visibility, and
-  // (b) the absolute wall-clock timestamp to print as `[HH:MM:SS]`.
-  const timeline: { key: string; line: SandboxLine; offsetMs: number; ts: number }[] = [];
-  let stageOffset = 0;
-  for (let i = 0; i < plan.length; i++) {
-    let lineOffset = stageOffset;
-    plan[i].lines.forEach((line, j) => {
-      lineOffset += pacedLineDelay(line.delay);
-      timeline.push({
-        key: `${i}-${j}`,
-        line,
-        offsetMs: lineOffset,
-        ts: startedAt + lineOffset,
-      });
-    });
-    stageOffset += plan[i].ms;
-  }
-
-  // Lines visible right now:
-  //   - everything from completed stages (i < safeIdx), plus
-  //   - lines in the current stage whose paced cum-delay ≤ stageElapsed.
-  const visible = timeline.filter((t) => {
-    const [stageStr] = t.key.split("-");
-    const stage = Number(stageStr);
-    if (stage < safeIdx) return true;
-    if (stage === safeIdx) {
-      // For the current stage, recompute the per-stage cum delay.
-      const stageStart = plan.slice(0, stage).reduce((s, p) => s + 0, 0); // 0 — we want per-stage local
-      void stageStart;
-      // Simpler: walk this stage's lines linearly and check stageElapsed.
-      let localCum = 0;
-      for (let j = 0; j <= Number(t.key.split("-")[1]); j++) {
-        localCum += pacedLineDelay(plan[stage].lines[j].delay);
-      }
-      return localCum <= stageElapsed;
-    }
-    return false;
-  });
-
-  // Auto-scroll the terminal to the bottom as lines arrive.
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [visible.length]);
-
-  return (
-    <div
-      style={{
-        background: "#0b0f17",
-        borderRadius: 10,
-        border: "1px solid #1f2937",
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 280,
-      }}
-    >
-      <div
-        style={{
-          padding: "8px 12px",
-          background: "#0f172a",
-          borderBottom: "1px solid #1f2937",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontFamily: "var(--font-mono)",
-          fontSize: 10.5,
-          color: "#94a3b8",
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
-        <span>sandbox.{plan[safeIdx]?.name.toLowerCase().replace(/\s+/g, "-")}</span>
-        <span
-          style={{
-            color: "#9ca3af",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: 999,
-              background: "#9ca3af",
-              animation: "blink 1.6s ease-in-out infinite",
-            }}
-          />
-          running
-        </span>
-      </div>
-      <div
-        ref={ref}
-        style={{
-          padding: "12px 14px",
-          fontFamily: "var(--font-mono)",
-          fontSize: 11.5,
-          lineHeight: 1.65,
-          color: "#cbd5e1",
-          flex: 1,
-          overflowY: "auto",
-          minHeight: 240,
-          maxHeight: 340,
-        }}
-      >
-        {visible.map((v) => (
-          <Line key={v.key} line={v.line} ts={v.ts} />
-        ))}
-        {/* Subtle gray pulsing cursor (not a big red blinking block) */}
-        <span
-          style={{
-            display: "inline-block",
-            marginLeft: 2,
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            background: "#64748b",
-            verticalAlign: "middle",
-            animation: "blink 1.6s ease-in-out infinite",
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Line({ line, ts }: { line: SandboxLine; ts: number }) {
+function Line({ line }: { line: SandboxLine }) {
   const color =
     line.style === "ok"
       ? "#4ade80"
@@ -1203,20 +959,16 @@ function Line({ line, ts }: { line: SandboxLine; ts: number }) {
             ? "#475569"
             : "#cbd5e1";
   return (
-    <div style={{ color, whiteSpace: "pre", display: "flex", gap: 8 }}>
-      <span
-        style={{
-          color: "#475569",
-          flexShrink: 0,
-          userSelect: "none",
-        }}
-      >
-        {fmtTimestamp(ts)}
-      </span>
-      <span style={{ minWidth: 0 }}>
-        {line.text.startsWith(" ") ? "" : "$ "}
-        {line.text}
-      </span>
+    <div
+      style={{
+        color,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        display: "flex",
+        gap: 8,
+      }}
+    >
+      <span style={{ minWidth: 0 }}>{line.text}</span>
     </div>
   );
 }
@@ -1237,7 +989,8 @@ function ReviewPanel({
   const [confirming, setConfirming] = useState<null | "approve">(null);
   const [pendingAction, setPendingAction] = useState<null | "approve" | "reject">(null);
   const m = submission.metrics;
-  const color = scoreColor(m.confidence);
+  const hasMetrics = submission.metrics_available === true;
+  const color = hasMetrics ? scoreColor(m.confidence) : "var(--muted)";
 
   async function doApprove() {
     setPendingAction("approve");
@@ -1267,7 +1020,7 @@ function ReviewPanel({
       body={
         <>
           {/* Score + metric chips row */}
-          <div
+          {hasMetrics ? <div
             style={{
               display: "grid",
               gridTemplateColumns: "auto 1fr",
@@ -1339,7 +1092,24 @@ function ReviewPanel({
                 ok={m.security.critical === 0 && m.security.medium <= 1}
               />
             </div>
-          </div>
+          </div> : (
+            <div
+              style={{
+                padding: "14px 16px",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                marginBottom: 16,
+                color: "var(--muted)",
+                fontSize: 13,
+                lineHeight: 1.55,
+              }}
+            >
+              No measured quality report is stored for this tool. Review its repository, runtime
+              configuration, and declared I/O contract directly; zero values are intentionally not
+              presented as test results.
+            </div>
+          )}
 
           {/* Endpoint results table */}
           {submission.endpoint_results && submission.endpoint_results.length > 0 && (
@@ -1391,7 +1161,7 @@ function ReviewPanel({
           </div>
 
           {/* Code quality findings */}
-          <Section title="Code quality">
+          {hasMetrics && <Section title="Code quality">
             <div
               style={{
                 display: "grid",
@@ -1448,7 +1218,7 @@ function ReviewPanel({
                 mark={m.consistent_errors ? "ok" : "warn"}
               />
             </div>
-          </Section>
+          </Section>}
 
           {/* Reject form, if open */}
           {rejecting && (
@@ -1514,7 +1284,7 @@ function ReviewPanel({
             >
               <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 8 }}>
                 Approve <strong>{submission.name}</strong>? This will list it on the
-                marketplace and notify the submitter.
+                marketplace immediately. No notification is sent automatically.
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button onClick={() => setConfirming(null)} style={ghostBtnStyle}>
@@ -1534,18 +1304,6 @@ function ReviewPanel({
       }
       actions={
         <>
-          <button
-            onClick={() => downloadReport(submission)}
-            style={primaryBtnStyle}
-          >
-            📄 Download PDF report
-          </button>
-          <button
-            onClick={() => window.open(reportBlobUrl(submission), "_blank")}
-            style={ghostBtnStyle}
-          >
-            Preview ↗
-          </button>
           <div style={{ flex: 1 }} />
           <button
             onClick={() => {
@@ -1569,21 +1327,20 @@ function ReviewPanel({
   );
 }
 
-// ─── Stage C: Live Panel (monitoring + revoke + alert creator) ───────────
+// ─── Stage C: Live Panel (verified monitoring + revoke) ─────────────────
 
 function LivePanel({
   submission,
   onRevoke,
-  flash,
 }: {
   submission: SubmissionRecord;
   onRevoke: (submission: SubmissionRecord, reason: string) => Promise<void>;
-  flash: (msg: string) => void;
 }) {
   const live = submission.live;
+  const hasUptime = typeof live?.uptime_pct === "number";
+  const hasHealth = Boolean(live?.health && live.health !== "unknown");
   const [revoking, setRevoking] = useState(false);
   const [revokeReason, setRevokeReason] = useState("");
-  const [composeOpen, setComposeOpen] = useState(false);
   const [revokePending, setRevokePending] = useState(false);
 
   async function doRevoke() {
@@ -1604,8 +1361,8 @@ function LivePanel({
         header={<DetailHeader submission={submission} />}
         body={
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            This submission is marked live, but its live metrics are missing. Refresh the local
-            submission data or relist the tool before managing access.
+            This tool is listed, but the API did not return its listing details. Refresh the page
+            before managing access.
           </div>
         }
       />
@@ -1617,7 +1374,6 @@ function LivePanel({
       header={<DetailHeader submission={submission} />}
       body={
         <>
-          {/* Live stats row */}
           <div
             style={{
               display: "grid",
@@ -1627,43 +1383,45 @@ function LivePanel({
             }}
           >
             <StatTile
+              label="All-time calls"
+              value={live.api_calls_total.toLocaleString()}
+              sub="recorded by the gateway"
+            />
+            <StatTile
+              label="Last updated"
+              value={timeAgo(live.last_updated_at)}
+              sub={new Date(live.last_updated_at).toLocaleDateString()}
+            />
+            <StatTile
               label="Uptime"
-              value={`${live.uptime_pct.toFixed(2)}%`}
-              sub={`${live.uptime_window_days}d window`}
-              color={live.uptime_pct >= 99.9 ? "#16a34a" : "#d97706"}
-            />
-            <StatTile
-              label="Installs"
-              value={live.installs.toLocaleString()}
-              sub="active customers"
-            />
-            <StatTile
-              label="API calls"
-              value={(live.api_calls_7d / 1000).toFixed(1) + "k"}
-              sub="last 7d"
-            />
-            <StatTile
-              label="Earnings"
-              value={`$${(live.earnings_cents_7d / 100).toFixed(2)}`}
-              sub="last 7d"
-              color="#16a34a"
-            />
-            <StatTile
-              label="Listed since"
-              value={timeAgo(live.listed_at)}
-              sub={new Date(live.listed_at).toLocaleDateString()}
+              value={hasUptime ? `${live.uptime_pct!.toFixed(2)}%` : "Not measured"}
+              sub={hasUptime ? "reported by the API" : "monitoring not connected"}
+              color={
+                hasUptime
+                  ? live.uptime_pct! >= 99.9
+                    ? "#16a34a"
+                    : "#d97706"
+                  : "var(--muted)"
+              }
             />
             <StatTile
               label="Health"
-              value={live.health.charAt(0).toUpperCase() + live.health.slice(1)}
-              sub={live.health === "healthy" ? "all checks pass" : "investigate"}
-              color={live.health === "healthy" ? "#16a34a" : "#d97706"}
+              value={
+                hasHealth && live.health
+                  ? live.health.charAt(0).toUpperCase() + live.health.slice(1)
+                  : "Not measured"
+              }
+              sub={hasHealth ? "latest monitoring result" : "health checks not connected"}
+              color={
+                hasHealth && live.health === "healthy"
+                  ? "#16a34a"
+                  : "var(--muted)"
+              }
             />
           </div>
 
-          {/* Feedback summary */}
-          {live.feedback_summary && (
-            <Section title="Feedback summary">
+          {(!hasUptime || !hasHealth) && (
+            <Section title="Production telemetry">
               <div
                 style={{
                   padding: "12px 14px",
@@ -1672,108 +1430,13 @@ function LivePanel({
                   borderRadius: 10,
                   fontSize: 13.5,
                   lineHeight: 1.55,
-                  color: "var(--text)",
+                  color: "var(--muted)",
                 }}
               >
-                {live.feedback_summary}
+                The gateway currently provides the all-time request count. Uptime, active installs,
+                weekly revenue, and customer feedback are omitted until their production data
+                sources are connected.
               </div>
-            </Section>
-          )}
-
-          {/* User reviews */}
-          <Section title={`User reviews & requests (${live.reviews.length})`}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {live.reviews.length === 0 ? (
-                <div style={{ color: "var(--muted)", fontSize: 13, padding: 8 }}>
-                  No reviews yet.
-                </div>
-              ) : (
-                live.reviews.map((r, i) => (
-                  <div
-                    key={`${r.user}-${i}`}
-                    style={{
-                      padding: "10px 14px",
-                      background: "var(--bg)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        marginBottom: 4,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>
-                        {r.user}
-                      </span>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 11,
-                          color: "var(--muted)",
-                        }}
-                      >
-                        {"★".repeat(r.rating)}
-                        <span style={{ opacity: 0.3 }}>{"★".repeat(5 - r.rating)}</span>
-                      </span>
-                      {r.is_feature_request && (
-                        <span
-                          style={{
-                            padding: "1px 6px",
-                            borderRadius: 4,
-                            background: "rgba(99,102,241,0.14)",
-                            color: "#6366f1",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: 10,
-                            fontWeight: 600,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.06em",
-                          }}
-                        >
-                          Feature request
-                        </span>
-                      )}
-                      <span
-                        style={{
-                          marginLeft: "auto",
-                          fontSize: 11,
-                          color: "var(--muted)",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        {timeAgo(r.posted_at)} ago
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "var(--muted)",
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {r.comment}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Section>
-
-          {/* Alert creator compose */}
-          {composeOpen && (
-            <Section title="Alert creator">
-              <ComposeAlert
-                submission={submission}
-                onSent={() => {
-                  setComposeOpen(false);
-                  flash(`Sent summary to ${submission.submitter_email}.`);
-                }}
-                onCancel={() => setComposeOpen(false)}
-              />
             </Section>
           )}
 
@@ -1790,9 +1453,9 @@ function LivePanel({
             >
               <Eyebrow style={{ color: "#dc2626" }}>Revoke access</Eyebrow>
               <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 6 }}>
-                Removes <strong>{submission.name}</strong> from the marketplace.
-                Active integrations will receive 401 errors. Confirm with a reason
-                that will be sent to {submission.submitter_email}.
+                Removes <strong>{submission.name}</strong> from the marketplace. Active
+                integrations will receive 401 errors. The reason is stored with the tool for
+                review; no notification is sent automatically.
               </p>
               <textarea
                 value={revokeReason}
@@ -1842,119 +1505,13 @@ function LivePanel({
           >
             View listing ↗
           </Link>
-          <button onClick={() => downloadReport(submission)} style={ghostBtnStyle}>
-            📄 PDF
-          </button>
           <div style={{ flex: 1 }} />
-          <button
-            onClick={() => setComposeOpen((v) => !v)}
-            style={primaryBtnStyle}
-          >
-            ✉ Alert creator
-          </button>
           <button onClick={() => setRevoking(true)} style={dangerBtnStyle}>
-            ✗ Revoke access
+            Revoke access
           </button>
         </>
       }
     />
-  );
-}
-
-function ComposeAlert({
-  submission,
-  onSent,
-  onCancel,
-}: {
-  submission: SubmissionRecord;
-  onSent: () => void;
-  onCancel: () => void;
-}) {
-  const live = submission.live;
-  const requests = useMemo(
-    () => live?.reviews.filter((r) => r.is_feature_request) ?? [],
-    [live?.reviews],
-  );
-  const defaultBody = useMemo(() => {
-    if (!live) return "";
-
-    const lines: string[] = [];
-    lines.push(`Hi,`);
-    lines.push("");
-    lines.push(
-      `Quick update from the Hackmarket review team on ${submission.name}. ` +
-        `Strong adoption this week — ${(live.api_calls_7d).toLocaleString()} calls ` +
-        `across ${live.installs} installs and ${live.uptime_pct.toFixed(2)}% uptime.`,
-    );
-    lines.push("");
-    if (requests.length > 0) {
-      lines.push("Recurring feature requests from users:");
-      for (const r of requests.slice(0, 5)) {
-        lines.push(`  • ${r.user}: ${r.comment}`);
-      }
-      lines.push("");
-      lines.push(
-        "Worth considering for the next release — these are the most-mentioned gaps and would likely lift retention.",
-      );
-    } else {
-      lines.push(
-        "No specific feature requests stood out this week — happy customers all around. Keep an eye on response time during peak hours.",
-      );
-    }
-    lines.push("");
-    lines.push("Reach out if you'd like to talk through any of this.");
-    lines.push("— Hackmarket Review Team");
-    return lines.join("\n");
-	  }, [submission.name, live, requests]);
-
-  const [body, setBody] = useState(defaultBody);
-  if (!live) return null;
-
-  return (
-    <div
-      style={{
-        padding: 12,
-        background: "var(--bg)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-      }}
-    >
-      <div style={{ display: "flex", gap: 12, fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-        <span>
-          <strong style={{ color: "var(--text)" }}>To:</strong>{" "}
-          {submission.submitter_email}
-        </span>
-        <span>
-          <strong style={{ color: "var(--text)" }}>Subject:</strong>{" "}
-          {submission.name} — weekly feedback summary
-        </span>
-      </div>
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        rows={12}
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          fontSize: 13,
-          fontFamily: "var(--font-mono)",
-          color: "var(--text)",
-          resize: "vertical",
-          lineHeight: 1.55,
-        }}
-      />
-      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-        <button onClick={onCancel} style={ghostBtnStyle}>
-          Cancel
-        </button>
-        <button onClick={onSent} style={primaryBtnStyle}>
-          Send →
-        </button>
-      </div>
-    </div>
   );
 }
 

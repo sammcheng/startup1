@@ -34,6 +34,12 @@ test("marketplace cards fit a mobile viewport without horizontal overflow", asyn
   await page.goto("/marketplace");
   await expect(page.getByRole("heading", { name: "Document Signal Extractor" })).toBeVisible();
 
+  const menuButton = page.getByRole("button", { name: "Open navigation menu" });
+  await expect(menuButton).toBeVisible();
+  await menuButton.click();
+  const mobileMenu = page.locator("#site-nav-mobile-menu");
+  await expect(mobileMenu.getByRole("link", { name: "Docs", exact: true })).toBeVisible();
+
   const layout = await page.evaluate(() => ({
     viewportWidth: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,

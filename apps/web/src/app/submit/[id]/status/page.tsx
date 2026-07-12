@@ -1,14 +1,11 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import { toolToSubmissionRecord } from "@/lib/submission-adapter";
 import {
-  buildSandboxScript,
-  getSubmission,
-  type SandboxLine,
   type SubmissionRecord,
   type SubmissionStage,
 } from "@/lib/submissions";
@@ -29,8 +26,8 @@ const STAGES: StageDef[] = [
   },
   {
     id: "testing",
-    label: "AI Testing",
-    blurb: "Sandbox runs your endpoints against the I/O contract",
+    label: "Processing",
+    blurb: "A durable worker prepares and validates your submission",
   },
   {
     id: "manual_review",
@@ -45,9 +42,10 @@ const STAGES: StageDef[] = [
 ];
 
 function stageIndex(stage: SubmissionStage): number {
-  if (stage === "rejected" || stage === "revoked") {
+  if (stage === "rejected") {
     return STAGES.findIndex((s) => s.id === "manual_review");
   }
+  if (stage === "revoked") return STAGES.findIndex((s) => s.id === "listed");
   return STAGES.findIndex((s) => s.id === stage);
 }
 
@@ -109,9 +107,9 @@ export default function SubmissionStatusPage({
         }
       }
 
-      const found = getSubmission(id);
       if (!active) return;
-      setSubmission(found);
+      setSubmission(null);
+      setLoadError("Sign in to view a submission owned by your account.");
       setLoaded(true);
     }
 
@@ -182,14 +180,14 @@ export default function SubmissionStatusPage({
             {loadError ??
               (account.isSignedIn
                 ? "We couldn't find a matching owned submission for this account."
-                : "This preview status may have been pruned from browser storage.")}
+                : "Sign in to view this submission.")}
           </p>
           <p style={{ marginTop: 32 }}>
             <Link
-              href="/submit"
+              href={account.isSignedIn ? "/submit" : "/sign-in"}
               style={{ color: "var(--blue)", textDecoration: "none" }}
             >
-              ← Submit another repo
+              {account.isSignedIn ? "← Submit another repo" : "Sign in →"}
             </Link>
           </p>
         </div>
@@ -205,6 +203,7 @@ export default function SubmissionStatusPage({
 function StatusView({ submission }: { submission: SubmissionRecord }) {
   const activeIdx = stageIndex(submission.stage);
   const isRejected = submission.stage === "rejected";
+  const isRevoked = submission.stage === "revoked";
   const githubUrl = safeGithubUrl(submission.github_url);
 
   return (
@@ -284,10 +283,10 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
           }}
         >
           {STAGES.map((stage, i) => {
-            const isComplete = !isRejected && i < activeIdx;
-            const isCurrent = !isRejected && i === activeIdx;
+            const isComplete = i < activeIdx;
+            const isCurrent = !isRejected && !isRevoked && i === activeIdx;
             const isRejectedHere = isRejected && i === activeIdx;
-            const isPending = !isComplete && !isCurrent && !isRejectedHere;
+            const isRevokedHere = isRevoked && i === activeIdx;
             const isLast = i === STAGES.length - 1;
             return (
               <StageRow
@@ -300,6 +299,8 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
                       ? "current"
                       : isRejectedHere
                         ? "rejected"
+                        : isRevokedHere
+                          ? "revoked"
                         : "pending"
                 }
                 isLast={isLast}
@@ -317,7 +318,7 @@ function StatusView({ submission }: { submission: SubmissionRecord }) {
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "1.4fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
             gap: 18,
           }}
         >
@@ -424,7 +425,7 @@ function ProcessingJobCard({ submission }: { submission: SubmissionRecord }) {
 
 // ─── Stage row ───────────────────────────────────────────────────────────
 
-type StageState = "complete" | "current" | "pending" | "rejected";
+type StageState = "complete" | "current" | "pending" | "rejected" | "revoked";
 
 function StageRow({
   stage,
@@ -442,8 +443,10 @@ function StageRow({
       ? "#16a34a"
       : state === "current"
         ? "var(--blue)"
-        : state === "rejected"
+      : state === "rejected"
           ? "#dc2626"
+          : state === "revoked"
+            ? "#d97706"
           : "var(--border)";
 
   const dotInner =
@@ -451,6 +454,8 @@ function StageRow({
       ? "✓"
       : state === "rejected"
         ? "✗"
+        : state === "revoked"
+          ? "!"
         : state === "current"
           ? "•"
           : "";
@@ -542,12 +547,6 @@ function StageRow({
           {stage.blurb}
         </div>
 
-        {/* Stage-specific content */}
-        {stage.id === "testing" &&
-          (state === "complete" || state === "current") && (
-            <SandboxViewer submission={submission} live={state === "current"} />
-          )}
-
         {stage.id === "manual_review" && state === "current" && (
           <div
             style={{
@@ -560,17 +559,12 @@ function StageRow({
               color: "var(--text)",
             }}
           >
-            Assigned to a reviewer · Estimated wait ~2 hours.{" "}
-            <Link
-              href={`/approver?focus=${submission.id}`}
-              style={{ color: "var(--blue)" }}
-            >
-              View as approver →
-            </Link>
+            Your submission is waiting for an administrator to review it. This page updates when
+            the decision is recorded.
           </div>
         )}
 
-        {stage.id === "listed" && state === "complete" && (
+        {stage.id === "listed" && state === "current" && (
           <div
             style={{
               marginTop: 12,
@@ -582,7 +576,7 @@ function StageRow({
               color: "var(--text)",
             }}
           >
-            🎉 Live on the marketplace.{" "}
+            Live on the marketplace.{" "}
             <Link
               href={`/tools/${submission.slug}`}
               style={{ color: "#16a34a", fontWeight: 600 }}
@@ -612,6 +606,25 @@ function StageRow({
             )}
           </div>
         )}
+
+        {stage.id === "listed" && state === "revoked" && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "rgba(217,119,6,0.08)",
+              border: "1px solid rgba(217,119,6,0.2)",
+              fontSize: 13,
+              color: "var(--text)",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "#d97706" }}>Listing paused</div>
+            {submission.rejection_reason && (
+              <div style={{ marginTop: 4 }}>{submission.rejection_reason}</div>
+            )}
+          </div>
+        )}
       </div>
 
     </div>
@@ -624,6 +637,7 @@ function StageStatusPill({ state }: { state: StageState }) {
     current: { bg: "rgba(37,99,235,0.12)", fg: "var(--blue)", label: "⏳ In progress" },
     pending: { bg: "rgba(107,104,96,0.12)", fg: "var(--muted)", label: "Pending" },
     rejected: { bg: "rgba(220,38,38,0.12)", fg: "#dc2626", label: "✗ Rejected" },
+    revoked: { bg: "rgba(217,119,6,0.12)", fg: "#d97706", label: "Paused" },
   };
   const s = styles[state];
   return (
@@ -645,213 +659,22 @@ function StageStatusPill({ state }: { state: StageState }) {
   );
 }
 
-// ─── Sandbox terminal-style viewer ───────────────────────────────────────
-
-function SandboxViewer({
-  submission,
-  live,
-}: {
-  submission: SubmissionRecord;
-  live: boolean;
-}) {
-  const script: SandboxLine[] = useMemo(
-    () => buildSandboxScript(submission),
-    [submission],
-  );
-
-  const [shown, setShown] = useState<SandboxLine[]>(live ? [] : script);
-  const [running, setRunning] = useState(live);
-
-  useEffect(() => {
-    if (!running) return;
-    let cancelled = false;
-    let cumulative = 0;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    script.forEach((line, i) => {
-      cumulative += line.delay ?? 220;
-      timers.push(
-        setTimeout(() => {
-          if (cancelled) return;
-          setShown((prev) => [...prev, line]);
-          if (i === script.length - 1) setRunning(false);
-        }, cumulative),
-      );
-    });
-    return () => {
-      cancelled = true;
-      timers.forEach(clearTimeout);
-    };
-  }, [script, running]);
-
-  const replay = () => {
-    setShown([]);
-    setRunning(true);
-  };
-
-  return (
-    <div style={{ marginTop: 14 }}>
-      <div
-        style={{
-          background: "#0b0f17",
-          borderRadius: 12,
-          border: "1px solid #1f2937",
-          overflow: "hidden",
-          boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
-        }}
-      >
-        {/* Title bar */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "10px 14px",
-            background: "#0f172a",
-            borderBottom: "1px solid #1f2937",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "#94a3b8",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-          }}
-        >
-          <span>SANDBOX: hackmarket-{submission.slug}</span>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              color: running ? "#ef4444" : "#64748b",
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: 999,
-                background: running ? "#ef4444" : "#64748b",
-                animation: running ? "blink 1s ease-in-out infinite" : undefined,
-              }}
-            />
-            {running ? "LIVE ● REC" : "RECORDED"}
-          </span>
-        </div>
-
-        {/* Lines */}
-        <div
-          style={{
-            padding: "18px 18px 14px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12.5,
-            lineHeight: 1.65,
-            color: "#cbd5e1",
-            minHeight: 240,
-            maxHeight: 460,
-            overflowY: "auto",
-          }}
-        >
-          {shown.map((line, i) => (
-            <SandboxLineView key={i} line={line} prefix={line.text.startsWith(" ") ? "" : "> "} />
-          ))}
-          {running && (
-            <div style={{ marginTop: 6, color: "#64748b" }}>
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 8,
-                  height: 14,
-                  background: "#cbd5e1",
-                  verticalAlign: "middle",
-                  animation: "blink 1s ease-in-out infinite",
-                }}
-              />
-            </div>
-          )}
-        </div>
-
-        {!running && (
-          <div
-            style={{
-              padding: "10px 14px",
-              borderTop: "1px solid #1f2937",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "#94a3b8",
-            }}
-          >
-            <span>
-              {script.length} lines · {Math.round(scriptDuration(script) / 1000)}s replay
-            </span>
-            <button
-              onClick={replay}
-              style={{
-                background: "transparent",
-                border: "1px solid #334155",
-                color: "#cbd5e1",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                padding: "4px 12px",
-                borderRadius: 6,
-                cursor: "pointer",
-              }}
-            >
-              ↻ Replay
-            </button>
-          </div>
-        )}
-      </div>
-
-    </div>
-  );
-}
-
-function scriptDuration(script: SandboxLine[]): number {
-  return script.reduce((sum, l) => sum + (l.delay ?? 220), 0);
-}
-
-function SandboxLineView({ line, prefix }: { line: SandboxLine; prefix: string }) {
-  const color =
-    line.style === "ok"
-      ? "#4ade80"
-      : line.style === "warn"
-        ? "#fbbf24"
-        : line.style === "err"
-          ? "#f87171"
-          : line.style === "header"
-            ? "#475569"
-            : "#cbd5e1";
-  const fadeIn: React.CSSProperties = {
-    animation: "lineFadeIn 0.2s ease-out",
-  };
-  return (
-    <div style={{ color, whiteSpace: "pre", ...fadeIn }}>
-      {prefix}
-      {line.text}
-    </div>
-  );
-}
-
 // ─── Confidence summary + next steps ─────────────────────────────────────
 
 function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
   const m = submission.metrics;
-  const isTesting = submission.stage === "testing";
-  const color = isTesting ? "var(--muted)" : scoreColor(m.confidence);
+  const hasMetrics = submission.metrics_available === true;
+  const color = hasMetrics ? scoreColor(m.confidence) : "var(--muted)";
 
   let verdict: string;
-  if (isTesting) {
-    verdict =
-      "AI testing is still running. Your confidence score appears here once the sandbox suite finishes.";
+  if (!hasMetrics) {
+    verdict = "No measured quality report is stored for this submission yet.";
   } else if (m.confidence < 60) {
-    verdict = "Failed AI review — major issues need addressing.";
+    verdict = "The measured report found major issues that need attention.";
   } else if (m.confidence < 80) {
-    verdict = "Passed with reservations — manual reviewer will assess.";
+    verdict = "The measured report passed with items for manual review.";
   } else {
-    verdict = "Passed AI review — forwarded to manual review.";
+    verdict = "The measured report passed and is ready for manual review.";
   }
 
   return (
@@ -872,7 +695,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
           letterSpacing: "0.08em",
         }}
       >
-        AI Confidence Score
+        Quality score
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginTop: 8 }}>
         <div
@@ -885,7 +708,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
             lineHeight: 1,
           }}
         >
-          {isTesting ? "—" : m.confidence}
+          {hasMetrics ? m.confidence : "—"}
         </div>
         <div
           style={{
@@ -894,7 +717,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
             paddingBottom: 8,
           }}
         >
-          {isTesting ? "computing…" : "/ 100"}
+          {hasMetrics ? "/ 100" : "not available"}
         </div>
       </div>
 
@@ -910,7 +733,7 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
       >
         <div
           style={{
-            width: `${isTesting ? 0 : m.confidence}%`,
+            width: `${hasMetrics ? m.confidence : 0}%`,
             height: "100%",
             background: color,
             transition: "width 0.6s ease",
@@ -920,20 +743,22 @@ function ConfidenceCard({ submission }: { submission: SubmissionRecord }) {
 
       <p style={{ color: "var(--text)", marginTop: 14, fontSize: 14 }}>{verdict}</p>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 12,
-          marginTop: 16,
-          fontSize: 13,
-        }}
-      >
-        <Stat label="Endpoints" value={`${m.endpoints_passing}/${m.endpoints_total} passing`} />
-        <Stat label="Avg response" value={`${m.avg_response_ms}ms`} />
-        <Stat label="I/O match" value={`${m.io_match_pct}%`} />
-        <Stat label="Security findings" value={`${m.security.critical}c · ${m.security.medium}m`} />
-      </div>
+      {hasMetrics && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 12,
+            marginTop: 16,
+            fontSize: 13,
+          }}
+        >
+          <Stat label="Endpoints" value={`${m.endpoints_passing}/${m.endpoints_total} passing`} />
+          <Stat label="Avg response" value={`${m.avg_response_ms}ms`} />
+          <Stat label="I/O match" value={`${m.io_match_pct}%`} />
+          <Stat label="Security findings" value={`${m.security.critical}c · ${m.security.medium}m`} />
+        </div>
+      )}
     </div>
   );
 }
@@ -962,6 +787,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 function NextStepsCard({ submission }: { submission: SubmissionRecord }) {
   const isRejected = submission.stage === "rejected";
   const isListed = submission.stage === "listed";
+  const isRevoked = submission.stage === "revoked";
+  const isProcessing = submission.stage === "testing";
 
   return (
     <div
@@ -996,16 +823,24 @@ function NextStepsCard({ submission }: { submission: SubmissionRecord }) {
       >
         {isRejected
           ? "Address feedback and resubmit"
+          : isRevoked
+            ? "Your listing is paused"
           : isListed
             ? "You're live!"
-            : "Waiting on review"}
+            : isProcessing
+              ? "Processing is underway"
+              : "Waiting on review"}
       </div>
       <p style={{ color: "var(--muted)", marginTop: 8, fontSize: 13.5, lineHeight: 1.55 }}>
         {isRejected
-          ? "Apply the changes called out by the reviewer above and submit again — your AI testing history will carry over."
+          ? "Review the recorded reason above, apply the needed changes, and submit the updated repository again."
+          : isRevoked
+            ? "Review the recorded reason above before asking an administrator to restore the listing."
           : isListed
-            ? "Your tool is searchable now. Track usage and earnings from your dashboard."
-            : "Reviewers typically respond within a few hours. We'll email you the moment a decision lands."}
+            ? "Your tool is searchable now. Open your dashboard to see activity recorded for your account."
+            : isProcessing
+              ? "The durable worker status above updates automatically while your submission is processed."
+              : "An administrator has not recorded a decision yet. This page updates automatically."}
       </p>
 
       <div style={{ flex: 1 }} />
@@ -1017,14 +852,6 @@ function NextStepsCard({ submission }: { submission: SubmissionRecord }) {
             style={primaryBtnStyle}
           >
             View your listing →
-          </Link>
-        )}
-        {!isRejected && !isListed && (
-          <Link
-            href={`/approver?focus=${submission.id}`}
-            style={primaryBtnStyle}
-          >
-            View as approver →
           </Link>
         )}
         <Link href="/dashboard" style={ghostBtnStyle}>

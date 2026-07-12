@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 
 type ToastVariant = "success" | "error";
@@ -29,16 +37,28 @@ function createToastId(): string {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timers = useRef(new Map<string, number>());
 
   const removeToast = useCallback((id: string) => {
+    const timer = timers.current.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    timers.current.delete(id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  useEffect(() => {
+    const activeTimers = timers.current;
+    return () => {
+      for (const timer of activeTimers.values()) window.clearTimeout(timer);
+      activeTimers.clear();
+    };
   }, []);
 
   const pushToast = useCallback(
     (toast: Omit<ToastItem, "id">) => {
       const id = createToastId();
       setToasts((current) => [...current, { ...toast, id }]);
-      window.setTimeout(() => removeToast(id), 5000);
+      timers.current.set(id, window.setTimeout(() => removeToast(id), 5000));
     },
     [removeToast]
   );
@@ -48,7 +68,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 top-4 z-[100] flex w-full max-w-sm flex-col gap-3">
+      <div className="pointer-events-none fixed left-4 right-4 top-4 z-[100] flex w-auto flex-col gap-3 sm:left-auto sm:w-full sm:max-w-sm">
         {toasts.map((toast) => (
           <div
             key={toast.id}

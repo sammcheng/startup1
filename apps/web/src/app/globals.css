@@ -202,6 +202,83 @@ body {
   background: rgba(244,243,239,.98);
   border-color: var(--border-h);
 }
+.site-nav__menu-button,
+.site-nav__mobile-panel {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .site-nav {
+    height: 56px;
+    padding: 0 16px;
+  }
+  .site-nav__links,
+  .site-nav__actions {
+    display: none !important;
+  }
+  .site-nav__menu-button {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .site-nav__mobile-panel {
+    position: absolute;
+    top: 62px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(255,255,255,.98);
+    box-shadow: 0 24px 60px rgba(15,23,42,.16);
+    animation: navMenuIn .16s ease-out;
+  }
+  .site-nav__mobile-panel a,
+  .site-nav__mobile-panel button {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: 600 14px var(--font-body);
+    text-align: left;
+  }
+  .site-nav__mobile-panel a:hover,
+  .site-nav__mobile-panel button:hover,
+  .site-nav__mobile-panel a.active {
+    background: var(--elevated);
+  }
+  .site-nav__mobile-panel .site-nav__mobile-cta {
+    justify-content: center;
+    background: var(--blue);
+    color: #fff;
+  }
+  .site-nav__mobile-divider {
+    height: 1px;
+    margin: 5px 2px;
+    background: var(--border);
+  }
+}
+
+@keyframes navMenuIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* ── Public trust pages ────────────────────────────────────────────────── */
 .trust-page {

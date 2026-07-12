@@ -21,7 +21,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import { syncCurrentUser } from "@/lib/auth-sync";
 import { useCurrentAccount } from "@/hooks/useAuth";
 import type { DashboardSummaryResponse } from "@/types/dashboard";
@@ -343,6 +343,7 @@ export default function DashboardPage() {
   const [accountSummary, setAccountSummary] = useState<DashboardSummaryResponse | null>(null);
   const [sellerSummary, setSellerSummary] = useState<SellerDashboardResponse | null>(null);
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "loading" | "ready" | "guest" | "error">("idle");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     setMounted(true);
@@ -367,12 +368,7 @@ export default function DashboardPage() {
         }
         const [dashboard, seller] = await Promise.all([
           api.get<DashboardSummaryResponse>("/dashboard/summary", { token }),
-          api.get<SellerDashboardResponse>("/seller/dashboard", { token }).catch((error) => {
-            if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-              return null;
-            }
-            throw error;
-          }),
+          api.get<SellerDashboardResponse>("/seller/dashboard", { token }),
         ]);
         if (!active) return;
         setAccountSummary(dashboard);
@@ -390,7 +386,7 @@ export default function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [account]);
+  }, [account, reloadKey]);
 
   const revSeries = useMemo(() => buildRevenueSeries(range, sellerSummary), [range, sellerSummary]);
   const requestSeries = useMemo(() => buildRequestSeries(range, sellerSummary), [range, sellerSummary]);
@@ -483,11 +479,15 @@ export default function DashboardPage() {
                 letterSpacing: "-0.01em",
               }}
             >
-              {mode === "buyer"
-                ? `${accountName}'s tools, keys, and usage.`
-                : sellerActiveTools === 0
-                  ? "Submit a build to get started."
-                  : `You're earning across ${sellerActiveTools} live tool${sellerActiveTools === 1 ? "" : "s"}.`}
+              {remoteStatus !== "ready"
+                ? account.isSignedIn
+                  ? "Loading your private workspace."
+                  : "Your private marketplace workspace."
+                : mode === "buyer"
+                  ? `${accountName}'s tools, keys, and usage.`
+                  : sellerActiveTools === 0
+                    ? "Submit a build to get started."
+                    : `You're earning across ${sellerActiveTools} live tool${sellerActiveTools === 1 ? "" : "s"}.`}
             </h1>
             <p style={{ color: "var(--muted)", fontSize: 13 }}>
               {mode === "seller"
@@ -524,9 +524,10 @@ export default function DashboardPage() {
           status={remoteStatus}
           isSignedIn={account.isSignedIn}
           mode={mode}
+          onRetry={() => setReloadKey((current) => current + 1)}
         />
 
-        {mode === "buyer" ? (
+        {remoteStatus === "ready" && (mode === "buyer" ? (
           <BuyerDashboard
             accountName={accountName}
             isSignedIn={account.isSignedIn}
@@ -995,7 +996,7 @@ export default function DashboardPage() {
           />
         </section>
           </>
-        )}
+        ))}
       </div>
     </main>
   );
@@ -1275,10 +1276,12 @@ function DashboardDataNotice({
   status,
   isSignedIn,
   mode,
+  onRetry,
 }: {
   status: "idle" | "loading" | "ready" | "guest" | "error";
   isSignedIn: boolean;
   mode: DashboardMode;
+  onRetry: () => void;
 }) {
   if (status === "ready" || status === "idle") return null;
 
@@ -1306,9 +1309,9 @@ function DashboardDataNotice({
     return {
       tone: "error",
       title: "Live dashboard data could not load.",
-      body: "We are not showing fallback demo metrics here. Retry after the API is reachable so this stays production-accurate.",
-      action: "Browse marketplace",
-      href: "/marketplace",
+      body: "No placeholder metrics are shown. Retry the live account request when the API is reachable.",
+      action: "Retry",
+      href: null,
     };
   })();
 
@@ -1340,6 +1343,21 @@ function DashboardDataNotice({
         <Link href={copy.href} style={smallLinkStyle}>
           {copy.action}
         </Link>
+      ) : copy.action ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          style={{
+            ...smallLinkStyle,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          {copy.action}
+        </button>
       ) : null}
     </section>
   );

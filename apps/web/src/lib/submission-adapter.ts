@@ -75,6 +75,16 @@ function inferTechStack(tool: Tool): string[] {
   return stack;
 }
 
+function describeContract(
+  schema: Record<string, unknown> | null,
+  valueType: string | null,
+): string {
+  if (schema && Object.keys(schema).length > 0) {
+    return JSON.stringify(schema, null, 2);
+  }
+  return valueType ? `${valueType} value` : "Not provided";
+}
+
 export function toolToSubmissionRecord(tool: Tool, job?: ToolProcessingJob | null): SubmissionRecord {
   const submittedAt = tool.created_at;
   const updatedAt = tool.updated_at;
@@ -92,25 +102,23 @@ export function toolToSubmissionRecord(tool: Tool, job?: ToolProcessingJob | nul
     category: tool.category,
     tech_stack: techStack,
     description: tool.description,
-    inputs: "See input schema",
-    outputs: "See output schema",
+    inputs: describeContract(tool.input_schema, tool.input_type),
+    outputs: describeContract(tool.output_schema, tool.output_type),
     pricing_model: tool.ownership_type === "full_sale" ? "buy" : "royalty",
     price_cents: Math.round(Number(tool.one_time_price ?? tool.price_per_request ?? "0") * 100),
     submitted_at: submittedAt,
     stage,
     testing_started_at: stage === "testing" ? job?.started_at ?? job?.enqueued_at ?? updatedAt : undefined,
     metrics: zeroMetrics(updatedAt),
+    metrics_available: false,
     live: stage === "listed" || stage === "revoked"
       ? {
-          uptime_pct: Number(tool.uptime_percentage ?? "0"),
-          uptime_window_days: 30,
-          installs: 0,
           api_calls_total: tool.total_requests,
-          api_calls_7d: 0,
-          earnings_cents_7d: 0,
-          health: tool.status === "paused" ? "degraded" : "healthy",
-          reviews: [],
-          listed_at: updatedAt,
+          last_updated_at: updatedAt,
+          uptime_pct:
+            tool.uptime_percentage === null
+              ? undefined
+              : Number(tool.uptime_percentage),
         }
       : undefined,
     processing_job: job
