@@ -18,6 +18,7 @@ const {
   allowedMimeTypes,
 } = require("./config");
 const { createLogger } = require("./logger");
+const { createGatewayVerifier } = require("./services/gateway-auth");
 
 const { port: PORT } = getRuntimeConfig();
 const logger = createLogger({ service: "seller-tool-server" });
@@ -312,10 +313,22 @@ function createApp() {
     uploadDir,
     analysisTimeoutMs,
     allowedOrigins,
+    gatewayPublicKey,
+    gatewayKeyId,
+    gatewayToolSlug,
+    gatewaySignatureTtlSeconds,
+    allowUnsignedGatewayRequests,
   } = runtimeConfig;
 
   ensureDirectoryExists(uploadDir);
   const app = express();
+  const gatewayVerifier = createGatewayVerifier({
+    publicKey: gatewayPublicKey,
+    keyId: gatewayKeyId,
+    expectedToolSlug: gatewayToolSlug,
+    maxAgeSeconds: gatewaySignatureTtlSeconds,
+    allowUnsigned: allowUnsignedGatewayRequests,
+  });
   const allowedFileExtensions = new Set([".jpeg", ".jpg", ".png", ".webp"]);
   const upload = multer({
     storage: multer.diskStorage({
@@ -380,6 +393,27 @@ function createApp() {
   app.use(helmet());
   app.use(cors(buildCorsOptions(allowedOrigins)));
 
+  const requireGatewayRequest = (req, res, next) => {
+    const verification = gatewayVerifier.verifyRequest(req);
+    if (verification.ok) {
+      next();
+      return;
+    }
+
+    logger.warn("gateway request authentication rejected", {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      code: verification.code,
+    });
+    sendErrorResponse(req, res, verification.statusCode, verification.message, {
+      code: verification.code,
+    });
+  };
+
+  app.use("/api/", requireGatewayRequest);
+  app.post("/", requireGatewayRequest);
+
   // Logging middleware
   app.use(
     morgan("combined", {
@@ -431,11 +465,16 @@ function createApp() {
   app.get("/ready", (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const providerConfigured = isAnalysisProviderConfigured();
-    res.status(providerConfigured ? 200 : 503).json({
-      status: providerConfigured ? "ready" : "not_ready",
+    const ready = providerConfigured && gatewayVerifier.ready;
+    res.status(ready ? 200 : 503).json({
+      status: ready ? "ready" : "not_ready",
       checks: {
         analysis_provider: {
           configured: providerConfigured,
+        },
+        gateway_authentication: {
+          configured: gatewayVerifier.configured,
+          enforced: !gatewayVerifier.allowUnsigned,
         },
       },
       timestamp: new Date().toISOString(),

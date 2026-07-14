@@ -8,6 +8,7 @@ A fast Express.js backend for home accessibility analysis, optimized for Hackmar
 
 - Node.js 22.x
 - OpenRouter API key (required for analysis and readiness)
+- Hackmarket gateway public key (required for production requests and readiness)
 - npm or yarn
 
 ### Installation
@@ -24,6 +25,9 @@ cp env.example .env
 
 # Edit .env with your OpenRouter API key
 OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# Local manual testing only; production must keep this false
+ALLOW_UNSIGNED_GATEWAY_REQUESTS=true
 
 # Start development server
 npm run dev
@@ -48,8 +52,13 @@ GET /health
 ```
 
 `GET /health` is the liveness check. `GET /ready` returns `200` only when the
-required analysis provider is configured; Render uses `/ready` before routing
-production traffic to a new deployment.
+required analysis provider and gateway verification key are configured. Render
+uses `/ready` before routing production traffic to a new deployment. An explicit
+unsigned bypass is available only for local testing.
+
+All production analysis routes require a short-lived Ed25519 signature from the
+Hackmarket gateway. Direct unsigned requests are rejected before rate limiting,
+body parsing, uploads, or provider calls.
 
 ### Upload Images
 
@@ -173,30 +182,35 @@ npm run verify     # Run format, lint, and tests together
 
 ### Environment Variables
 
-| Variable                        | Default               | Description                                                                       |
-| ------------------------------- | --------------------- | --------------------------------------------------------------------------------- |
-| `PORT`                          | 3000                  | Server port                                                                       |
-| `NODE_ENV`                      | development           | Environment                                                                       |
-| `OPENROUTER_API_KEY`            | -                     | OpenRouter API key used by the vision + comprehensive analysis services           |
-| `OPENROUTER_MODEL`              | openai/gpt-4o         | Vision-capable OpenRouter model                                                   |
-| `OPENROUTER_TIMEOUT_MS`         | 20000                 | Timeout for OpenRouter requests                                                   |
-| `PUBLIC_APP_URL`                | https://hackmarket.io | Referer header sent to OpenRouter                                                 |
-| `ALLOWED_ORIGINS`               | \*                    | Comma-separated allowed origins, or `*` to reflect any origin without credentials |
-| `RATE_LIMIT_WINDOW_MS`          | 900000                | Rate limit window size in milliseconds                                            |
-| `RATE_LIMIT_MAX_REQUESTS`       | 100                   | Rate limit per window                                                             |
-| `ANALYSIS_TIMEOUT_MS`           | 45000                 | End-to-end timeout for a single analysis request                                  |
-| `MAX_FILE_SIZE`                 | 10485760              | Max file size (10MB)                                                              |
-| `MAX_FILES`                     | 5                     | Max files per request                                                             |
-| `MAX_INLINE_IMAGES`             | 5                     | Max inline base64 images accepted by JSON analysis requests                       |
-| `MAX_IMAGE_WIDTH`               | 2048                  | Max width after optimization                                                      |
-| `MAX_IMAGE_HEIGHT`              | 2048                  | Max height after optimization                                                     |
-| `IMAGE_QUALITY`                 | 85                    | JPEG optimization quality                                                         |
-| `LISTING_FETCH_TIMEOUT_MS`      | 10000                 | Timeout for listing HTML fetches                                                  |
-| `MAX_LISTING_HTML_BYTES`        | 2097152               | Maximum decompressed listing HTML response size                                   |
-| `REMOTE_IMAGE_FETCH_TIMEOUT_MS` | 10000                 | Timeout for scraped image downloads                                               |
-| `MAX_REMOTE_IMAGE_BYTES`        | 12582912              | Max remote image size in bytes                                                    |
-| `TEMP_DIR`                      | ./tmp                 | Base temp directory                                                               |
-| `UPLOAD_DIR`                    | ./tmp/uploads         | Upload temp directory                                                             |
+| Variable                                   | Default               | Description                                                                       |
+| ------------------------------------------ | --------------------- | --------------------------------------------------------------------------------- |
+| `PORT`                                     | 3000                  | Server port                                                                       |
+| `NODE_ENV`                                 | development           | Environment                                                                       |
+| `OPENROUTER_API_KEY`                       | -                     | OpenRouter API key used by the vision + comprehensive analysis services           |
+| `OPENROUTER_MODEL`                         | openai/gpt-4o         | Vision-capable OpenRouter model                                                   |
+| `OPENROUTER_TIMEOUT_MS`                    | 20000                 | Timeout for OpenRouter requests                                                   |
+| `PUBLIC_APP_URL`                           | https://hackmarket.io | Referer header sent to OpenRouter                                                 |
+| `HACKMARKET_GATEWAY_PUBLIC_KEY`            | -                     | Base64url Ed25519 public key used to verify Hackmarket gateway requests           |
+| `HACKMARKET_GATEWAY_KEY_ID`                | launch-1              | Signing key identifier; must match the API                                        |
+| `HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS` | 300                   | Accepted signature age in seconds (30-900)                                        |
+| `HACKMARKET_TOOL_SLUG`                     | -                     | Exact marketplace slug bound into each signature                                  |
+| `ALLOW_UNSIGNED_GATEWAY_REQUESTS`          | false                 | Local test bypass; must remain `false` in production                              |
+| `ALLOWED_ORIGINS`                          | \*                    | Comma-separated allowed origins, or `*` to reflect any origin without credentials |
+| `RATE_LIMIT_WINDOW_MS`                     | 900000                | Rate limit window size in milliseconds                                            |
+| `RATE_LIMIT_MAX_REQUESTS`                  | 100                   | Rate limit per window                                                             |
+| `ANALYSIS_TIMEOUT_MS`                      | 45000                 | End-to-end timeout for a single analysis request                                  |
+| `MAX_FILE_SIZE`                            | 10485760              | Max file size (10MB)                                                              |
+| `MAX_FILES`                                | 5                     | Max files per request                                                             |
+| `MAX_INLINE_IMAGES`                        | 5                     | Max inline base64 images accepted by JSON analysis requests                       |
+| `MAX_IMAGE_WIDTH`                          | 2048                  | Max width after optimization                                                      |
+| `MAX_IMAGE_HEIGHT`                         | 2048                  | Max height after optimization                                                     |
+| `IMAGE_QUALITY`                            | 85                    | JPEG optimization quality                                                         |
+| `LISTING_FETCH_TIMEOUT_MS`                 | 10000                 | Timeout for listing HTML fetches                                                  |
+| `MAX_LISTING_HTML_BYTES`                   | 2097152               | Maximum decompressed listing HTML response size                                   |
+| `REMOTE_IMAGE_FETCH_TIMEOUT_MS`            | 10000                 | Timeout for scraped image downloads                                               |
+| `MAX_REMOTE_IMAGE_BYTES`                   | 12582912              | Max remote image size in bytes                                                    |
+| `TEMP_DIR`                                 | ./tmp                 | Base temp directory                                                               |
+| `UPLOAD_DIR`                               | ./tmp/uploads         | Upload temp directory                                                             |
 
 ## 🔧 Features
 
@@ -221,6 +235,7 @@ npm run verify     # Run format, lint, and tests together
 - Helmet.js security headers
 - Explicit CORS allowlist support with wildcard fallback
 - Rate limiting
+- Signed gateway request verification with expiry, tool binding, and replay protection
 - Input validation
 - File type validation
 
@@ -275,6 +290,10 @@ npm run verify
 ## 🧪 Testing
 
 ### Manual Testing
+
+Start the service with `ALLOW_UNSIGNED_GATEWAY_REQUESTS=true` only for this
+local smoke test. Production requests must use the buyer-facing Hackmarket
+gateway URL instead of calling this service directly.
 
 ```bash
 # Test upload

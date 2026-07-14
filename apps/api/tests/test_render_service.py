@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.config import settings
 from app.services.container_service import ProjectAnalysis, ToolConfig
+from app.services.gateway_signing import public_key_from_private
 from app.services.render_service import (
     _build_image_service_payload,
     _build_service_payload,
@@ -10,6 +11,8 @@ from app.services.render_service import (
     deploy_image_to_render,
     deploy_tool_to_render,
 )
+
+TEST_GATEWAY_PRIVATE_KEY = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 
 
 def test_build_render_service_name_is_stable(live_tool):
@@ -95,6 +98,44 @@ def test_build_image_service_payload(monkeypatch, live_tool):
             "healthCheckPath": "/health",
         },
     }
+
+
+def test_render_payload_injects_only_gateway_public_material(monkeypatch, live_tool):
+    monkeypatch.setattr(settings, "render_owner_id", "tea_test")
+    monkeypatch.setattr(settings, "render_tool_plan", "starter")
+    monkeypatch.setattr(settings, "render_tool_region", "oregon")
+    monkeypatch.setattr(settings, "render_tool_auto_deploy", False)
+    monkeypatch.setattr(settings, "render_tool_healthcheck_path", "/health")
+    monkeypatch.setattr(settings, "tool_gateway_signing_private_key", TEST_GATEWAY_PRIVATE_KEY)
+    monkeypatch.setattr(settings, "tool_gateway_signing_key_id", "launch-1")
+    monkeypatch.setattr(settings, "tool_gateway_signature_ttl_seconds", 300)
+    live_tool.github_url = "https://github.com/example/vision-tool"
+    analysis = ProjectAnalysis(
+        source_path="/tmp/source",
+        language="node",
+        framework="express",
+        entry_point="server.js",
+        port=3000,
+        dependencies_file="package.json",
+        has_dockerfile=False,
+    )
+    config = ToolConfig(
+        entry_command="node server.js",
+        port=3000,
+        environment_variables={
+            "HACKMARKET_GATEWAY_PUBLIC_KEY": "seller-cannot-override",
+        },
+    )
+
+    payload = _build_service_payload(live_tool, analysis, config, "hm-tool-live")
+    env = {item["key"]: item["value"] for item in payload["envVars"]}
+
+    assert env["HACKMARKET_GATEWAY_PUBLIC_KEY"] == public_key_from_private(TEST_GATEWAY_PRIVATE_KEY)
+    assert env["HACKMARKET_GATEWAY_KEY_ID"] == "launch-1"
+    assert env["HACKMARKET_TOOL_SLUG"] == live_tool.slug
+    assert env["HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS"] == "300"
+    assert env["ALLOW_UNSIGNED_GATEWAY_REQUESTS"] == "false"
+    assert TEST_GATEWAY_PRIVATE_KEY not in env.values()
 
 
 async def test_deploy_tool_to_render_requires_github_url(monkeypatch, live_tool):

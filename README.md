@@ -176,6 +176,11 @@ Recommended hosted env values:
 - Render `CORS_ORIGIN_REGEX=`
 - Render `ALLOW_VERCEL_PREVIEW_ORIGINS=false`
 - Render `CONVERTER_SECRET`: long random shared secret for converter-to-API imports
+- Run `python3 scripts/generate_tool_gateway_keys.py` once to create the API-to-tool Ed25519 signing pair without printing the private key
+- Render API and worker `TOOL_GATEWAY_SIGNING_PRIVATE_KEY`: the generated private key; never expose it to seller services
+- Render API and worker `TOOL_GATEWAY_SIGNING_KEY_ID=launch-1` and `TOOL_GATEWAY_SIGNATURE_TTL_SECONDS=300`
+- Render seller tool `HACKMARKET_GATEWAY_PUBLIC_KEY`: the generated public key, with the matching key ID and signature lifetime
+- Render seller tool `HACKMARKET_TOOL_SLUG=home-accessibility-checker` and `ALLOW_UNSIGNED_GATEWAY_REQUESTS=false`
 - Render `OPENROUTER_API_KEY`: required for production repo submission analysis
 - Render `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`: required for durable source upload storage
 - Render `WORKER_QUEUE_NAME=hackmarket:jobs` on both API and worker
@@ -291,5 +296,6 @@ Deployment:
 **Operational Notes**
 - Seller tool source archives live in S3 and are processed into runtime containers by the API service.
 - Buyer calls always flow through the Hackmarket gateway, which applies auth, rate limiting, usage logging, and billing hooks.
+- The gateway signs upstream requests with Ed25519; compatible seller services reject forged, expired, replayed, or direct unsigned requests.
 - Redis currently backs hot-path counters, rate limiting, and port allocation.
 - PostgreSQL remains the source of truth for tools, users, transactions, and analytics rollups.

@@ -8,6 +8,7 @@ import httpx
 from fastapi import Request
 
 from app.config import settings
+from app.services import gateway_signing
 from app.services.url_safety import validate_public_tool_endpoint_async
 
 HOP_BY_HOP_HEADERS = {
@@ -33,7 +34,7 @@ SENSITIVE_REQUEST_HEADERS = {
     "x-forwarded-port",
     "x-forwarded-proto",
     "x-real-ip",
-}
+} | gateway_signing.INTERNAL_GATEWAY_HEADERS
 
 SENSITIVE_RESPONSE_HEADERS = {
     "set-cookie",
@@ -159,10 +160,21 @@ async def forward_request(
     await validate_public_tool_endpoint_async(api_endpoint)
     url = build_upstream_url(api_endpoint, tool_path, request.url.query.encode("utf-8"))
     headers = filter_request_headers(request.headers)
-    headers["X-HackMarket-Request-Id"] = request_id
-    headers["X-HackMarket-Tool-Slug"] = tool_slug
     if extra_headers:
         headers.update(extra_headers)
+    headers["X-HackMarket-Request-Id"] = request_id
+    headers["X-HackMarket-Tool-Slug"] = tool_slug
+    if settings.tool_gateway_signing_private_key:
+        headers.update(
+            gateway_signing.sign_gateway_request(
+                method=request.method,
+                request_target=url.raw_path.decode("ascii"),
+                request_id=request_id,
+                tool_slug=tool_slug,
+                encoded_private_key=settings.tool_gateway_signing_private_key,
+                key_id=settings.tool_gateway_signing_key_id,
+            )
+        )
 
     client = get_http_client()
     return await client.request(

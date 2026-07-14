@@ -16,6 +16,7 @@ Rotate or create production values for:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `CONVERTER_SECRET`
+- `TOOL_GATEWAY_SIGNING_PRIVATE_KEY`
 - `RENDER_API_KEY`
 - `GHCR_TOKEN`
 - `ALERT_WEBHOOK_URL`
@@ -63,6 +64,21 @@ Required production alert env vars:
 - `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3`
 - `GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS=3600`
 - `MAX_ACTIVE_API_KEYS_PER_USER=10`
+
+Generate the API-to-tool signing pair once:
+
+```bash
+python3 scripts/generate_tool_gateway_keys.py
+```
+
+The command creates `.gateway-signing-keys.env` with owner-only permissions and
+does not print the private key. Configure the values as follows:
+
+- Set `TOOL_GATEWAY_SIGNING_PRIVATE_KEY`, `TOOL_GATEWAY_SIGNING_KEY_ID`, and `TOOL_GATEWAY_SIGNATURE_TTL_SECONDS` on both `start` and `start-worker`.
+- Set `HACKMARKET_GATEWAY_PUBLIC_KEY`, `HACKMARKET_GATEWAY_KEY_ID`, and `HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS` on `home-accessibility-checker`.
+- Keep `HACKMARKET_TOOL_SLUG=home-accessibility-checker` and `ALLOW_UNSIGNED_GATEWAY_REQUESTS=false` on the seller service.
+- Never place `TOOL_GATEWAY_SIGNING_PRIVATE_KEY` on a seller-owned service. The public and private key IDs must match.
+- Store the private key in a password manager or secret manager, then remove the local key file after Render is configured.
 
 Attach the API domain:
 - `api.hackmarket.io`
@@ -120,6 +136,10 @@ Confirm dependency audits pass before tagging launch:
 (cd apps/web && npm audit --audit-level=high)
 (cd apps/seller-tools/home-accessibility-checker && npm audit --audit-level=high)
 ```
+
+Confirm an unsigned request sent directly to the seller tool is rejected and a
+buyer invocation routed through the Hackmarket gateway succeeds. This proves
+seller provider usage cannot bypass platform authentication and billing.
 
 Run the live smoke test after DNS and deploys are active:
 

@@ -16,6 +16,8 @@ const DEFAULT_MAX_REMOTE_IMAGE_BYTES = 12 * 1024 * 1024;
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 20000;
 const DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o";
 const DEFAULT_PUBLIC_APP_URL = "https://hackmarket.io";
+const DEFAULT_GATEWAY_KEY_ID = "launch-1";
+const DEFAULT_GATEWAY_SIGNATURE_TTL_SECONDS = 300;
 
 const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 
@@ -44,6 +46,12 @@ function parseAllowedOrigins(rawValue = process.env.ALLOWED_ORIGINS) {
     .filter(Boolean);
 
   return origins.length ? origins : ["*"];
+}
+
+function parseBooleanEnv(name, fallback = false) {
+  const rawValue = process.env[name];
+  if (rawValue === undefined || rawValue === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(rawValue.trim().toLowerCase());
 }
 
 function getRuntimeConfig() {
@@ -103,6 +111,18 @@ function getRuntimeConfig() {
       "MAX_REMOTE_IMAGE_BYTES",
       DEFAULT_MAX_REMOTE_IMAGE_BYTES,
     ),
+    gatewayPublicKey: process.env.HACKMARKET_GATEWAY_PUBLIC_KEY?.trim() || "",
+    gatewayKeyId:
+      process.env.HACKMARKET_GATEWAY_KEY_ID?.trim() || DEFAULT_GATEWAY_KEY_ID,
+    gatewayToolSlug: process.env.HACKMARKET_TOOL_SLUG?.trim() || "",
+    gatewaySignatureTtlSeconds: parseNumberEnv(
+      "HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS",
+      DEFAULT_GATEWAY_SIGNATURE_TTL_SECONDS,
+    ),
+    allowUnsignedGatewayRequests: parseBooleanEnv(
+      "ALLOW_UNSIGNED_GATEWAY_REQUESTS",
+      process.env.NODE_ENV === "test",
+    ),
     allowedMimeTypes: [...allowedMimeTypes],
   };
 }
@@ -116,5 +136,6 @@ module.exports = {
   getRuntimeConfig,
   isAnalysisProviderConfigured,
   parseAllowedOrigins,
+  parseBooleanEnv,
   parseNumberEnv,
 };

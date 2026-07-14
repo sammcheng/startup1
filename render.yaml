@@ -56,6 +56,12 @@ services:
         value: hackmarket:jobs:health
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
+      - key: TOOL_GATEWAY_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: TOOL_GATEWAY_SIGNING_KEY_ID
+        value: launch-1
+      - key: TOOL_GATEWAY_SIGNATURE_TTL_SECONDS
+        value: "300"
       - key: ALERT_WEBHOOK_URL
         sync: false
       - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
@@ -195,6 +201,12 @@ services:
         value: hackmarket:jobs:health
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
+      - key: TOOL_GATEWAY_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: TOOL_GATEWAY_SIGNING_KEY_ID
+        value: launch-1
+      - key: TOOL_GATEWAY_SIGNATURE_TTL_SECONDS
+        value: "300"
       - key: ALERT_WEBHOOK_URL
         sync: false
       - key: ALERT_WEBHOOK_TIMEOUT_SECONDS
@@ -301,6 +313,16 @@ services:
         value: openai/gpt-4o
       - key: NODE_ENV
         value: production
+      - key: HACKMARKET_GATEWAY_PUBLIC_KEY
+        sync: false
+      - key: HACKMARKET_GATEWAY_KEY_ID
+        value: launch-1
+      - key: HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS
+        value: "300"
+      - key: HACKMARKET_TOOL_SLUG
+        value: home-accessibility-checker
+      - key: ALLOW_UNSIGNED_GATEWAY_REQUESTS
+        value: "false"
       - key: PUBLIC_APP_URL
         value: https://web-six-dusky-20.vercel.app
       - key: ALLOWED_ORIGINS

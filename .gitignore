@@ -33,6 +33,7 @@ test-results/
 .env.development.local
 .env.test.local
 .env.production.local
+.gateway-signing-keys.env
 
 # Editors
 .vscode/

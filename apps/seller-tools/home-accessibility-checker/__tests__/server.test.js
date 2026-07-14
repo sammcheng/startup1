@@ -1,6 +1,49 @@
 const request = require("supertest");
 const sharp = require("sharp");
+const crypto = require("crypto");
 const { createApp } = require("../server");
+const {
+  SIGNATURE_HEADER,
+  SIGNATURE_KEY_ID_HEADER,
+  SIGNATURE_TIMESTAMP_HEADER,
+  SIGNATURE_VERSION,
+  SIGNATURE_VERSION_HEADER,
+  buildCanonicalMessage,
+} = require("../services/gateway-auth");
+
+function createGatewayKeyPair() {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+  const publicDer = publicKey.export({ format: "der", type: "spki" });
+  return {
+    privateKey,
+    publicKey: publicDer.subarray(publicDer.length - 32).toString("base64url"),
+  };
+}
+
+function createGatewayHeaders(privateKey, requestTarget = "/") {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const requestId = `req-${crypto.randomUUID()}`;
+  const toolSlug = "home-accessibility-checker";
+  const keyId = "launch-1";
+  const message = buildCanonicalMessage({
+    method: "POST",
+    requestTarget,
+    timestamp,
+    requestId,
+    toolSlug,
+    keyId,
+  });
+  return {
+    [SIGNATURE_VERSION_HEADER]: SIGNATURE_VERSION,
+    [SIGNATURE_KEY_ID_HEADER]: keyId,
+    [SIGNATURE_TIMESTAMP_HEADER]: String(timestamp),
+    [SIGNATURE_HEADER]: crypto
+      .sign(null, message, privateKey)
+      .toString("base64url"),
+    "X-HackMarket-Request-Id": requestId,
+    "X-HackMarket-Tool-Slug": toolSlug,
+  };
+}
 
 describe("seller tool server", () => {
   let app;
@@ -9,12 +52,21 @@ describe("seller tool server", () => {
   const originalRateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS;
   const originalRateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS;
   const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalGatewayPublicKey = process.env.HACKMARKET_GATEWAY_PUBLIC_KEY;
+  const originalGatewayKeyId = process.env.HACKMARKET_GATEWAY_KEY_ID;
+  const originalGatewayToolSlug = process.env.HACKMARKET_TOOL_SLUG;
+  const originalAllowUnsignedGatewayRequests =
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS;
 
   beforeEach(() => {
     delete process.env.ALLOWED_ORIGINS;
     delete process.env.RATE_LIMIT_MAX_REQUESTS;
     delete process.env.RATE_LIMIT_WINDOW_MS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.HACKMARKET_GATEWAY_PUBLIC_KEY;
+    delete process.env.HACKMARKET_GATEWAY_KEY_ID;
+    delete process.env.HACKMARKET_TOOL_SLUG;
+    delete process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS;
     app = createApp();
   });
 
@@ -39,6 +91,18 @@ describe("seller tool server", () => {
       delete process.env.OPENROUTER_API_KEY;
     } else {
       process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    }
+    for (const [key, value] of Object.entries({
+      HACKMARKET_GATEWAY_PUBLIC_KEY: originalGatewayPublicKey,
+      HACKMARKET_GATEWAY_KEY_ID: originalGatewayKeyId,
+      HACKMARKET_TOOL_SLUG: originalGatewayToolSlug,
+      ALLOW_UNSIGNED_GATEWAY_REQUESTS: originalAllowUnsignedGatewayRequests,
+    })) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   });
 
@@ -75,6 +139,10 @@ describe("seller tool server", () => {
         analysis_provider: {
           configured: false,
         },
+        gateway_authentication: {
+          configured: false,
+          enforced: false,
+        },
       },
       timestamp: expect.any(String),
     });
@@ -89,6 +157,58 @@ describe("seller tool server", () => {
     expect(response.status).toBe(200);
     expect(response.body.status).toBe("ready");
     expect(response.body.checks.analysis_provider.configured).toBe(true);
+    expect(response.body.checks.gateway_authentication).toEqual({
+      configured: false,
+      enforced: false,
+    });
+  });
+
+  test("production-style API routes fail closed when gateway auth is missing", async () => {
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS = "false";
+    app = createApp();
+
+    const response = await request(app)
+      .post("/")
+      .set("Content-Type", "application/json")
+      .send("{not-valid-json");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: "Gateway authentication is not configured.",
+      code: "GATEWAY_AUTH_NOT_CONFIGURED",
+      requestId: expect.any(String),
+    });
+  });
+
+  test("signed gateway requests reach the protected root route", async () => {
+    const keys = createGatewayKeyPair();
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS = "false";
+    process.env.HACKMARKET_GATEWAY_PUBLIC_KEY = keys.publicKey;
+    process.env.HACKMARKET_GATEWAY_KEY_ID = "launch-1";
+    process.env.HACKMARKET_TOOL_SLUG = "home-accessibility-checker";
+    app = createApp();
+
+    const response = await request(app)
+      .post("/")
+      .set(createGatewayHeaders(keys.privateKey))
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid request");
+  });
+
+  test("unsigned requests are rejected when gateway auth is configured", async () => {
+    const keys = createGatewayKeyPair();
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS = "false";
+    process.env.HACKMARKET_GATEWAY_PUBLIC_KEY = keys.publicKey;
+    process.env.HACKMARKET_GATEWAY_KEY_ID = "launch-1";
+    process.env.HACKMARKET_TOOL_SLUG = "home-accessibility-checker";
+    app = createApp();
+
+    const response = await request(app).post("/").send({});
+
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe("INVALID_GATEWAY_SIGNATURE");
   });
 
   test("GET /health allows arbitrary origins without credentials when wildcard CORS is used", async () => {

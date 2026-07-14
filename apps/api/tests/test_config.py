@@ -5,6 +5,7 @@ import pytest
 from app.config import Settings, find_repo_root
 
 PRODUCTION_REQUIRED = {
+    "tool_gateway_signing_private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
     "converter_secret": "converter-secret",
     "clerk_secret_key": "sk_live_value",
     "clerk_webhook_secret": "whsec_value",
@@ -299,6 +300,33 @@ def test_production_rejects_invalid_gateway_abuse_settings() -> None:
             redis_url="redis://redis.internal:6379",
             max_request_body_bytes=50,
             max_source_zip_uncompressed_bytes=49,
+            **PRODUCTION_REQUIRED,
+        )
+
+
+def test_production_rejects_invalid_tool_gateway_signing_settings() -> None:
+    with pytest.raises(ValueError, match="Invalid tool gateway signing configuration"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            **{**PRODUCTION_REQUIRED, "tool_gateway_signing_private_key": "not-a-key"},
+        )
+
+    with pytest.raises(ValueError, match="TOOL_GATEWAY_SIGNATURE_TTL_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            tool_gateway_signature_ttl_seconds=10,
             **PRODUCTION_REQUIRED,
         )
 

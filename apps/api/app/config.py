@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.services.gateway_signing import validate_private_key, validate_signing_key_id
+
 
 def find_repo_root(config_path: Path) -> Path:
     """Find the monorepo root, falling back to the API root in containers."""
@@ -98,6 +100,12 @@ class Settings(BaseSettings):
     max_active_api_keys_per_user: int = 10
     demo_rate_limit_per_hour: int = 10
     public_rate_limit_per_minute: int = 60
+
+    # API-to-tool request authentication. The private key stays on the API and
+    # signs every proxied request; hosted tools receive only the public key.
+    tool_gateway_signing_private_key: str = ""
+    tool_gateway_signing_key_id: str = "launch-1"
+    tool_gateway_signature_ttl_seconds: int = 300
 
     # Database
     database_url: str
@@ -197,6 +205,7 @@ class Settings(BaseSettings):
                 "PUBLIC_API_BASE_URL": self.public_api_base_url,
                 "DATABASE_URL": self.database_url,
                 "REDIS_URL": self.redis_url,
+                "TOOL_GATEWAY_SIGNING_PRIVATE_KEY": self.tool_gateway_signing_private_key,
                 "CONVERTER_SECRET": self.converter_secret,
                 "CLERK_SECRET_KEY": self.clerk_secret_key,
                 "CLERK_WEBHOOK_SECRET": self.clerk_webhook_secret,
@@ -267,6 +276,17 @@ class Settings(BaseSettings):
 
         if self.max_active_api_keys_per_user < 1:
             raise ValueError("MAX_ACTIVE_API_KEYS_PER_USER must be at least 1 in production.")
+
+        try:
+            validate_private_key(self.tool_gateway_signing_private_key)
+            validate_signing_key_id(self.tool_gateway_signing_key_id)
+        except ValueError as exc:
+            raise ValueError(f"Invalid tool gateway signing configuration: {exc}") from exc
+
+        if not 30 <= self.tool_gateway_signature_ttl_seconds <= 900:
+            raise ValueError(
+                "TOOL_GATEWAY_SIGNATURE_TTL_SECONDS must be between 30 and 900 in production."
+            )
 
         if self.run_billing_scheduler_in_api:
             raise ValueError(

@@ -1,6 +1,7 @@
 const {
   getRuntimeConfig,
   parseAllowedOrigins,
+  parseBooleanEnv,
   parseNumberEnv,
 } = require("../config");
 
@@ -16,6 +17,8 @@ describe("config helpers", () => {
     OPENROUTER_TIMEOUT_MS: process.env.OPENROUTER_TIMEOUT_MS,
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
     MAX_LISTING_HTML_BYTES: process.env.MAX_LISTING_HTML_BYTES,
+    ALLOW_UNSIGNED_GATEWAY_REQUESTS:
+      process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS,
   };
 
   afterEach(() => {
@@ -51,6 +54,23 @@ describe("config helpers", () => {
   test("parseAllowedOrigins falls back to wildcard when unset", () => {
     expect(parseAllowedOrigins("")).toEqual(["*"]);
     expect(parseAllowedOrigins(undefined)).toEqual(["*"]);
+  });
+
+  test("parseBooleanEnv accepts explicit truthy values and defaults safely", () => {
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS = "yes";
+    expect(parseBooleanEnv("ALLOW_UNSIGNED_GATEWAY_REQUESTS", false)).toBe(
+      true,
+    );
+
+    process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS = "false";
+    expect(parseBooleanEnv("ALLOW_UNSIGNED_GATEWAY_REQUESTS", true)).toBe(
+      false,
+    );
+
+    delete process.env.ALLOW_UNSIGNED_GATEWAY_REQUESTS;
+    expect(parseBooleanEnv("ALLOW_UNSIGNED_GATEWAY_REQUESTS", false)).toBe(
+      false,
+    );
   });
 
   test("getRuntimeConfig derives uploadDir from tempDir when uploadDir is unset", () => {

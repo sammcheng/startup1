@@ -63,6 +63,8 @@ PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 PRODUCTION_LOAD_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_load_smoke_check.py"
 URL_SAFETY = REPO_ROOT / "apps" / "api" / "app" / "services" / "url_safety.py"
 PROXY_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "proxy_service.py"
+GATEWAY_SIGNING = REPO_ROOT / "apps" / "api" / "app" / "services" / "gateway_signing.py"
+RENDER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "render_service.py"
 SOURCE_ARCHIVE = REPO_ROOT / "apps" / "api" / "app" / "services" / "source_archive.py"
 CONTAINER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "container_service.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
@@ -89,6 +91,7 @@ WEB_SAFE_URL = REPO_ROOT / "apps" / "web" / "src" / "lib" / "safe-url.ts"
 WEB_CONVERTER_TOOLS = REPO_ROOT / "apps" / "web" / "src" / "lib" / "converterTools.ts"
 SELLER_TOOL_ROOT = REPO_ROOT / "apps" / "seller-tools" / "home-accessibility-checker"
 SELLER_TOOL_SERVER = SELLER_TOOL_ROOT / "server.js"
+SELLER_TOOL_GATEWAY_AUTH = SELLER_TOOL_ROOT / "services" / "gateway-auth.js"
 SELLER_TOOL_OPENROUTER = SELLER_TOOL_ROOT / "services" / "openrouter-service.js"
 SELLER_TOOL_VISION = SELLER_TOOL_ROOT / "services" / "rekognition-service.js"
 SELLER_TOOL_COMPREHENSIVE = SELLER_TOOL_ROOT / "services" / "comprehensive-analysis-service.js"
@@ -97,6 +100,7 @@ SELLER_TOOL_LISTING_SCRAPER = SELLER_TOOL_ROOT / "services" / "listing-scraper-s
 SELLER_TOOL_IMAGE_SERVICE = SELLER_TOOL_ROOT / "services" / "image-service.js"
 CONVERTER_SERVICE = REPO_ROOT / "apps" / "converter" / "main.py"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
+GATEWAY_KEY_GENERATOR = REPO_ROOT / "scripts" / "generate_tool_gateway_keys.py"
 
 
 API_REQUIRED_ENV = {
@@ -119,6 +123,9 @@ API_REQUIRED_ENV = {
     "WORKER_HEALTH_CHECK_INTERVAL_SECONDS",
     "WORKER_HEALTH_CHECK_KEY",
     "RUN_BILLING_SCHEDULER_IN_API",
+    "TOOL_GATEWAY_SIGNING_PRIVATE_KEY",
+    "TOOL_GATEWAY_SIGNING_KEY_ID",
+    "TOOL_GATEWAY_SIGNATURE_TTL_SECONDS",
     "ALERT_WEBHOOK_URL",
     "ALERT_WEBHOOK_TIMEOUT_SECONDS",
     "ALERT_DEDUPE_TTL_SECONDS",
@@ -271,6 +278,21 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            env.get("TOOL_GATEWAY_SIGNING_PRIVATE_KEY", {}).get("sync") is False,
+            f"{name} must define the gateway signing private key as a secret",
+            failures,
+        )
+        expect(
+            env.get("TOOL_GATEWAY_SIGNING_KEY_ID", {}).get("value") == "launch-1",
+            f"{name} must define the expected gateway signing key ID",
+            failures,
+        )
+        expect(
+            env.get("TOOL_GATEWAY_SIGNATURE_TTL_SECONDS", {}).get("value") == "300",
+            f"{name} must define a bounded gateway signature lifetime",
+            failures,
+        )
+        expect(
             env.get("ALERT_WEBHOOK_URL", {}).get("sync") is False,
             f"{name} must define ALERT_WEBHOOK_URL as a secret env var",
             failures,
@@ -376,6 +398,36 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
         expect(
+            seller_env.get("HACKMARKET_GATEWAY_PUBLIC_KEY", {}).get("sync") is False,
+            "home-accessibility-checker must define the gateway public key",
+            failures,
+        )
+        expect(
+            seller_env.get("HACKMARKET_GATEWAY_KEY_ID", {}).get("value") == "launch-1",
+            "home-accessibility-checker must use the API gateway signing key ID",
+            failures,
+        )
+        expect(
+            seller_env.get("HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS", {}).get("value") == "300",
+            "home-accessibility-checker must use a bounded gateway signature lifetime",
+            failures,
+        )
+        expect(
+            seller_env.get("HACKMARKET_TOOL_SLUG", {}).get("value") == "home-accessibility-checker",
+            "home-accessibility-checker must bind signatures to its tool slug",
+            failures,
+        )
+        expect(
+            seller_env.get("ALLOW_UNSIGNED_GATEWAY_REQUESTS", {}).get("value") == "false",
+            "home-accessibility-checker must reject unsigned production requests",
+            failures,
+        )
+        expect(
+            "TOOL_GATEWAY_SIGNING_PRIVATE_KEY" not in seller_env,
+            "home-accessibility-checker must never receive the gateway private key",
+            failures,
+        )
+        expect(
             seller_env.get("OPENROUTER_MODEL", {}).get("value"),
             "home-accessibility-checker must configure its OpenRouter model",
             failures,
@@ -415,6 +467,11 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "cryptography==" in requirements,
+        "API runtime must pin cryptography for Ed25519 gateway signing",
+        failures,
+    )
+    expect(
         "python-jose" not in requirements,
         "API runtime must not include the vulnerable python-jose stack",
         failures,
@@ -446,6 +503,7 @@ def check_repo_files(failures: list[str]) -> None:
     )
     expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
     expect(PRODUCTION_LOAD_SMOKE_CHECK.exists(), "production load smoke check is missing", failures)
+    expect(GATEWAY_KEY_GENERATOR.exists(), "gateway signing key generator is missing", failures)
     expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
     expect(SOURCE_ARCHIVE.exists(), "source archive safety guard is missing", failures)
     expect(
@@ -648,6 +706,7 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     seller_server = SELLER_TOOL_SERVER.read_text(encoding="utf-8")
+    seller_gateway_auth = SELLER_TOOL_GATEWAY_AUTH.read_text(encoding="utf-8")
     seller_openrouter = SELLER_TOOL_OPENROUTER.read_text(encoding="utf-8")
     seller_vision = SELLER_TOOL_VISION.read_text(encoding="utf-8")
     seller_comprehensive = SELLER_TOOL_COMPREHENSIVE.read_text(encoding="utf-8")
@@ -657,6 +716,22 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         'app.get("/ready"' in seller_server and "isAnalysisProviderConfigured" in seller_server,
         "seller tool readiness must fail closed when its provider is not configured",
+        failures,
+    )
+    expect(
+        'app.use("/api/", requireGatewayRequest)' in seller_server
+        and 'app.post("/", requireGatewayRequest)' in seller_server
+        and "gatewayVerifier.ready" in seller_server
+        and "gateway_authentication" in seller_server,
+        "seller tool routes and readiness must enforce gateway authentication",
+        failures,
+    )
+    expect(
+        "crypto.verify" in seller_gateway_auth
+        and "expectedToolSlug" in seller_gateway_auth
+        and "GATEWAY_SIGNATURE_EXPIRED" in seller_gateway_auth
+        and "GATEWAY_REQUEST_REPLAYED" in seller_gateway_auth,
+        "seller tool must verify signed gateway requests, expiry, tool binding, and replay",
         failures,
     )
     expect(
@@ -1046,6 +1121,8 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     proxy_service = PROXY_SERVICE.read_text(encoding="utf-8")
+    gateway_signing = GATEWAY_SIGNING.read_text(encoding="utf-8")
+    render_service = RENDER_SERVICE.read_text(encoding="utf-8")
     expect(
         "SENSITIVE_REQUEST_HEADERS" in proxy_service
         and "authorization" in proxy_service
@@ -1058,6 +1135,29 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "SENSITIVE_RESPONSE_HEADERS" in proxy_service and "set-cookie" in proxy_service,
         "tool proxy must not return seller Set-Cookie headers to buyers",
+        failures,
+    )
+    expect(
+        "INTERNAL_GATEWAY_HEADERS" in proxy_service
+        and "sign_gateway_request" in proxy_service
+        and 'url.raw_path.decode("ascii")' in proxy_service,
+        "tool proxy must replace forged platform headers and sign the exact upstream target",
+        failures,
+    )
+    expect(
+        "Ed25519PrivateKey" in gateway_signing
+        and "SIGNATURE_VERSION" in gateway_signing
+        and "build_canonical_message" in gateway_signing
+        and "request_target" in gateway_signing,
+        "gateway signatures must use Ed25519 and bind the request target",
+        failures,
+    )
+    expect(
+        "public_key_from_private" in render_service
+        and '"HACKMARKET_GATEWAY_PUBLIC_KEY"' in render_service
+        and '"ALLOW_UNSIGNED_GATEWAY_REQUESTS": "false"' in render_service
+        and '"TOOL_GATEWAY_SIGNING_PRIVATE_KEY"' not in render_service,
+        "hosted seller tools must receive public verification material without the private key",
         failures,
     )
 

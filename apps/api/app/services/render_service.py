@@ -10,6 +10,7 @@ import httpx
 
 from app.config import settings
 from app.models import Tool
+from app.services.gateway_signing import public_key_from_private
 from app.services.proxy_service import get_http_client
 
 if TYPE_CHECKING:
@@ -138,7 +139,9 @@ def _build_service_payload(
         "autoDeploy": "yes" if settings.render_tool_auto_deploy else "no",
         "envVars": [
             {"key": key, "value": value}
-            for key, value in sorted(config.environment_variables.items())
+            for key, value in sorted(
+                _with_gateway_auth_environment(tool, config.environment_variables).items()
+            )
         ],
         "serviceDetails": service_details,
     }
@@ -150,7 +153,12 @@ def _build_image_service_payload(
     remote_image_uri: str,
     registry_credential_id: str,
 ) -> dict[str, Any]:
-    environment_variables = getattr(tool, "environment_variables", None) or []
+    environment_variables = {
+        item["key"]: item["value"]
+        for item in (getattr(tool, "environment_variables", None) or [])
+        if item.get("key") and item.get("value") is not None
+    }
+    environment_variables = _with_gateway_auth_environment(tool, environment_variables)
     return {
         "type": "web_service",
         "ownerId": settings.render_owner_id,
@@ -161,9 +169,7 @@ def _build_image_service_payload(
             "registryCredentialId": registry_credential_id,
         },
         "envVars": [
-            {"key": item["key"], "value": item["value"]}
-            for item in sorted(environment_variables, key=lambda item: item.get("key", ""))
-            if item.get("key") and item.get("value") is not None
+            {"key": key, "value": value} for key, value in sorted(environment_variables.items())
         ],
         "serviceDetails": {
             "runtime": "image",
@@ -172,6 +178,29 @@ def _build_image_service_payload(
             "healthCheckPath": settings.render_tool_healthcheck_path,
         },
     }
+
+
+def _with_gateway_auth_environment(
+    tool: Tool, environment_variables: dict[str, str]
+) -> dict[str, str]:
+    merged = dict(environment_variables)
+    if not settings.tool_gateway_signing_private_key:
+        return merged
+
+    merged.update(
+        {
+            "ALLOW_UNSIGNED_GATEWAY_REQUESTS": "false",
+            "HACKMARKET_GATEWAY_KEY_ID": settings.tool_gateway_signing_key_id,
+            "HACKMARKET_GATEWAY_PUBLIC_KEY": public_key_from_private(
+                settings.tool_gateway_signing_private_key
+            ),
+            "HACKMARKET_GATEWAY_SIGNATURE_TTL_SECONDS": str(
+                settings.tool_gateway_signature_ttl_seconds
+            ),
+            "HACKMARKET_TOOL_SLUG": tool.slug,
+        }
+    )
+    return merged
 
 
 def _patch_payload(create_payload: dict[str, Any]) -> dict[str, Any]:
