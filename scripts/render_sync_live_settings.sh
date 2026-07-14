@@ -25,11 +25,11 @@ render services update "${SELLER_SERVICE_ID}" \
   --root-directory apps/seller-tools/home-accessibility-checker \
   --build-command "npm ci" \
   --start-command "npm start" \
-  --health-check-path /health \
+  --health-check-path /ready \
   --build-filter-path apps/seller-tools/home-accessibility-checker/** \
   --output json
 
 echo
 echo "Done. Verify with:"
 echo "  curl -fsS https://start-3lbd.onrender.com/health"
-echo "  curl -fsS https://home-accessibility-checker.onrender.com/health"
+echo "  curl -fsS https://home-accessibility-checker.onrender.com/ready"

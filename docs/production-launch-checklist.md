@@ -79,6 +79,7 @@ alembic upgrade head
 Confirm migration `0007_add_tool_processing_jobs.py` is applied so seller submissions have durable job status.
 Confirm migration `0008_add_data_integrity_constraints.py` is applied so API key hashes and open buyer/tool purchases are protected by database uniqueness.
 Confirm migration `0009_add_admin_audit_logs.py` is applied so admin actions have a durable audit trail.
+Confirm migration `0010_clear_synthetic_curated_tool_metrics.py` is applied so seeded latency and uptime values are removed without overwriting measured usage data.
 
 Before running production migrations:
 - Confirm Render Postgres backups are enabled.
@@ -176,6 +177,7 @@ ADMIN_SESSION_TOKEN=... python3 scripts/production_smoke_check.py \
 
 Watch these signals during the first launch window:
 - API `/health` and `/ready`
+- Seller tool `/health` and `/ready`; readiness must fail when its OpenRouter key is missing
 - Worker health key reported by `/ready`
 - `/ready` must return `degraded` if the worker heartbeat is missing, queue depth is above threshold, processing jobs are stuck, or recent processing failures cross threshold.
 - Redis queue depth

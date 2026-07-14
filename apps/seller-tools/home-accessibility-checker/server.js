@@ -12,7 +12,11 @@ const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
-const { getRuntimeConfig, allowedMimeTypes } = require("./config");
+const {
+  getRuntimeConfig,
+  isAnalysisProviderConfigured,
+  allowedMimeTypes,
+} = require("./config");
 const { createLogger } = require("./logger");
 
 const { port: PORT } = getRuntimeConfig();
@@ -100,6 +104,10 @@ function createAnalysisTimeoutError(timeoutMs) {
   const error = new Error(`Analysis timed out after ${timeoutMs}ms`);
   error.statusCode = 504;
   error.publicError = "Analysis timed out";
+  error.code = "ANALYSIS_TIMEOUT";
+  error.retryable = true;
+  error.retryAfterSeconds = 30;
+  error.userMessage = "The analysis took too long. Please try again.";
   return error;
 }
 
@@ -169,14 +177,29 @@ function respondWithHandledError(
   logMessage,
 ) {
   if (error.statusCode) {
+    if (error.statusCode >= 500) {
+      logger.error(logMessage, {
+        code: error.code,
+        error: error.message,
+        stack: error.stack,
+      });
+    }
+    if (error.retryAfterSeconds) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+    }
+    const extras = {
+      message: error.userMessage || error.message,
+    };
+    if (error.code) extras.code = error.code;
+    if (typeof error.retryable === "boolean") {
+      extras.retryable = error.retryable;
+    }
     return sendErrorResponse(
       req,
       res,
       error.statusCode,
       error.publicError || fallbackError,
-      {
-        message: error.userMessage || error.message,
-      },
+      extras,
     );
   }
 
@@ -212,8 +235,8 @@ async function processUploadedFiles(files) {
       processedImages.push({
         filename: file.originalname,
         base64: base64Image,
-        size: file.size,
-        mimetype: file.mimetype,
+        size: Buffer.byteLength(base64Image, "base64"),
+        mimetype: "image/jpeg",
       });
     } catch (error) {
       logger.error("Error processing image", {
@@ -285,6 +308,7 @@ function createApp() {
     rateLimitMaxRequests,
     maxFileSize,
     maxFiles,
+    maxInlineImages,
     uploadDir,
     analysisTimeoutMs,
     allowedOrigins,
@@ -388,8 +412,10 @@ function createApp() {
   app.use("/api/", limiter);
 
   // Body parsing middleware
-  app.use(express.json({ limit: "100mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "100mb" }));
+  const maxJsonBodyBytes =
+    maxInlineImages * (Math.ceil((maxFileSize * 4) / 3) + 4) + 1024 * 1024;
+  app.use(express.json({ limit: maxJsonBodyBytes }));
+  app.use(express.urlencoded({ extended: true, limit: maxJsonBodyBytes }));
 
   // Health check endpoint
   app.get("/health", (req, res) => {
@@ -399,6 +425,20 @@ function createApp() {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       version: process.env.npm_package_version || "1.0.0",
+    });
+  });
+
+  app.get("/ready", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const providerConfigured = isAnalysisProviderConfigured();
+    res.status(providerConfigured ? 200 : 503).json({
+      status: providerConfigured ? "ready" : "not_ready",
+      checks: {
+        analysis_provider: {
+          configured: providerConfigured,
+        },
+      },
+      timestamp: new Date().toISOString(),
     });
   });
 
@@ -511,7 +551,7 @@ function createApp() {
     },
   );
 
-  // Web scraping endpoint using Python scraper
+  // Property-listing image discovery endpoint
   app.post("/api/scrape", async (req, res) => {
     try {
       const validationService = getValidationService();
@@ -527,8 +567,8 @@ function createApp() {
         return sendValidationError(req, res, validationResult.error);
       }
 
-      const { url, maxImages = 10 } = validationResult.value;
-      const result = await scrapeImagesWithPython(url, maxImages);
+      const { url, maxImages = maxFiles } = validationResult.value;
+      const result = await scrapeListingImages(url, maxImages);
 
       if (result.images.length === 0) {
         return sendErrorResponse(req, res, 404, "No images found", {
@@ -581,14 +621,41 @@ function createApp() {
   async function resolveImagesForAnalysis(payload) {
     const imageService = getImageService();
     if (Array.isArray(payload.images) && payload.images.length > 0) {
-      return payload.images;
+      const normalizedImages = [];
+      for (const image of payload.images) {
+        try {
+          const sourceBuffer = Buffer.from(image.base64, "base64");
+          if (!sourceBuffer.length || sourceBuffer.length > maxFileSize) {
+            throw new Error("Decoded image size is outside the allowed range");
+          }
+          const optimizedBuffer =
+            await imageService.optimizeBuffer(sourceBuffer);
+          normalizedImages.push({
+            filename: image.filename,
+            base64: await imageService.bufferToBase64(optimizedBuffer),
+            size: optimizedBuffer.length,
+            mimetype: "image/jpeg",
+          });
+        } catch (imageError) {
+          logger.warn("Inline image validation failed", {
+            filename: image.filename,
+            error: imageError.message,
+          });
+          const error = new Error(`Invalid image payload: ${image.filename}`);
+          error.statusCode = 400;
+          error.publicError = "Invalid image data";
+          error.userMessage = `The file "${image.filename}" is not a valid supported image.`;
+          throw error;
+        }
+      }
+      return normalizedImages;
     }
 
     let scrapeResult;
     try {
-      scrapeResult = await scrapeImagesWithPython(
+      scrapeResult = await scrapeListingImages(
         payload.url,
-        payload.maxImages || 10,
+        payload.maxImages || maxFiles,
       );
     } catch (scrapeError) {
       const error = new Error(
@@ -637,7 +704,7 @@ function createApp() {
   }
 
   // Helper function to call Python scraper
-  async function scrapeImagesWithPython(url, maxImages) {
+  async function scrapeListingImages(url, maxImages) {
     const listingScraperService = getListingScraperService();
     logger.info("Calling listing scraper", {
       url,

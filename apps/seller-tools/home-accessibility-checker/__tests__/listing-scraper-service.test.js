@@ -11,6 +11,7 @@ describe("ListingScraperService", () => {
   test("wraps fetch timeouts with a user-friendly gateway error", async () => {
     process.env.LISTING_FETCH_TIMEOUT_MS = "3210";
     const service = new ListingScraperService();
+    service.assertSafeRemoteUrl = jest.fn(async (url) => url);
     global.fetch = jest
       .fn()
       .mockRejectedValue(
@@ -18,7 +19,7 @@ describe("ListingScraperService", () => {
       );
 
     await expect(
-      service.fetchListingHtml("https://example.com/listing"),
+      service.fetchListingHtml("https://www.zillow.com/listing"),
     ).rejects.toMatchObject({
       message: "Listing page fetch timed out after 3210ms",
       statusCode: 502,
@@ -30,13 +31,14 @@ describe("ListingScraperService", () => {
 
   test("maps blocked listing pages to a retryable upstream error", async () => {
     const service = new ListingScraperService();
+    service.assertSafeRemoteUrl = jest.fn(async (url) => url);
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 403,
     });
 
     await expect(
-      service.fetchListingHtml("https://example.com/listing"),
+      service.fetchListingHtml("https://www.zillow.com/listing"),
     ).rejects.toMatchObject({
       message: "Listing page fetch failed with status 403",
       statusCode: 502,
@@ -48,6 +50,7 @@ describe("ListingScraperService", () => {
 
   test("extracts listing images and property metadata from HTML", async () => {
     const service = new ListingScraperService();
+    service.assertSafeRemoteUrl = jest.fn(async (url) => url);
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       text: async () => `
@@ -114,6 +117,46 @@ describe("ListingScraperService", () => {
       "https://photos.zillowstatic.com/fp/one.jpg",
       "https://photos.zillowstatic.com/fp/two.jpg",
     ]);
+  });
+
+  test("extractImageUrls ignores images from unapproved hosts", () => {
+    const service = new ListingScraperService();
+
+    expect(
+      service.extractImageUrls(
+        '<img src="https://attacker.example/looks-safe.jpg" />',
+        5,
+      ),
+    ).toEqual([]);
+  });
+
+  test("revalidates every redirect before following it", async () => {
+    const service = new ListingScraperService();
+    service.assertSafeRemoteUrl = jest.fn(async (url) => {
+      if (url.includes("127.0.0.1")) {
+        const error = new Error("Private address blocked");
+        error.code = "UNSAFE_REMOTE_URL";
+        error.statusCode = 400;
+        throw error;
+      }
+      return url;
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 302,
+      headers: {
+        get: (name) =>
+          name === "location" ? "https://127.0.0.1/internal" : null,
+      },
+    });
+
+    await expect(
+      service.fetchListingHtml("https://www.zillow.com/listing"),
+    ).rejects.toMatchObject({
+      code: "UNSAFE_REMOTE_URL",
+      statusCode: 400,
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
   test("buildFallbackDetails handles invalid URLs safely", () => {

@@ -7,7 +7,7 @@ A fast Express.js backend for home accessibility analysis, optimized for Hackmar
 ### Prerequisites
 
 - Node.js 22.x
-- OpenRouter API key (recommended for production analysis)
+- OpenRouter API key (required for analysis and readiness)
 - npm or yarn
 
 ### Installation
@@ -31,19 +31,6 @@ npm run dev
 
 ### Production Deployment
 
-#### Railway (Recommended)
-
-```bash
-# Install Railway CLI
-npm install -g @railway/cli
-
-# Login to Railway
-railway login
-
-# Deploy
-railway up
-```
-
 #### Render
 
 ```bash
@@ -59,6 +46,10 @@ railway up
 ```http
 GET /health
 ```
+
+`GET /health` is the liveness check. `GET /ready` returns `200` only when the
+required analysis provider is configured; Render uses `/ready` before routing
+production traffic to a new deployment.
 
 ### Upload Images
 
@@ -80,7 +71,7 @@ Content-Type: application/json
   "images": [
     {
       "filename": "house1.jpg",
-      "base64": "data:image/jpeg;base64,/9j/4AAQ...",
+      "base64": "/9j/4AAQ...",
       "size": 1024000,
       "mimetype": "image/jpeg"
     }
@@ -93,7 +84,7 @@ You can also analyze a supported listing URL directly:
 ```json
 {
   "url": "https://www.zillow.com/homedetails/example",
-  "maxImages": 8
+  "maxImages": 5
 }
 ```
 
@@ -113,35 +104,34 @@ images: [file1, file2, ...] (max 5 files, 10MB each)
 {
   "success": true,
   "analysis": {
-    "overall_score": 85,
+    "overall_score": 78,
     "analyzed_images": 2,
+    "requested_images": 2,
+    "failed_images": 0,
     "accessibility_features": [
-      "Wide doorway (36 inches)",
-      "Good lighting in hallway",
-      "Accessible bathroom layout"
+      "A step-free route is visible at the entrance",
+      "The main path appears clear of loose obstacles"
     ],
-    "barriers": ["Step at entrance without ramp", "Narrow hallway (28 inches)"],
+    "barriers": ["A raised threshold is visible at the doorway"],
     "recommendations": [
-      "Install ramp at entrance",
-      "Widen hallway to 36 inches",
-      "Add grab bars in bathroom"
+      "Have the threshold measured and assess whether a transition ramp is appropriate"
     ],
+    "assessment_notice": "This is a visual screening, not an accessibility certification. Verify dimensions and compliance in person with a qualified professional.",
     "detailed_results": [
       {
         "filename": "house1.jpg",
         "vision": {
-          "score": 85,
+          "score": 78,
           "analysis": {
-            "accessibility_features": ["Wide doorway (36 inches)"],
-            "barriers": ["Step at entrance without ramp"],
-            "recommendations": ["Install ramp at entrance"],
-            "confidence": 0.9
+            "accessibility_features": ["A step-free route is visible"],
+            "barriers": ["A raised threshold is visible"],
+            "recommendations": ["Measure the threshold in person"]
           }
         }
       }
     ]
   },
-  "timestamp": "2024-01-15T10:30:00.000Z"
+  "timestamp": "<ISO-8601 timestamp>"
 }
 ```
 
@@ -152,6 +142,9 @@ include the same `requestId` in the JSON body so client logs can be correlated
 with server logs quickly.
 
 Rate-limited responses also include a standard `Retry-After` header in seconds.
+Retryable provider failures return `502`, `503`, or `504` with a stable `code`,
+`retryable: true`, and `Retry-After`. The service never substitutes generated
+sample findings when the provider is unavailable.
 
 ### Error Format
 
@@ -185,6 +178,7 @@ npm run verify     # Run format, lint, and tests together
 | `PORT`                          | 3000                  | Server port                                                                       |
 | `NODE_ENV`                      | development           | Environment                                                                       |
 | `OPENROUTER_API_KEY`            | -                     | OpenRouter API key used by the vision + comprehensive analysis services           |
+| `OPENROUTER_MODEL`              | openai/gpt-4o         | Vision-capable OpenRouter model                                                   |
 | `OPENROUTER_TIMEOUT_MS`         | 20000                 | Timeout for OpenRouter requests                                                   |
 | `PUBLIC_APP_URL`                | https://hackmarket.io | Referer header sent to OpenRouter                                                 |
 | `ALLOWED_ORIGINS`               | \*                    | Comma-separated allowed origins, or `*` to reflect any origin without credentials |
@@ -198,6 +192,7 @@ npm run verify     # Run format, lint, and tests together
 | `MAX_IMAGE_HEIGHT`              | 2048                  | Max height after optimization                                                     |
 | `IMAGE_QUALITY`                 | 85                    | JPEG optimization quality                                                         |
 | `LISTING_FETCH_TIMEOUT_MS`      | 10000                 | Timeout for listing HTML fetches                                                  |
+| `MAX_LISTING_HTML_BYTES`        | 2097152               | Maximum decompressed listing HTML response size                                   |
 | `REMOTE_IMAGE_FETCH_TIMEOUT_MS` | 10000                 | Timeout for scraped image downloads                                               |
 | `MAX_REMOTE_IMAGE_BYTES`        | 12582912              | Max remote image size in bytes                                                    |
 | `TEMP_DIR`                      | ./tmp                 | Base temp directory                                                               |
@@ -244,13 +239,7 @@ npm run verify     # Run format, lint, and tests together
 - Temporary file cleanup
 - Explicit timeouts for listing HTML and remote image fetches
 
-## 🚀 Deployment Options
-
-### Railway (Easiest)
-
-1. Connect GitHub repo to Railway
-2. Set `OPENROUTER_API_KEY` and `PUBLIC_APP_URL`
-3. Deploy automatically
+## 🚀 Deployment
 
 ### Render
 
@@ -258,40 +247,8 @@ npm run verify     # Run format, lint, and tests together
 2. Set environment variables in dashboard
 3. Deploy automatically
 
-### Vercel
-
-```bash
-# Install Vercel CLI
-npm install -g vercel
-
-# Deploy
-vercel --prod
-```
-
-### Heroku
-
-```bash
-# Install Heroku CLI
-# Create Procfile: web: npm start
-# Deploy
-git push heroku main
-```
-
-## 📈 Performance
-
-### Benchmarks
-
-- **Image Processing**: ~2-3 seconds per image
-- **LLM Analysis**: ~5-10 seconds per image
-- **Total Response Time**: ~10-15 seconds for 2 images
-- **Concurrent Requests**: 100 requests per 15 minutes
-
-### Optimization Tips
-
-- Use image optimization (automatic)
-- Implement caching for repeated analyses
-- Use CDN for static assets
-- Monitor API usage and costs
+The repository `render.yaml` is the source of truth for the service plan,
+environment, readiness path, and deployment settings.
 
 ## 🔍 Monitoring
 
@@ -299,6 +256,7 @@ git push heroku main
 
 ```bash
 curl https://your-api.com/health
+curl https://your-api.com/ready
 ```
 
 ### Local smoke test
@@ -324,7 +282,7 @@ curl -X POST -F "images=@test-image.jpg" http://localhost:3000/api/upload
 
 # Test analysis
 curl -X POST -H "Content-Type: application/json" \
-  -d '{"images":[{"filename":"test.jpg","base64":"..."}]}' \
+  -d '{"images":[{"filename":"test.jpg","base64":"...","mimetype":"image/jpeg"}]}' \
   http://localhost:3000/api/analyze
 ```
 

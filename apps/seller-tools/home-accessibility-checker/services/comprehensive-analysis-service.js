@@ -1,136 +1,142 @@
-/**
- * Comprehensive Analysis Service
- * Uses OpenRouter AI for complete accessibility assessment
- * Provides real AI-powered accessibility analysis pipeline
- */
+"use strict";
 
 const OpenRouterVisionService = require("./rekognition-service");
 const OpenRouterService = require("./openrouter-service");
+const { providerNotConfiguredError } = require("./analysis-provider-error");
 const { createLogger } = require("../logger");
+
+const ASSESSMENT_NOTICE =
+  "This is a visual screening, not an accessibility certification. Verify dimensions and compliance in person with a qualified professional.";
 
 class ComprehensiveAnalysisService {
   constructor() {
     this.visionService = new OpenRouterVisionService();
     this.openrouterService = new OpenRouterService();
-
     this.logger = createLogger({ service: "comprehensive-analysis-service" });
   }
 
-  /**
-   * Analyze images using the complete pipeline: vision model -> synthesis model
-   * @param {Array} images - Array of image objects with base64 data
-   * @returns {Promise<Object>} Comprehensive analysis results
-   */
   async analyzeImages(images) {
-    try {
-      this.logger.info("Starting comprehensive analysis", {
-        imageCount: images.length,
-      });
+    if (!Array.isArray(images) || images.length === 0) {
+      throw new TypeError("At least one image is required for analysis");
+    }
+    if (
+      (typeof this.visionService.isConfigured === "function" &&
+        !this.visionService.isConfigured()) ||
+      (typeof this.openrouterService.isConfigured === "function" &&
+        !this.openrouterService.isConfigured())
+    ) {
+      throw providerNotConfiguredError();
+    }
 
-      const analysisResults = [];
-      let totalScore = 0;
-      let allPositiveFeatures = [];
-      let allRedFlags = [];
-      let allRecommendations = [];
+    this.logger.info("Starting comprehensive analysis", {
+      imageCount: images.length,
+    });
 
-      // Step 1: Analyze each image with the vision model
-      for (const image of images) {
-        try {
-          this.logger.info("Analyzing image with vision model", {
-            filename: image.filename,
-          });
+    const analysisResults = [];
+    const failedImages = [];
+    const allAccessibilityFeatures = [];
+    const allBarriers = [];
+    const allRecommendations = [];
+    const allSafetyConcerns = [];
+    const allLimitations = [];
 
-          const visionResult = await this.visionService.analyzeAccessibility(
-            image.base64,
-            image.filename,
-          );
-
-          analysisResults.push({
-            filename: image.filename,
-            vision: visionResult,
-          });
-
-          // Aggregate vision results
-          totalScore += visionResult.score;
-          allPositiveFeatures.push(
-            ...visionResult.analysis.accessibility_features,
-          );
-          allRedFlags.push(...visionResult.analysis.barriers);
-          allRecommendations.push(...visionResult.analysis.recommendations);
-        } catch (error) {
-          this.logger.error("Vision analysis failed for image", {
-            filename: image.filename,
-            error: error.message,
-          });
-
-          analysisResults.push({
-            filename: image.filename,
-            vision: { error: "Vision analysis failed", score: 0 },
-          });
-        }
-      }
-
-      // Step 2: Use OpenRouter for comprehensive analysis
-
+    for (const image of images) {
       try {
-        this.logger.info("Starting OpenRouter analysis");
-
-        // Use the first image for comprehensive OpenRouter analysis
-        const comprehensiveResult =
-          await this.openrouterService.analyzeAccessibility(
-            images[0].base64,
-            "comprehensive_analysis",
-          );
-
-        // Step 3: Combine and synthesize results
-        const finalAnalysis = this.synthesizeResults(
-          analysisResults,
-          comprehensiveResult,
-          allPositiveFeatures,
-          allRedFlags,
-          allRecommendations,
-          images.length,
+        const visionResult = await this.visionService.analyzeAccessibility(
+          image.base64,
+          image.filename,
+          image.mimetype,
         );
-
-        this.logger.info("Comprehensive analysis completed", {
-          finalScore: finalAnalysis.analysis.overall_score,
-          totalImages: images.length,
+        analysisResults.push({
+          filename: image.filename,
+          vision: visionResult,
         });
-
-        return finalAnalysis;
+        allAccessibilityFeatures.push(
+          ...visionResult.analysis.accessibility_features,
+        );
+        allBarriers.push(...visionResult.analysis.barriers);
+        allRecommendations.push(...visionResult.analysis.recommendations);
+        allSafetyConcerns.push(
+          ...(visionResult.analysis.safety_concerns || []),
+        );
+        allLimitations.push(...(visionResult.analysis.limitations || []));
       } catch (error) {
-        this.logger.error("Comprehensive synthesis failed", {
+        this.logger.error("Vision analysis failed for image", {
+          filename: image.filename,
+          code: error.code,
           error: error.message,
         });
-
-        // Fallback to vision-only results
-        return this.createFallbackAnalysis(
-          analysisResults,
-          allPositiveFeatures,
-          allRedFlags,
-          allRecommendations,
-          totalScore,
-          images.length,
-        );
+        failedImages.push({
+          filename: image.filename,
+          code: error.code || "VISION_ANALYSIS_FAILED",
+          retryable: error.retryable !== false,
+        });
+        analysisResults.push({
+          filename: image.filename,
+          vision: {
+            error: {
+              code: error.code || "VISION_ANALYSIS_FAILED",
+              retryable: error.retryable !== false,
+            },
+          },
+        });
       }
+    }
+
+    let comprehensiveResult;
+    try {
+      comprehensiveResult = await this.openrouterService.analyzeAccessibility(
+        images[0].base64,
+        "comprehensive_analysis",
+        images[0].mimetype,
+      );
     } catch (error) {
-      this.logger.error("Comprehensive analysis failed", {
+      this.logger.error("Comprehensive synthesis failed", {
+        code: error.code,
         error: error.message,
       });
-      throw new Error(`Analysis failed: ${error.message}`);
+
+      const successfulVisionResults = validVisionResults(analysisResults);
+      if (successfulVisionResults.length === 0) {
+        throw error;
+      }
+
+      const partialResult = this.createVisionOnlyAnalysis(
+        analysisResults,
+        allAccessibilityFeatures,
+        allBarriers,
+        allRecommendations,
+        allSafetyConcerns,
+        allLimitations,
+        images.length,
+        failedImages,
+      );
+      this.logger.warn("Returning partial vision-only analysis", {
+        analyzedImages: partialResult.analysis.analyzed_images,
+        failedImages: partialResult.analysis.failed_images,
+      });
+      return partialResult;
     }
+
+    const finalAnalysis = this.synthesizeResults(
+      analysisResults,
+      comprehensiveResult,
+      allAccessibilityFeatures,
+      allBarriers,
+      allRecommendations,
+      images.length,
+      failedImages,
+      allSafetyConcerns,
+      allLimitations,
+    );
+    this.logger.info("Comprehensive analysis completed", {
+      finalScore: finalAnalysis.analysis.overall_score,
+      analyzedImages: finalAnalysis.analysis.analyzed_images,
+      requestedImages: images.length,
+    });
+    return finalAnalysis;
   }
 
-  /**
-   * Synthesize results from Vision AI and Comprehensive AI
-   * @param {Array} analysisResults - Vision analysis results
-   * @param {Object} comprehensiveResult - Comprehensive AI analysis
-   * @param {Array} allAccessibilityFeatures - All accessibility features
-   * @param {Array} allBarriers - All barriers
-   * @param {Array} allRecommendations - All recommendations
-   * @param {number} imageCount - Number of images analyzed
-   * @returns {Object} Final analysis
-   */
   synthesizeResults(
     analysisResults,
     comprehensiveResult,
@@ -138,128 +144,145 @@ class ComprehensiveAnalysisService {
     allBarriers,
     allRecommendations,
     imageCount,
+    failedImages = [],
+    allSafetyConcerns = [],
+    allLimitations = [],
   ) {
-    const averageScore = Math.round(
-      analysisResults.reduce(
-        (sum, result) => sum + (result.vision?.score || 0),
-        0,
-      ) / imageCount,
+    const validResults = validVisionResults(analysisResults);
+    const scores = [
+      ...validResults.map((result) => result.vision.score),
+      comprehensiveResult.score,
+    ].filter((score) => Number.isFinite(score));
+    if (scores.length === 0) {
+      throw new TypeError("No valid provider scores were available");
+    }
+    const overallScore = Math.round(
+      scores.reduce((sum, score) => sum + score, 0) / scores.length,
     );
-    const visionModelUsed =
-      analysisResults[0]?.vision?.metadata?.model_used || "unknown";
-    const comprehensiveModelUsed =
-      comprehensiveResult?.metadata?.model_used || "unknown";
-    const usedVisionProvider = visionModelUsed !== "dynamic-analysis";
-    const usedComprehensiveProvider =
-      comprehensiveModelUsed !== "dynamic-analysis";
-
-    // Combine Vision AI and Comprehensive AI insights
-    const combinedAccessibilityFeatures = [
-      ...new Set([
-        ...allAccessibilityFeatures,
-        ...this.getAccessibilityFeatures(comprehensiveResult),
-      ]),
-    ];
-    const combinedBarriers = [
-      ...new Set([...allBarriers, ...this.getBarriers(comprehensiveResult)]),
-    ];
-    const combinedRecommendations = [
-      ...new Set([
-        ...allRecommendations,
-        ...this.getRecommendations(comprehensiveResult),
-      ]),
-    ];
+    const visionProviders = unique(
+      validResults
+        .map((result) => result.vision.metadata?.model_used)
+        .filter(Boolean),
+    );
+    const comprehensiveProvider =
+      comprehensiveResult.metadata?.model_used || null;
+    const confidence = this.calculateOverallConfidence(validResults);
 
     return {
       success: true,
+      partial: failedImages.length > 0,
       analysis: {
-        overall_score: Math.max(
-          averageScore,
-          comprehensiveResult.score || averageScore,
-        ),
-        analyzed_images: imageCount,
-        accessibility_features: combinedAccessibilityFeatures,
-        barriers: combinedBarriers,
-        recommendations: combinedRecommendations,
+        overall_score: overallScore,
+        accessibility_rating: this.getRatingFromScore(overallScore),
+        analyzed_images: Math.max(validResults.length, 1),
+        requested_images: imageCount,
+        failed_images: failedImages.length,
+        failed_image_names: failedImages.map((failure) => failure.filename),
+        accessibility_features: unique([
+          ...allAccessibilityFeatures,
+          ...this.getAccessibilityFeatures(comprehensiveResult),
+        ]),
+        barriers: unique([
+          ...allBarriers,
+          ...this.getBarriers(comprehensiveResult),
+        ]),
+        safety_concerns: unique([
+          ...allSafetyConcerns,
+          ...(comprehensiveResult.safety_concerns || []),
+        ]),
+        recommendations: unique([
+          ...allRecommendations,
+          ...this.getRecommendations(comprehensiveResult),
+        ]),
+        limitations: unique([
+          ...allLimitations,
+          ...(comprehensiveResult.limitations || []),
+        ]),
         detailed_results: analysisResults,
         analysis_methods: {
-          vision_ai: usedVisionProvider,
-          comprehensive_ai: usedComprehensiveProvider,
-          combined: usedVisionProvider && usedComprehensiveProvider,
-          fallback: !usedVisionProvider || !usedComprehensiveProvider,
+          vision_ai: validResults.length > 0,
+          comprehensive_ai: true,
+          combined: validResults.length > 0,
+          partial: failedImages.length > 0,
         },
         providers: {
-          vision: visionModelUsed,
-          comprehensive: comprehensiveModelUsed,
+          vision: visionProviders,
+          comprehensive: comprehensiveProvider,
         },
-        confidence: 0.95,
-        accessibility_rating: this.getRatingFromScore(
-          Math.max(averageScore, comprehensiveResult.score || averageScore),
-        ),
+        ...(confidence === null ? {} : { confidence }),
+        assessment_notice: ASSESSMENT_NOTICE,
       },
       timestamp: new Date().toISOString(),
     };
   }
 
-  /**
-   * Create fallback analysis when synthesis fails
-   * @param {Array} analysisResults - vision results
-   * @param {Array} allPositiveFeatures - Positive features
-   * @param {Array} allRedFlags - Red flags
-   * @param {Array} allRecommendations - Recommendations
-   * @param {number} totalScore - Total score
-   * @param {number} imageCount - Image count
-   * @returns {Object} Fallback analysis
-   */
-  createFallbackAnalysis(
+  createVisionOnlyAnalysis(
     analysisResults,
-    allPositiveFeatures,
-    allRedFlags,
+    allAccessibilityFeatures,
+    allBarriers,
     allRecommendations,
-    totalScore,
+    allSafetyConcerns,
+    allLimitations,
     imageCount,
+    failedImages = [],
   ) {
-    const averageScore = Math.round(totalScore / imageCount);
+    const validResults = validVisionResults(analysisResults);
+    if (validResults.length === 0) {
+      throw new TypeError("Vision-only analysis requires a provider result");
+    }
+    const overallScore = Math.round(
+      validResults.reduce((sum, result) => sum + result.vision.score, 0) /
+        validResults.length,
+    );
+    const confidence = this.calculateOverallConfidence(validResults);
 
     return {
       success: true,
+      partial: true,
       analysis: {
-        overall_score: averageScore,
-        analyzed_images: imageCount,
-        accessibility_features: [...new Set(allPositiveFeatures)],
-        positive_features: [...new Set(allPositiveFeatures)],
-        barriers: [...new Set(allRedFlags)],
-        recommendations: [...new Set(allRecommendations)],
+        overall_score: overallScore,
+        accessibility_rating: this.getRatingFromScore(overallScore),
+        analyzed_images: validResults.length,
+        requested_images: imageCount,
+        failed_images: failedImages.length,
+        failed_image_names: failedImages.map((failure) => failure.filename),
+        accessibility_features: unique(allAccessibilityFeatures),
+        positive_features: unique(allAccessibilityFeatures),
+        barriers: unique(allBarriers),
+        safety_concerns: unique(allSafetyConcerns),
+        recommendations: unique(allRecommendations),
+        limitations: unique(allLimitations),
         detailed_results: analysisResults,
         analysis_methods: {
           vision_ai: true,
           comprehensive_ai: false,
           combined: false,
-          fallback: true,
+          partial: true,
         },
-        confidence: this.calculateOverallConfidence(analysisResults),
-        accessibility_rating: this.getRatingFromScore(averageScore),
+        providers: {
+          vision: unique(
+            validResults
+              .map((result) => result.vision.metadata?.model_used)
+              .filter(Boolean),
+          ),
+          comprehensive: null,
+        },
+        ...(confidence === null ? {} : { confidence }),
+        assessment_notice: ASSESSMENT_NOTICE,
       },
       timestamp: new Date().toISOString(),
     };
   }
 
-  /**
-   * Calculate overall confidence from analysis results
-   * @param {Array} analysisResults - Analysis results
-   * @returns {number} Overall confidence
-   */
   calculateOverallConfidence(analysisResults) {
-    const validResults = analysisResults.filter(
-      (result) => !result.vision.error,
+    const confidenceValues = analysisResults
+      .map((result) => result.vision?.analysis?.confidence)
+      .filter((value) => Number.isFinite(value));
+    if (confidenceValues.length === 0) return null;
+    return Math.round(
+      confidenceValues.reduce((sum, value) => sum + value, 0) /
+        confidenceValues.length,
     );
-    if (validResults.length === 0) return 0;
-
-    const totalConfidence = validResults.reduce((sum, result) => {
-      return sum + (result.vision.analysis?.confidence || 0);
-    }, 0);
-
-    return Math.round(totalConfidence / validResults.length);
   }
 
   getAccessibilityFeatures(result) {
@@ -278,11 +301,6 @@ class ComprehensiveAnalysisService {
     return result?.analysis?.recommendations || result?.recommendations || [];
   }
 
-  /**
-   * Get accessibility rating from score
-   * @param {number} score - Accessibility score
-   * @returns {string} Rating
-   */
   getRatingFromScore(score) {
     if (score >= 90) return "Excellent";
     if (score >= 80) return "Good";
@@ -290,6 +308,16 @@ class ComprehensiveAnalysisService {
     if (score >= 60) return "Poor";
     return "Very Poor";
   }
+}
+
+function validVisionResults(analysisResults) {
+  return analysisResults.filter(
+    (result) => !result.vision?.error && Number.isFinite(result.vision?.score),
+  );
+}
+
+function unique(values) {
+  return [...new Set(values.filter((value) => value != null && value !== ""))];
 }
 
 module.exports = ComprehensiveAnalysisService;

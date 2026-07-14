@@ -61,12 +61,12 @@ function converterToTool(c: ConverterTool): Tool {
     tagline: c.description.length > 120 ? c.description.slice(0, 117) + "…" : c.description,
     description: c.description,
     category: categoryFromDescription(c.language, c.description),
-    status: "live", ownership_type: "royalty",
+    status: "draft", ownership_type: "royalty",
     input_type: inputSchema ? "json" : "text", output_type: "json",
     input_schema: inputSchema,
     output_schema: firstResponse ? { example_output: firstResponse } : null,
     price_per_request: null, demo_url: null,
-    api_endpoint: `${CONVERTER_URL}/api/tools/${c.slug}/demo`,
+    api_endpoint: null,
     docker_image_uri: null, github_url: c.repo_url,
     documentation: c.endpoints.length > 0
       ? `## Endpoints\n\n${c.endpoints.map(ep => `### ${ep.method} ${ep.path}\n${ep.summary}`).join("\n\n")}`
@@ -199,7 +199,6 @@ function XIcon({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
-
 // ── Browse sub-components ──────────────────────────────────────────────────
 
 function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
@@ -208,9 +207,9 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
   const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
   const patternPosition = cardPattern(tool.slug);
   return (
-    <Link href={`/tools/${tool.slug}`} className="group block">
+    <Link href={`/tools/${tool.slug}`} className="group block h-full">
       <article
-        className="relative h-full rounded-xl border transition-all duration-200 overflow-hidden"
+        className="relative h-full rounded-xl border transition-all duration-200 overflow-hidden flex flex-col"
         style={{ background: "var(--card)", borderColor: "var(--border)" }}
         onMouseEnter={(e) => {
           const el = e.currentTarget;
@@ -291,7 +290,7 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
             {visual.glyph}
           </div>
         </div>
-        <div className="p-5 flex flex-col h-full">
+        <div className="p-5 flex flex-1 flex-col">
           <div className="flex items-start justify-between gap-2 mb-3">
             <span className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider px-2.5 py-1 rounded-md"
               style={{ background: `${color}15`, color, border: `1px solid ${color}30` }}>

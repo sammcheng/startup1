@@ -6,6 +6,7 @@
 const Joi = require("joi");
 const { getRuntimeConfig } = require("../config");
 const { createLogger } = require("../logger");
+const { LISTING_HOST_SUFFIXES, parseSafeHttpsUrl } = require("./url-safety");
 
 class ValidationService {
   constructor() {
@@ -35,9 +36,18 @@ class ValidationService {
     });
 
     this.scrapeUrlSchema = Joi.string()
-      .uri({ scheme: ["http", "https"] })
-      .pattern(/zillow\.com|redfin\.com|realtor\.com|mls/i)
-      .message("url must be a valid property listing URL");
+      .max(2048)
+      .custom((value, helpers) => {
+        try {
+          return parseSafeHttpsUrl(value, {
+            allowedHostSuffixes: LISTING_HOST_SUFFIXES,
+          }).toString();
+        } catch {
+          return helpers.message({
+            custom: "url must use HTTPS on a supported property listing host",
+          });
+        }
+      });
 
     // Analysis request schema
     this.analyzeRequestSchema = Joi.object({
@@ -47,7 +57,12 @@ class ValidationService {
         .max(this.maxInlineImages)
         .optional(),
       url: this.scrapeUrlSchema.optional(),
-      maxImages: Joi.number().integer().min(1).max(25).default(10).optional(),
+      maxImages: Joi.number()
+        .integer()
+        .min(1)
+        .max(this.maxFiles)
+        .default(this.maxFiles)
+        .optional(),
       options: Joi.object({
         detailed_analysis: Joi.boolean().default(true),
         include_recommendations: Joi.boolean().default(true),
@@ -68,7 +83,12 @@ class ValidationService {
 
     this.scrapeRequestSchema = Joi.object({
       url: this.scrapeUrlSchema.required(),
-      maxImages: Joi.number().integer().min(1).max(25).default(10).optional(),
+      maxImages: Joi.number()
+        .integer()
+        .min(1)
+        .max(this.maxFiles)
+        .default(this.maxFiles)
+        .optional(),
     });
 
     // Upload request schema

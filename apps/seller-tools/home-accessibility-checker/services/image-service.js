@@ -8,6 +8,8 @@ const fs = require("fs").promises;
 const path = require("path");
 const { getRuntimeConfig } = require("../config");
 const { createLogger } = require("../logger");
+const { readResponseBuffer } = require("./response-limits");
+const { assertPublicHttpsUrl } = require("./url-safety");
 
 class ImageService {
   constructor() {
@@ -20,6 +22,8 @@ class ImageService {
     this.quality = runtimeConfig.imageQuality;
     this.remoteFetchTimeoutMs = runtimeConfig.remoteImageFetchTimeoutMs;
     this.maxRemoteImageBytes = runtimeConfig.maxRemoteImageBytes;
+    this.allowedMimeTypes = new Set(runtimeConfig.allowedMimeTypes);
+    this.assertSafeRemoteUrl = assertPublicHttpsUrl;
   }
 
   async optimizeImage(inputPath) {
@@ -144,12 +148,17 @@ class ImageService {
 
   async fetchImageAsPayload(imageUrl, index = 0) {
     try {
-      this.logger.info("Fetching remote image", { imageUrl, index });
+      const safeImageUrl = await this.assertSafeRemoteUrl(imageUrl);
+      this.logger.info("Fetching remote image", {
+        imageUrl: safeImageUrl,
+        index,
+      });
 
-      const response = await fetch(imageUrl, {
+      const response = await fetch(safeImageUrl, {
         headers: {
           "user-agent": "HackmarketAccessibilityChecker/1.0",
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.remoteFetchTimeoutMs),
       });
 
@@ -159,21 +168,18 @@ class ImageService {
         );
       }
 
-      const contentLength = Number(response.headers.get("content-length") || 0);
-      if (contentLength && contentLength > this.maxRemoteImageBytes) {
-        throw new Error(
-          `Remote image exceeds size limit (${contentLength} bytes)`,
-        );
+      const contentType = (response.headers.get("content-type") || "")
+        .split(";", 1)[0]
+        .trim()
+        .toLowerCase();
+      if (!this.allowedMimeTypes.has(contentType)) {
+        throw new Error("Remote response is not a supported image type");
       }
 
-      const contentType = response.headers.get("content-type") || "image/jpeg";
-      const arrayBuffer = await response.arrayBuffer();
-      const originalBuffer = Buffer.from(arrayBuffer);
-      if (originalBuffer.length > this.maxRemoteImageBytes) {
-        throw new Error(
-          `Remote image exceeds size limit (${originalBuffer.length} bytes)`,
-        );
-      }
+      const originalBuffer = await readResponseBuffer(
+        response,
+        this.maxRemoteImageBytes,
+      );
       const optimizedBuffer = await this.optimizeBuffer(originalBuffer);
       const base64 = await this.bufferToBase64(optimizedBuffer);
 
@@ -181,9 +187,12 @@ class ImageService {
         filename: `scraped_image_${index + 1}.jpg`,
         base64,
         size: optimizedBuffer.length,
-        mimetype: contentType,
+        mimetype: "image/jpeg",
       };
     } catch (error) {
+      if (error.code === "UNSAFE_REMOTE_URL") {
+        throw error;
+      }
       const timeout =
         error?.name === "TimeoutError" || error?.name === "AbortError";
       this.logger.error("Remote image fetch failed", {

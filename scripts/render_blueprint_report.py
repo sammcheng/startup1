@@ -16,7 +16,6 @@ from typing import Any
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BLUEPRINT_PATH = REPO_ROOT / "render.yaml"
 SELLER_TOOL_PACKAGE = (
@@ -101,9 +100,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "DEBUG": {"value": "false"},
             "APP_BASE_URL": {"value": "https://web-six-dusky-20.vercel.app"},
             "PUBLIC_API_BASE_URL": {"value": "https://start-3lbd.onrender.com"},
-            "CORS_ORIGINS": {
-                "value": '["https://web-six-dusky-20.vercel.app"]'
-            },
+            "CORS_ORIGINS": {"value": '["https://web-six-dusky-20.vercel.app"]'},
             "CORS_ORIGIN_REGEX": {"value": ""},
             "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
             "MAX_SOURCE_ZIP_ENTRIES": {"value": "500"},
@@ -242,9 +239,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "DEBUG": {"value": "false"},
             "APP_BASE_URL": {"value": "https://web-six-dusky-20.vercel.app"},
             "PUBLIC_API_BASE_URL": {"value": "https://start-3lbd.onrender.com"},
-            "CORS_ORIGINS": {
-                "value": '["https://web-six-dusky-20.vercel.app"]'
-            },
+            "CORS_ORIGINS": {"value": '["https://web-six-dusky-20.vercel.app"]'},
             "CORS_ORIGIN_REGEX": {"value": ""},
             "ALLOW_VERCEL_PREVIEW_ORIGINS": {"value": "false"},
             "MAX_SOURCE_ZIP_ENTRIES": {"value": "500"},
@@ -312,7 +307,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
         "rootDir": "apps/seller-tools/home-accessibility-checker",
         "plan": "starter",
         "autoDeployTrigger": "checksPass",
-        "healthCheckPath": "/health",
+        "healthCheckPath": "/ready",
         "buildFilter": {
             "paths": ["apps/seller-tools/home-accessibility-checker/**"],
             "ignoredPaths": [],
@@ -321,9 +316,10 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
         "startCommand": "npm start",
         "envVarKeys": [
             "OPENROUTER_API_KEY",
-            "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
+            "OPENROUTER_MODEL",
+            "NODE_ENV",
             "PUBLIC_APP_URL",
+            "ALLOWED_ORIGINS",
             "LOG_LEVEL",
             "OPENROUTER_TIMEOUT_MS",
             "ANALYSIS_TIMEOUT_MS",
@@ -331,14 +327,16 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "MAX_FILES",
             "MAX_INLINE_IMAGES",
             "LISTING_FETCH_TIMEOUT_MS",
+            "MAX_LISTING_HTML_BYTES",
             "REMOTE_IMAGE_FETCH_TIMEOUT_MS",
             "MAX_REMOTE_IMAGE_BYTES",
         ],
         "envVarSpecs": {
             "OPENROUTER_API_KEY": {"sync": False},
-            "OPENAI_API_KEY": {"sync": False},
-            "GEMINI_API_KEY": {"sync": False},
+            "OPENROUTER_MODEL": {"value": "openai/gpt-4o"},
+            "NODE_ENV": {"value": "production"},
             "PUBLIC_APP_URL": {"value": "https://web-six-dusky-20.vercel.app"},
+            "ALLOWED_ORIGINS": {"value": "https://web-six-dusky-20.vercel.app"},
             "LOG_LEVEL": {"value": "info"},
             "OPENROUTER_TIMEOUT_MS": {"value": "20000"},
             "ANALYSIS_TIMEOUT_MS": {"value": "45000"},
@@ -346,6 +344,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
             "MAX_FILES": {"value": "5"},
             "MAX_INLINE_IMAGES": {"value": "5"},
             "LISTING_FETCH_TIMEOUT_MS": {"value": "10000"},
+            "MAX_LISTING_HTML_BYTES": {"value": "2097152"},
             "REMOTE_IMAGE_FETCH_TIMEOUT_MS": {"value": "10000"},
             "MAX_REMOTE_IMAGE_BYTES": {"value": "12582912"},
         },
@@ -413,12 +412,8 @@ def format_text(services: list[dict[str, Any]]) -> str:
         lines.append(f"  Health Check Path: {service['healthCheckPath'] or '(unset)'}")
         if service["buildFilter"]["paths"] or service["buildFilter"]["ignoredPaths"]:
             lines.append("  Build Filter:")
-            lines.append(
-                f"    paths: {service['buildFilter']['paths'] or '[]'}"
-            )
-            lines.append(
-                f"    ignoredPaths: {service['buildFilter']['ignoredPaths'] or '[]'}"
-            )
+            lines.append(f"    paths: {service['buildFilter']['paths'] or '[]'}")
+            lines.append(f"    ignoredPaths: {service['buildFilter']['ignoredPaths'] or '[]'}")
         if service["runtime"] == "docker":
             lines.append(f"  Dockerfile Path: {service['dockerfilePath']}")
             lines.append(f"  Docker Context: {service['dockerContext']}")

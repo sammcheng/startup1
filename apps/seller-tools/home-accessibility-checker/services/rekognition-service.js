@@ -1,16 +1,19 @@
-/**
- * OpenRouter Vision Service for Accessibility Analysis
- * Uses OpenRouter API with GPT-4o vision for computer vision analysis
- */
+"use strict";
 
 const OpenAI = require("openai");
 const { getRuntimeConfig } = require("../config");
 const { createLogger } = require("../logger");
+const {
+  invalidProviderResponseError,
+  normalizeProviderError,
+  providerNotConfiguredError,
+} = require("./analysis-provider-error");
 
 class OpenRouterVisionService {
   constructor() {
     const runtimeConfig = getRuntimeConfig();
-    this.apiKey = process.env.OPENROUTER_API_KEY || "";
+    this.apiKey = process.env.OPENROUTER_API_KEY?.trim() || "";
+    this.model = runtimeConfig.openrouterModel;
     this.requestTimeoutMs = runtimeConfig.openrouterTimeoutMs;
     this.openaiClient = this.apiKey
       ? new OpenAI({
@@ -22,343 +25,246 @@ class OpenRouterVisionService {
           },
         })
       : null;
-
     this.logger = createLogger({ service: "openrouter-vision-service" });
   }
 
-  async analyzeAccessibility(base64Image, filename) {
+  isConfigured() {
+    return Boolean(this.openaiClient);
+  }
+
+  async analyzeAccessibility(base64Image, filename, mimeType = "image/jpeg") {
+    if (!this.openaiClient) {
+      throw providerNotConfiguredError();
+    }
+
+    const startedAt = Date.now();
     try {
-      this.logger.info("Starting OpenRouter vision analysis", { filename });
+      this.logger.info("Starting OpenRouter vision analysis", {
+        filename,
+        model: this.model,
+      });
 
-      if (!this.openaiClient) {
-        this.logger.warn(
-          "OpenRouter API key missing, using dynamic vision analysis fallback",
-          { filename },
-        );
-        return this.generateDynamicAnalysis(base64Image, filename);
-      }
-
-      const prompt = `Analyze this image for accessibility features and barriers. Look for:
-
-ACCESSIBILITY FEATURES:
-- Wide doorways (32+ inches)
-- Ramps and accessible entrances
-- Grab bars in bathrooms
-- Accessible parking spaces
-- Elevators or ground floor access
-- Good lighting
-- Clear pathways (36+ inches wide)
-- Accessible counter heights
-- Non-slip surfaces
-- Emergency accessibility features
-
-BARRIERS:
-- Narrow doorways (<32 inches)
-- Steps without ramps
-- High thresholds
-- Narrow hallways
-- Poor lighting
-- Slippery surfaces
-- Inaccessible bathrooms
-- High counter heights
-- Cluttered pathways
-
-Please provide:
-1. A list of detected accessibility features
-2. A list of detected barriers
-3. An overall accessibility score (0-100)
-4. Specific recommendations for improvement
-
-Format your response as JSON with this structure:
-{
-  "accessibility_features": ["feature1", "feature2"],
-  "barriers": ["barrier1", "barrier2"],
-  "score": 75,
-  "recommendations": ["recommendation1", "recommendation2"]
-}`;
-
-      const response = await this.withTimeout(
-        this.openaiClient.chat.completions.create({
-          model: "openai/gpt-4o",
+      const response = await this.openaiClient.chat.completions.create(
+        {
+          model: this.model,
           messages: [
             {
               role: "user",
               content: [
-                {
-                  type: "text",
-                  text: prompt,
-                },
+                { type: "text", text: this.createVisionPrompt() },
                 {
                   type: "image_url",
                   image_url: {
-                    url: `data:image/jpeg;base64,${base64Image}`,
+                    url: `data:${normalizeImageMimeType(mimeType)};base64,${base64Image}`,
                   },
                 },
               ],
             },
           ],
-          max_tokens: 2000,
-          temperature: 0.3,
-        }),
-        "OpenRouter vision analysis timed out",
+          max_tokens: 1600,
+          temperature: 0.2,
+        },
+        {
+          timeout: this.requestTimeoutMs,
+          maxRetries: 1,
+        },
       );
 
-      const analysisText = response.choices[0].message.content;
-
-      // Try to parse JSON response
-      let analysis;
-      try {
-        analysis = JSON.parse(analysisText);
-      } catch (parseError) {
-        // If JSON parsing fails, extract information from text
-        analysis = this.parseTextResponse(analysisText);
-      }
-
+      const analysisText = response?.choices?.[0]?.message?.content;
+      const analysis = this.parseAnalysisResponse(analysisText);
+      const processingTimeMs = Math.max(Date.now() - startedAt, 1);
       const result = {
-        score: analysis.score || 50,
+        score: analysis.score,
         analysis: {
-          overall_score: analysis.score || 50,
-          accessibility_features: analysis.accessibility_features || [],
-          barriers: analysis.barriers || [],
-          recommendations: analysis.recommendations || [],
-          confidence: 0.9,
+          overall_score: analysis.score,
+          accessibility_features: analysis.accessibility_features,
+          barriers: analysis.barriers,
+          recommendations: analysis.recommendations,
+          safety_concerns: analysis.safety_concerns,
+          limitations: analysis.limitations,
           analysis_method: "openrouter_vision",
         },
         metadata: {
-          filename: filename,
+          filename,
           timestamp: new Date().toISOString(),
-          model_used: "gpt-4o-vision",
-          processing_time_ms: 2000,
+          model_used: this.model,
+          processing_time_ms: processingTimeMs,
         },
       };
 
       this.logger.info("OpenRouter vision analysis completed", {
         filename,
+        model: this.model,
+        processingTimeMs,
         score: result.score,
       });
-
       return result;
     } catch (error) {
-      this.logger.error(
-        "OpenRouter vision analysis failed, using dynamic analysis",
-        {
-          filename,
-          error: error.message,
-        },
+      const providerError = normalizeProviderError(
+        error,
+        "OpenRouter vision analysis",
       );
-
-      // Fallback: Generate dynamic analysis based on image characteristics
-      return this.generateDynamicAnalysis(base64Image, filename);
+      this.logger.error("OpenRouter vision analysis failed", {
+        filename,
+        code: providerError.code,
+        error: providerError.message,
+      });
+      throw providerError;
     }
   }
 
-  async withTimeout(promise, timeoutMessage) {
-    let timeoutHandle;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(new Error(timeoutMessage));
-      }, this.requestTimeoutMs);
-    });
+  createVisionPrompt() {
+    return `Inspect this home image for visible accessibility and safety conditions.
 
-    try {
-      return await Promise.race([promise, timeoutPromise]);
-    } finally {
-      clearTimeout(timeoutHandle);
+Do not guess exact dimensions, slopes, lighting levels, or legal/ADA compliance. Only report findings grounded in visible evidence, and call out anything that needs an in-person measurement.
+
+Return one JSON object:
+{
+  "score": 75,
+  "accessibility_features": ["Visible accessibility feature"],
+  "barriers": ["Visible accessibility barrier"],
+  "safety_concerns": ["Visible safety concern"],
+  "recommendations": ["Practical improvement"],
+  "limitations": ["What cannot be confirmed from this image"]
+}`;
+  }
+
+  parseAnalysisResponse(analysisText) {
+    if (typeof analysisText !== "string" || !analysisText.trim()) {
+      throw invalidProviderResponseError(
+        "OpenRouter returned an empty vision analysis",
+      );
     }
+
+    const parsed = parseJsonObject(analysisText);
+    if (parsed) {
+      return normalizeVisionAnalysis(parsed);
+    }
+    return this.parseTextResponse(analysisText);
   }
 
   parseTextResponse(text) {
-    // Extract information from text response when JSON parsing fails
-    const features = [];
-    const barriers = [];
-    const recommendations = [];
-    let score = 50;
-
-    // Look for score patterns
-    const scoreMatch = text.match(/score[:\s]*(\d+)/i);
-    if (scoreMatch) {
-      score = parseInt(scoreMatch[1]);
-    }
-
-    // Look for features
-    const featureMatches = text.match(/features?[:\s]*([^\n]+)/gi);
-    if (featureMatches) {
-      featureMatches.forEach((match) => {
-        const items = match
-          .split(/[,\n]/)
-          .map((item) => this.cleanExtractedItem(item))
-          .filter((item) => item);
-        features.push(...items);
-      });
-    }
-
-    // Look for barriers
-    const barrierMatches = text.match(/barriers?[:\s]*([^\n]+)/gi);
-    if (barrierMatches) {
-      barrierMatches.forEach((match) => {
-        const items = match
-          .split(/[,\n]/)
-          .map((item) => this.cleanExtractedItem(item))
-          .filter((item) => item);
-        barriers.push(...items);
-      });
-    }
-
-    // Look for recommendations
-    const recMatches = text.match(/recommendations?[:\s]*([^\n]+)/gi);
-    if (recMatches) {
-      recMatches.forEach((match) => {
-        const items = match
-          .split(/[,\n]/)
-          .map((item) => this.cleanExtractedItem(item))
-          .filter((item) => item);
-        recommendations.push(...items);
-      });
-    }
-
-    return {
-      score: Math.max(0, Math.min(100, score)),
-      accessibility_features: features.slice(0, 10), // Limit to 10 features
-      barriers: barriers.slice(0, 10), // Limit to 10 barriers
-      recommendations: recommendations.slice(0, 10), // Limit to 10 recommendations
-    };
-  }
-
-  cleanExtractedItem(value) {
-    return value
-      .replace(
-        /^(accessibility\s+features?|features?|barriers?|recommendations?)\s*:\s*/i,
-        "",
-      )
-      .replace(/^[-*•]\s*/, "")
-      .trim();
-  }
-
-  generateDynamicAnalysis(base64Image, filename) {
-    // Generate dynamic analysis based on image characteristics
-    // This ensures scores vary based on actual image content
-
-    // Create a hash from the image data to ensure consistency for same images
-    const crypto = require("crypto");
-    const imageHash = crypto
-      .createHash("md5")
-      .update(base64Image)
-      .digest("hex");
-
-    // Use hash to generate consistent but varied scores
-    const hashValue = parseInt(imageHash.substring(0, 8), 16);
-    const score = 30 + (hashValue % 60); // Scores between 30-90
-
-    // Generate features based on image characteristics
-    const accessibilityFeatures = [];
-    const barriers = [];
-    const recommendations = [];
-
-    // Analyze image size and characteristics
-    const imageSize = base64Image.length;
-    const isLargeImage = imageSize > 100000; // > 100KB
-    const isSmallImage = imageSize < 50000; // < 50KB
-
-    // Generate features based on image characteristics
-    if (isLargeImage) {
-      accessibilityFeatures.push(
-        "High-resolution images for detailed analysis",
+    const scoreMatch = text.match(
+      /(?:overall\s+|accessibility\s+)?score\s*[:=-]?\s*(\d{1,3})/i,
+    );
+    if (!scoreMatch) {
+      throw invalidProviderResponseError(
+        "OpenRouter vision response did not include an accessibility score",
       );
-      accessibilityFeatures.push("Clear visual documentation");
-    }
-
-    if (isSmallImage) {
-      barriers.push("Low-resolution images may miss details");
-      recommendations.push("Use higher resolution images for better analysis");
-    }
-
-    // Add dynamic features based on filename and hash
-    const featureOptions = [
-      "Wide doorways detected",
-      "Good lighting conditions",
-      "Clear pathways visible",
-      "Accessible bathroom features",
-      "Ramp access available",
-      "Elevator access present",
-      "Handrails installed",
-      "Non-slip surfaces",
-      "Accessible parking",
-      "Emergency accessibility features",
-    ];
-
-    const barrierOptions = [
-      "Narrow doorways detected",
-      "Steps without ramps",
-      "High thresholds",
-      "Poor lighting",
-      "Cluttered pathways",
-      "Inaccessible bathroom",
-      "High counter heights",
-      "Slippery surfaces",
-      "Missing handrails",
-      "Limited accessibility features",
-    ];
-
-    const recommendationOptions = [
-      "Install wider doorways (32+ inches)",
-      "Add ramp access to steps",
-      "Improve lighting conditions",
-      "Clear pathways (36+ inches wide)",
-      "Install grab bars in bathrooms",
-      "Lower counter heights",
-      "Add non-slip surfaces",
-      "Install handrails on stairs",
-      "Create accessible parking spaces",
-      "Add emergency accessibility features",
-    ];
-
-    // Select features based on hash
-    const numFeatures = 3 + (hashValue % 4); // 3-6 features
-    const numBarriers = 2 + (hashValue % 3); // 2-4 barriers
-    const numRecommendations = 3 + (hashValue % 4); // 3-6 recommendations
-
-    for (let i = 0; i < numFeatures; i++) {
-      const index = (hashValue + i) % featureOptions.length;
-      accessibilityFeatures.push(featureOptions[index]);
-    }
-
-    for (let i = 0; i < numBarriers; i++) {
-      const index = (hashValue + i + 10) % barrierOptions.length;
-      barriers.push(barrierOptions[index]);
-    }
-
-    for (let i = 0; i < numRecommendations; i++) {
-      const index = (hashValue + i + 20) % recommendationOptions.length;
-      recommendations.push(recommendationOptions[index]);
     }
 
     const result = {
-      score: score,
-      analysis: {
-        overall_score: score,
-        accessibility_features: [...new Set(accessibilityFeatures)],
-        barriers: [...new Set(barriers)],
-        recommendations: [...new Set(recommendations)],
-        confidence: 0.8,
-        analysis_method: "dynamic_image_analysis",
-      },
-      metadata: {
-        filename: filename,
-        timestamp: new Date().toISOString(),
-        model_used: "dynamic-analysis",
-        processing_time_ms: 100,
-        image_hash: imageHash.substring(0, 8),
-      },
+      score: requireScore(scoreMatch[1]),
+      accessibility_features: extractLabeledItems(text, [
+        "features",
+        "accessibility features",
+      ]),
+      barriers: extractLabeledItems(text, ["barriers"]),
+      safety_concerns: extractLabeledItems(text, ["safety concerns"]),
+      recommendations: extractLabeledItems(text, ["recommendations"]),
+      limitations: extractLabeledItems(text, ["limitations"]),
     };
-
-    this.logger.info("Dynamic analysis completed", {
-      filename,
-      score: result.score,
-      image_hash: imageHash.substring(0, 8),
-    });
-
+    requireFindings(result);
     return result;
   }
+}
+
+function parseJsonObject(text) {
+  const candidates = [text.trim()];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) candidates.push(fenced.trim());
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(text.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // A provider may wrap valid findings in prose; try the next candidate.
+    }
+  }
+  return null;
+}
+
+function normalizeVisionAnalysis(parsed) {
+  const result = {
+    score: requireScore(parsed.score),
+    accessibility_features: normalizeStringArray(parsed.accessibility_features),
+    barriers: normalizeStringArray(parsed.barriers),
+    safety_concerns: normalizeStringArray(parsed.safety_concerns),
+    recommendations: normalizeStringArray(parsed.recommendations),
+    limitations: normalizeStringArray(parsed.limitations),
+  };
+  requireFindings(result);
+  return result;
+}
+
+function requireScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score) || score < 0 || score > 100) {
+    throw invalidProviderResponseError(
+      "OpenRouter returned an invalid vision accessibility score",
+    );
+  }
+  return Math.round(score);
+}
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 20);
+}
+
+function extractLabeledItems(text, labels) {
+  const items = [];
+  for (const line of text.split("\n")) {
+    const normalizedLine = line.trim();
+    const lowerLine = normalizedLine.toLowerCase();
+    if (!labels.some((label) => lowerLine.startsWith(`${label}:`))) {
+      continue;
+    }
+    const value = normalizedLine.replace(/^[^:]+:\s*/, "");
+    for (const item of value.split(",")) {
+      const normalizedItem = item.trim();
+      if (normalizedItem && !items.includes(normalizedItem)) {
+        items.push(normalizedItem);
+      }
+    }
+  }
+  return items.slice(0, 10);
+}
+
+function requireFindings(result) {
+  const findingCount = [
+    result.accessibility_features,
+    result.barriers,
+    result.safety_concerns,
+    result.recommendations,
+  ].reduce((total, values) => total + values.length, 0);
+  if (findingCount === 0) {
+    throw invalidProviderResponseError(
+      "OpenRouter vision response did not include any accessibility findings",
+    );
+  }
+}
+
+function normalizeImageMimeType(value) {
+  if (value === "image/jpg") return "image/jpeg";
+  if (["image/jpeg", "image/png", "image/webp"].includes(value)) return value;
+  return "image/jpeg";
 }
 
 module.exports = OpenRouterVisionService;

@@ -2,22 +2,20 @@ const OpenRouterService = require("../services/openrouter-service");
 
 describe("OpenRouterService", () => {
   const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalModel = process.env.OPENROUTER_MODEL;
 
   beforeEach(() => {
     delete process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_MODEL = "openai/test-vision";
   });
 
   afterEach(() => {
-    if (originalApiKey === undefined) {
-      delete process.env.OPENROUTER_API_KEY;
-    } else {
-      process.env.OPENROUTER_API_KEY = originalApiKey;
-    }
+    restoreEnv("OPENROUTER_API_KEY", originalApiKey);
+    restoreEnv("OPENROUTER_MODEL", originalModel);
   });
 
-  test("parseAnalysisResponse extracts structured JSON when available", () => {
+  test("parseAnalysisResponse extracts structured provider JSON", () => {
     const service = new OpenRouterService();
-
     const result = service.parseAnalysisResponse(
       `Here is the analysis:
       {
@@ -25,9 +23,10 @@ describe("OpenRouterService", () => {
         "positive_features": ["Wide doorway"],
         "barriers": ["High threshold"],
         "safety_concerns": ["Loose rug"],
-        "recommendations": ["Install a threshold ramp"],
+        "recommendations": ["Assess a threshold ramp"],
         "accessibility_rating": "Good",
-        "priority_improvements": ["Install a threshold ramp"]
+        "priority_improvements": ["Measure the threshold"],
+        "limitations": ["Dimensions require in-person measurement"]
       }`,
       "entry.jpg",
     );
@@ -38,64 +37,139 @@ describe("OpenRouterService", () => {
       positive_features: ["Wide doorway"],
       barriers: ["High threshold"],
       safety_concerns: ["Loose rug"],
-      recommendations: ["Install a threshold ramp"],
+      recommendations: ["Assess a threshold ramp"],
       accessibility_rating: "Good",
-      priority_improvements: ["Install a threshold ramp"],
-      raw_analysis: expect.any(String),
+      priority_improvements: ["Measure the threshold"],
+      limitations: ["Dimensions require in-person measurement"],
     });
   });
 
-  test("parseAnalysisResponse falls back to keyword parsing when JSON is unavailable", () => {
+  test("parseAnalysisResponse accepts provider text only when it has real findings and a score", () => {
     const service = new OpenRouterService();
-
     const result = service.parseAnalysisResponse(
       [
         "Accessibility score: 71",
         "Positive features: Wide doorway near the entrance, Clear pathway through the kitchen",
         "Barriers: High threshold at the patio door",
-        "Recommendations: Install a small threshold ramp",
+        "Recommendations: Measure the threshold and assess a transition ramp",
       ].join("\n"),
       "kitchen.jpg",
     );
 
-    expect(result.filename).toBe("kitchen.jpg");
     expect(result.score).toBe(71);
     expect(result.positive_features).toContain(
       "Wide doorway near the entrance",
     );
     expect(result.barriers).toContain("High threshold at the patio door");
-    expect(result.recommendations).toContain("Install a small threshold ramp");
-    expect(result.accessibility_rating).toBe("Fair");
+    expect(result.recommendations).toContain(
+      "Measure the threshold and assess a transition ramp",
+    );
   });
 
-  test("generateDynamicAnalysis returns a stable structured fallback shape", () => {
+  test("parseAnalysisResponse rejects malformed provider output instead of inventing a score", () => {
     const service = new OpenRouterService();
 
-    const first = service.generateDynamicAnalysis("abc123", "bathroom.jpg");
-    const second = service.generateDynamicAnalysis("abc123", "bathroom.jpg");
+    expect(() =>
+      service.parseAnalysisResponse(
+        "No structured findings available.",
+        "bad.jpg",
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ANALYSIS_PROVIDER_INVALID_RESPONSE",
+        statusCode: 502,
+      }),
+    );
+  });
 
-    expect(first.metadata.timestamp).toEqual(expect.any(String));
-    expect(second.metadata.timestamp).toEqual(expect.any(String));
-    delete first.metadata.timestamp;
-    delete second.metadata.timestamp;
+  test("analyzeAccessibility rejects a missing key instead of returning synthetic findings", async () => {
+    const service = new OpenRouterService();
 
-    expect(first).toEqual(second);
-    expect(first).toMatchObject({
-      score: expect.any(Number),
-      analysis: {
-        overall_score: expect.any(Number),
-        accessibility_features: expect.any(Array),
-        barriers: expect.any(Array),
-        recommendations: expect.any(Array),
-        confidence: 0.8,
-        analysis_method: "dynamic_image_analysis",
-      },
+    await expect(
+      service.analyzeAccessibility("abc123", "hallway.jpg"),
+    ).rejects.toMatchObject({
+      code: "ANALYSIS_PROVIDER_NOT_CONFIGURED",
+      statusCode: 503,
+      retryable: false,
+    });
+    expect(service.generateDynamicAnalysis).toBeUndefined();
+  });
+
+  test("analyzeAccessibility returns provider-backed metadata with measured duration", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const service = new OpenRouterService();
+    service.openaiClient = createClientWithContent(
+      JSON.stringify({
+        score: 76,
+        positive_features: ["Clear route"],
+        barriers: [],
+        safety_concerns: [],
+        recommendations: ["Verify doorway clearance in person"],
+        limitations: ["No scale reference is visible"],
+      }),
+    );
+
+    const result = await service.analyzeAccessibility(
+      "abc123",
+      "entry.webp",
+      "image/webp",
+    );
+
+    expect(result).toMatchObject({
+      score: 76,
       metadata: {
-        filename: "bathroom.jpg",
-        model_used: "dynamic-analysis",
-        processing_time_ms: 100,
-        image_hash: expect.any(String),
+        filename: "entry.webp",
+        model_used: "openai/test-vision",
+        processing_time_ms: expect.any(Number),
+        timestamp: expect.any(String),
       },
+    });
+    const request =
+      service.openaiClient.chat.completions.create.mock.calls[0][0];
+    const requestOptions =
+      service.openaiClient.chat.completions.create.mock.calls[0][1];
+    expect(request.messages[0].content[1].image_url.url).toBe(
+      "data:image/webp;base64,abc123",
+    );
+    expect(requestOptions).toEqual({ timeout: 20000, maxRetries: 1 });
+  });
+
+  test("analyzeAccessibility preserves provider failures as retryable errors", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const service = new OpenRouterService();
+    service.openaiClient = {
+      chat: {
+        completions: {
+          create: jest
+            .fn()
+            .mockRejectedValue(new Error("upstream unavailable")),
+        },
+      },
+    };
+
+    await expect(
+      service.analyzeAccessibility("abc123", "entry.jpg"),
+    ).rejects.toMatchObject({
+      code: "ANALYSIS_PROVIDER_UNAVAILABLE",
+      statusCode: 503,
+      retryable: true,
     });
   });
 });
+
+function createClientWithContent(content) {
+  return {
+    chat: {
+      completions: {
+        create: jest.fn().mockResolvedValue({
+          choices: [{ message: { content } }],
+        }),
+      },
+    },
+  };
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

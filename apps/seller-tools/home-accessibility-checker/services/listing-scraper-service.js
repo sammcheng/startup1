@@ -3,21 +3,44 @@
 const { URL } = require("url");
 const { getRuntimeConfig } = require("../config");
 const { createLogger } = require("../logger");
+const { readResponseText } = require("./response-limits");
+const {
+  LISTING_HOST_SUFFIXES,
+  assertPublicHttpsUrl,
+  parseSafeHttpsUrl,
+} = require("./url-safety");
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const IMAGE_HOST_SUFFIXES = [
+  "zillowstatic.com",
+  "cdn-redfin.com",
+  "rdcpix.com",
+];
+const MAX_REDIRECTS = 3;
 
 class ListingScraperService {
   constructor() {
-    this.fetchTimeoutMs = getRuntimeConfig().listingFetchTimeoutMs;
+    const runtimeConfig = getRuntimeConfig();
+    this.fetchTimeoutMs = runtimeConfig.listingFetchTimeoutMs;
+    this.maxHtmlBytes = runtimeConfig.maxListingHtmlBytes;
+    this.maxImages = runtimeConfig.maxFiles;
+    this.assertSafeRemoteUrl = assertPublicHttpsUrl;
     this.logger = createLogger({ service: "listing-scraper-service" });
   }
 
-  async scrape(url, maxImages = 10) {
-    this.logger.info("Fetching property listing page", { url, maxImages });
+  async scrape(url, maxImages = this.maxImages) {
+    const imageLimit = Math.min(
+      Math.max(Math.floor(maxImages), 1),
+      this.maxImages,
+    );
+    this.logger.info("Fetching property listing page", {
+      url,
+      maxImages: imageLimit,
+    });
 
     const html = await this.fetchListingHtml(url);
-    const imageUrls = this.extractImageUrls(html, maxImages);
+    const imageUrls = this.extractImageUrls(html, imageLimit);
     const propertyDetails = this.extractPropertyDetails(html, url);
 
     return {
@@ -41,14 +64,56 @@ class ListingScraperService {
       pragma: "no-cache",
     };
 
-    let response;
     try {
-      response = await fetch(url, {
-        headers,
-        redirect: "follow",
-        signal: AbortSignal.timeout(this.fetchTimeoutMs),
-      });
+      let currentUrl = url;
+      for (
+        let redirectCount = 0;
+        redirectCount <= MAX_REDIRECTS;
+        redirectCount++
+      ) {
+        const safeUrl = await this.assertSafeRemoteUrl(currentUrl, {
+          allowedHostSuffixes: LISTING_HOST_SUFFIXES,
+        });
+        const response = await fetch(safeUrl, {
+          headers,
+          redirect: "manual",
+          signal: AbortSignal.timeout(this.fetchTimeoutMs),
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers?.get?.("location");
+          if (!location || redirectCount === MAX_REDIRECTS) {
+            throw new Error("Listing page returned an invalid redirect chain");
+          }
+          currentUrl = new URL(location, safeUrl).toString();
+          continue;
+        }
+
+        if (!response.ok) {
+          const responseError = new Error(
+            `Listing page fetch failed with status ${response.status}`,
+          );
+          responseError.statusCode =
+            response.status === 403 ? 502 : response.status;
+          responseError.publicError = "Listing fetch failed";
+          responseError.userMessage =
+            response.status === 403
+              ? "This listing site blocked automated access. Try uploading photos directly instead."
+              : "We could not fetch the property listing page. Try again or upload photos directly instead.";
+          throw responseError;
+        }
+
+        const contentType = response.headers?.get?.("content-type") || "";
+        if (contentType && !contentType.toLowerCase().includes("text/html")) {
+          throw new Error("Listing page returned a non-HTML response");
+        }
+        return await readResponseText(response, this.maxHtmlBytes);
+      }
+      throw new Error("Listing page exceeded the redirect limit");
     } catch (error) {
+      if (error.code === "UNSAFE_REMOTE_URL" || error.statusCode) {
+        throw error;
+      }
       const timeout =
         error?.name === "TimeoutError" || error?.name === "AbortError";
       const wrapped = new Error(
@@ -63,21 +128,6 @@ class ListingScraperService {
         : "We could not fetch the property listing page. Try again or upload photos directly instead.";
       throw wrapped;
     }
-
-    if (!response.ok) {
-      const error = new Error(
-        `Listing page fetch failed with status ${response.status}`,
-      );
-      error.statusCode = response.status === 403 ? 502 : response.status;
-      error.publicError = "Listing fetch failed";
-      error.userMessage =
-        response.status === 403
-          ? "This listing site blocked automated access. Try uploading photos directly instead."
-          : "We could not fetch the property listing page. Try again or upload photos directly instead.";
-      throw error;
-    }
-
-    return await response.text();
   }
 
   extractImageUrls(html, maxImages) {
@@ -86,7 +136,6 @@ class ListingScraperService {
       /https:\/\/photos\.zillowstatic\.com\/[^"'\\\s)<>]+/g,
       /https:\/\/ssl\.cdn-redfin\.com\/[^"'\\\s)<>]+/g,
       /https:\/\/ap.rdcpix\.com\/[^"'\\\s)<>]+/g,
-      /https:\/\/[^"'\\\s)<>]+(?:jpg|jpeg|png|webp)(?:\?[^"'\\\s)<>]*)?/gi,
     ];
 
     const urls = new Set();
@@ -218,7 +267,9 @@ class ListingScraperService {
 
   normalizeUrl(candidate) {
     try {
-      const parsed = new URL(candidate.replace(/\\u002F/g, "/"));
+      const parsed = parseSafeHttpsUrl(candidate.replace(/\\u002F/g, "/"), {
+        allowedHostSuffixes: IMAGE_HOST_SUFFIXES,
+      });
       return parsed.toString();
     } catch {
       return null;

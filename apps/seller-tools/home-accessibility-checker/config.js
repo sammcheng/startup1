@@ -10,9 +10,11 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 100;
 const DEFAULT_ANALYSIS_TIMEOUT_MS = 45000;
 const DEFAULT_LISTING_FETCH_TIMEOUT_MS = 10000;
+const DEFAULT_MAX_LISTING_HTML_BYTES = 2 * 1024 * 1024;
 const DEFAULT_REMOTE_IMAGE_FETCH_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_REMOTE_IMAGE_BYTES = 12 * 1024 * 1024;
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 20000;
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o";
 const DEFAULT_PUBLIC_APP_URL = "https://hackmarket.io";
 
 const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -74,6 +76,8 @@ function getRuntimeConfig() {
       "OPENROUTER_TIMEOUT_MS",
       DEFAULT_OPENROUTER_TIMEOUT_MS,
     ),
+    openrouterModel:
+      process.env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL,
     maxImageWidth: parseNumberEnv(
       "MAX_IMAGE_WIDTH",
       DEFAULT_MAX_IMAGE_DIMENSION,
@@ -87,6 +91,10 @@ function getRuntimeConfig() {
       "LISTING_FETCH_TIMEOUT_MS",
       DEFAULT_LISTING_FETCH_TIMEOUT_MS,
     ),
+    maxListingHtmlBytes: parseNumberEnv(
+      "MAX_LISTING_HTML_BYTES",
+      DEFAULT_MAX_LISTING_HTML_BYTES,
+    ),
     remoteImageFetchTimeoutMs: parseNumberEnv(
       "REMOTE_IMAGE_FETCH_TIMEOUT_MS",
       DEFAULT_REMOTE_IMAGE_FETCH_TIMEOUT_MS,
@@ -99,9 +107,14 @@ function getRuntimeConfig() {
   };
 }
 
+function isAnalysisProviderConfigured() {
+  return Boolean(process.env.OPENROUTER_API_KEY?.trim());
+}
+
 module.exports = {
   allowedMimeTypes,
   getRuntimeConfig,
+  isAnalysisProviderConfigured,
   parseAllowedOrigins,
   parseNumberEnv,
 };

@@ -8,74 +8,127 @@ describe("OpenRouterVisionService", () => {
   });
 
   afterEach(() => {
-    if (originalApiKey === undefined) {
-      delete process.env.OPENROUTER_API_KEY;
-    } else {
-      process.env.OPENROUTER_API_KEY = originalApiKey;
-    }
+    if (originalApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
   });
 
-  test("parseTextResponse extracts a bounded structured analysis", () => {
+  test("parseAnalysisResponse extracts structured JSON wrapped in markdown", () => {
     const service = new OpenRouterVisionService();
-
-    const result = service.parseTextResponse(
-      [
-        "Accessibility score: 77",
-        "Features: Wide doorway, Good lighting, Clear pathways",
-        "Barriers: High threshold, Steps without ramps",
-        "Recommendations: Install a threshold ramp, Add handrails",
-      ].join("\n"),
-    );
+    const result = service.parseAnalysisResponse(`\`\`\`json
+      {
+        "score": 77,
+        "accessibility_features": ["Clear pathway"],
+        "barriers": ["Raised threshold"],
+        "safety_concerns": ["Loose mat"],
+        "recommendations": ["Secure the mat"],
+        "limitations": ["Threshold height cannot be measured from the photo"]
+      }
+      \`\`\``);
 
     expect(result).toEqual({
       score: 77,
-      accessibility_features: [
-        "Wide doorway",
-        "Good lighting",
-        "Clear pathways",
-      ],
-      barriers: ["High threshold", "Steps without ramps"],
-      recommendations: ["Install a threshold ramp", "Add handrails"],
+      accessibility_features: ["Clear pathway"],
+      barriers: ["Raised threshold"],
+      safety_concerns: ["Loose mat"],
+      recommendations: ["Secure the mat"],
+      limitations: ["Threshold height cannot be measured from the photo"],
     });
   });
 
-  test("generateDynamicAnalysis returns a stable structured fallback shape", () => {
+  test("parseTextResponse extracts provider text without defaulting missing data", () => {
     const service = new OpenRouterVisionService();
+    const result = service.parseTextResponse(
+      [
+        "Accessibility score: 77",
+        "Features: Wide doorway, Good lighting",
+        "Barriers: High threshold",
+        "Recommendations: Measure the threshold",
+      ].join("\n"),
+    );
 
-    const first = service.generateDynamicAnalysis("abc123", "kitchen.jpg");
-    const second = service.generateDynamicAnalysis("abc123", "kitchen.jpg");
-
-    expect(first.score).toBe(second.score);
-    expect(first.analysis).toEqual(second.analysis);
-    expect(first.metadata.filename).toBe(second.metadata.filename);
-    expect(first.metadata.image_hash).toBe(second.metadata.image_hash);
-    expect(first.metadata.model_used).toBe(second.metadata.model_used);
-    expect(first).toMatchObject({
-      score: expect.any(Number),
-      analysis: {
-        overall_score: expect.any(Number),
-        accessibility_features: expect.any(Array),
-        barriers: expect.any(Array),
-        recommendations: expect.any(Array),
-        confidence: 0.8,
-        analysis_method: "dynamic_image_analysis",
-      },
-      metadata: {
-        filename: "kitchen.jpg",
-        model_used: "dynamic-analysis",
-        processing_time_ms: 100,
-        image_hash: expect.any(String),
-      },
+    expect(result).toMatchObject({
+      score: 77,
+      accessibility_features: ["Wide doorway", "Good lighting"],
+      barriers: ["High threshold"],
+      recommendations: ["Measure the threshold"],
     });
   });
 
-  test("analyzeAccessibility falls back cleanly when no API key is configured", async () => {
+  test("parseTextResponse rejects output without a provider score", () => {
+    const service = new OpenRouterVisionService();
+    expect(() => service.parseTextResponse("Features: Clear path")).toThrow(
+      expect.objectContaining({
+        code: "ANALYSIS_PROVIDER_INVALID_RESPONSE",
+      }),
+    );
+  });
+
+  test("analyzeAccessibility rejects a missing key without a synthetic fallback", async () => {
     const service = new OpenRouterVisionService();
 
-    const result = await service.analyzeAccessibility("abc123", "hallway.jpg");
+    await expect(
+      service.analyzeAccessibility("abc123", "hallway.jpg"),
+    ).rejects.toMatchObject({
+      code: "ANALYSIS_PROVIDER_NOT_CONFIGURED",
+      statusCode: 503,
+      retryable: false,
+    });
+    expect(service.generateDynamicAnalysis).toBeUndefined();
+  });
 
-    expect(result.analysis.analysis_method).toBe("dynamic_image_analysis");
-    expect(result.metadata.filename).toBe("hallway.jpg");
-    expect(result.score).toBe(result.analysis.overall_score);
+  test("analyzeAccessibility rejects malformed upstream responses", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const service = new OpenRouterVisionService();
+    service.openaiClient = {
+      chat: {
+        completions: {
+          create: jest.fn().mockResolvedValue({
+            choices: [
+              { message: { content: "I could not inspect the image." } },
+            ],
+          }),
+        },
+      },
+    };
+
+    await expect(
+      service.analyzeAccessibility("abc123", "hallway.jpg"),
+    ).rejects.toMatchObject({
+      code: "ANALYSIS_PROVIDER_INVALID_RESPONSE",
+      statusCode: 502,
+    });
+  });
+
+  test("uses an aborting SDK timeout instead of leaving provider requests running", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const service = new OpenRouterVisionService();
+    service.openaiClient = {
+      chat: {
+        completions: {
+          create: jest.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    score: 75,
+                    accessibility_features: ["Clear path"],
+                    barriers: [],
+                    safety_concerns: [],
+                    recommendations: ["Verify clearances in person"],
+                    limitations: ["No scale reference"],
+                  }),
+                },
+              },
+            ],
+          }),
+        },
+      },
+    };
+
+    await service.analyzeAccessibility("abc123", "hallway.jpg");
+
+    expect(
+      service.openaiClient.chat.completions.create.mock.calls[0][1],
+    ).toEqual({ timeout: 20000, maxRetries: 1 });
   });
 });

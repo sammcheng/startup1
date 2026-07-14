@@ -292,16 +292,18 @@ services:
         - apps/seller-tools/home-accessibility-checker/**
     buildCommand: npm ci
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /ready
     autoDeployTrigger: checksPass
     envVars:
       - key: OPENROUTER_API_KEY
         sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o
+      - key: NODE_ENV
+        value: production
       - key: PUBLIC_APP_URL
+        value: https://web-six-dusky-20.vercel.app
+      - key: ALLOWED_ORIGINS
         value: https://web-six-dusky-20.vercel.app
       - key: LOG_LEVEL
         value: info
@@ -317,6 +319,8 @@ services:
         value: "5"
       - key: LISTING_FETCH_TIMEOUT_MS
         value: "10000"
+      - key: MAX_LISTING_HTML_BYTES
+        value: "2097152"
       - key: REMOTE_IMAGE_FETCH_TIMEOUT_MS
         value: "10000"
       - key: MAX_REMOTE_IMAGE_BYTES

@@ -88,7 +88,11 @@ def request(
     req = Request(url, data=body, headers=request_headers, method=method)
     opener = urlopen if follow_redirects else NO_REDIRECT_OPENER.open
     with opener(req, timeout=timeout) as response:
-        return response.status, response.read(4096).decode("utf-8", errors="replace"), dict(response.headers)
+        return (
+            response.status,
+            response.read(4096).decode("utf-8", errors="replace"),
+            dict(response.headers),
+        )
 
 
 def run_http_check(
@@ -103,7 +107,9 @@ def run_http_check(
 ) -> CheckResult:
     started = time.perf_counter()
     try:
-        status, response_body, _response_headers = request(method, url, headers=headers, body=body, timeout=timeout)
+        status, response_body, _response_headers = request(
+            method, url, headers=headers, body=body, timeout=timeout
+        )
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         if status in expected_statuses:
             return CheckResult(name, True, f"{status} in {elapsed_ms}ms")
@@ -111,7 +117,9 @@ def run_http_check(
     except HTTPError as exc:
         body_text = exc.read(4096).decode("utf-8", errors="replace")
         if exc.code in expected_statuses:
-            return CheckResult(name, True, f"{exc.code} in {round((time.perf_counter() - started) * 1000)}ms")
+            return CheckResult(
+                name, True, f"{exc.code} in {round((time.perf_counter() - started) * 1000)}ms"
+            )
         return CheckResult(name, False, f"HTTP {exc.code}: {body_text[:240]}")
     except URLError as exc:
         return CheckResult(name, False, f"network error: {exc.reason}")
@@ -174,7 +182,9 @@ def check_api_cors(api_root: str, app_root: str, timeout: int) -> CheckResult:
     normalized = {key.lower(): value for key, value in headers.items()}
     allowed_origin = normalized.get("access-control-allow-origin")
     if status != 200:
-        return CheckResult("api CORS production origin", False, f"unexpected {status}: {body[:240]}")
+        return CheckResult(
+            "api CORS production origin", False, f"unexpected {status}: {body[:240]}"
+        )
     if allowed_origin != origin:
         return CheckResult(
             "api CORS production origin",
@@ -195,7 +205,9 @@ def parse_json_error(status: int, body: str, headers: dict[str, str]) -> str | N
         return f"missing error object in payload={payload}"
 
     request_id = error.get("request_id")
-    header_request_id = headers.get("X-HackMarket-Request-Id") or headers.get("x-hackmarket-request-id")
+    header_request_id = headers.get("X-HackMarket-Request-Id") or headers.get(
+        "x-hackmarket-request-id"
+    )
     if not request_id:
         return f"missing error.request_id in payload={payload}"
     if header_request_id and request_id != header_request_id:
@@ -208,7 +220,9 @@ def parse_json_error(status: int, body: str, headers: dict[str, str]) -> str | N
 def check_api_auth_boundary(api_root: str, path: str, timeout: int) -> CheckResult:
     name = f"api auth boundary /{path}"
     try:
-        status, body, headers = request("GET", rest_api_url(api_root, path.removeprefix("v1/")), timeout=timeout)
+        status, body, headers = request(
+            "GET", rest_api_url(api_root, path.removeprefix("v1/")), timeout=timeout
+        )
     except HTTPError as exc:
         status = exc.code
         body = exc.read(4096).decode("utf-8", errors="replace")
@@ -245,9 +259,7 @@ def check_frontend_security_headers(app_root: str, timeout: int) -> CheckResult:
         return CheckResult("frontend security headers", False, f"missing {', '.join(missing)}")
     csp = normalized.get("content-security-policy", "")
     unsafe_fragments = [
-        fragment
-        for fragment in ("localhost", "127.0.0.1", "unsafe-eval")
-        if fragment in csp
+        fragment for fragment in ("localhost", "127.0.0.1", "unsafe-eval") if fragment in csp
     ]
     if unsafe_fragments:
         return CheckResult(
@@ -339,7 +351,9 @@ def check_submission_status_page(app_root: str, timeout: int) -> CheckResult:
     )
 
 
-def check_authenticated_dashboard(app_root: str, clerk_session_token: str, timeout: int) -> CheckResult:
+def check_authenticated_dashboard(
+    app_root: str, clerk_session_token: str, timeout: int
+) -> CheckResult:
     return run_http_check(
         "signed-in dashboard",
         "GET",
@@ -350,7 +364,9 @@ def check_authenticated_dashboard(app_root: str, clerk_session_token: str, timeo
     )
 
 
-def check_admin_operations_health(api_root: str, admin_session_token: str, timeout: int) -> CheckResult:
+def check_admin_operations_health(
+    api_root: str, admin_session_token: str, timeout: int
+) -> CheckResult:
     name = "admin operations health"
     try:
         status, body, _headers = request(
@@ -378,7 +394,11 @@ def check_admin_operations_health(api_root: str, admin_session_token: str, timeo
     checks = payload.get("checks")
     queue = payload.get("queue")
     processing_jobs = payload.get("processing_jobs")
-    if not isinstance(checks, dict) or not isinstance(queue, dict) or not isinstance(processing_jobs, dict):
+    if (
+        not isinstance(checks, dict)
+        or not isinstance(queue, dict)
+        or not isinstance(processing_jobs, dict)
+    ):
         return CheckResult(name, False, f"missing operations health sections: {payload}")
     for key in ("queue", "worker", "processing_jobs"):
         if key not in checks:
@@ -456,9 +476,13 @@ def main() -> int:
         results.append(check_api_auth_boundary(api_root, path, args.timeout))
 
     if args.clerk_session_token:
-        results.append(check_authenticated_dashboard(app_root, args.clerk_session_token, args.timeout))
+        results.append(
+            check_authenticated_dashboard(app_root, args.clerk_session_token, args.timeout)
+        )
     if args.admin_session_token:
-        results.append(check_admin_operations_health(api_root, args.admin_session_token, args.timeout))
+        results.append(
+            check_admin_operations_health(api_root, args.admin_session_token, args.timeout)
+        )
 
     failed = [result for result in results if not result.ok]
     for result in results:

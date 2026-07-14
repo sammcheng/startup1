@@ -13,13 +13,12 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
-
 
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_REQUESTS = 40
@@ -98,14 +97,18 @@ def perform_request(target: RequestTarget, timeout: int) -> RequestResult:
             response.read(4096)
             elapsed_ms = (time.perf_counter() - started) * 1000
             ok = response.status in target.expected_statuses
-            return RequestResult(target.name, ok, response.status, elapsed_ms, f"HTTP {response.status}")
+            return RequestResult(
+                target.name, ok, response.status, elapsed_ms, f"HTTP {response.status}"
+            )
     except HTTPError as exc:
         exc.read(4096)
         elapsed_ms = (time.perf_counter() - started) * 1000
         ok = exc.code in target.expected_statuses
         return RequestResult(target.name, ok, exc.code, elapsed_ms, f"HTTP {exc.code}")
     except TimeoutError:
-        return RequestResult(target.name, False, None, timeout * 1000, f"timed out after {timeout}s")
+        return RequestResult(
+            target.name, False, None, timeout * 1000, f"timed out after {timeout}s"
+        )
     except URLError as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
         return RequestResult(target.name, False, None, elapsed_ms, f"network error: {exc.reason}")
@@ -177,7 +180,9 @@ def build_targets(args: argparse.Namespace) -> list[RequestTarget]:
             rest_api_url(args.api_url, "tools/discover"),
             {200},
             headers,
-            json.dumps({"query": args.discovery_query, "limit": args.discovery_limit}).encode("utf-8"),
+            json.dumps({"query": args.discovery_query, "limit": args.discovery_limit}).encode(
+                "utf-8"
+            ),
         ),
     ]
     if args.gateway_tool_slug and args.gateway_api_key:

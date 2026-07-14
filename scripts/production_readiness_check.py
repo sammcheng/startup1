@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RENDER_BLUEPRINT = REPO_ROOT / "render.yaml"
 WEB_PACKAGE = REPO_ROOT / "apps" / "web" / "package.json"
 WEB_DOCKERFILE = REPO_ROOT / "apps" / "web" / "Dockerfile.prod"
+WEB_CONTAINER_START = REPO_ROOT / "apps" / "web" / "scripts" / "start-container.mjs"
 API_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements.txt"
 API_DEV_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements-dev.txt"
 JOBS_MIGRATION = (
@@ -29,6 +30,14 @@ DATA_INTEGRITY_MIGRATION = (
 )
 ADMIN_AUDIT_MIGRATION = (
     REPO_ROOT / "apps" / "api" / "alembic" / "versions" / "0009_add_admin_audit_logs.py"
+)
+SYNTHETIC_METRICS_MIGRATION = (
+    REPO_ROOT
+    / "apps"
+    / "api"
+    / "alembic"
+    / "versions"
+    / "0010_clear_synthetic_curated_tool_metrics.py"
 )
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -46,7 +55,9 @@ API_ADMIN_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "admin.py"
 API_TOOLS_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "tools.py"
 API_INTERNAL_ROUTER = REPO_ROOT / "apps" / "api" / "app" / "routers" / "internal.py"
 BOOTSTRAP_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "bootstrap_service.py"
-OPERATIONS_HEALTH_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
+OPERATIONS_HEALTH_SERVICE = (
+    REPO_ROOT / "apps" / "api" / "app" / "services" / "operations_health_service.py"
+)
 ADMIN_AUDIT_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "admin_audit_service.py"
 PRODUCTION_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_smoke_check.py"
 PRODUCTION_LOAD_SMOKE_CHECK = REPO_ROOT / "scripts" / "production_load_smoke_check.py"
@@ -60,15 +71,31 @@ WEB_SECURITY_HEADERS = REPO_ROOT / "apps" / "web" / "security-headers.mjs"
 WEB_API_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "lib" / "api.ts"
 WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
 WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
-WEB_MARKETPLACE_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
+WEB_MARKETPLACE_CLIENT = (
+    REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
+)
 WEB_TOOL_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "tools" / "[slug]" / "page.tsx"
 WEB_DOCS_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "app" / "docs" / "DocsClient.tsx"
 WEB_DEMO_RUNNER = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "DemoRunner.tsx"
-WEB_LIVE_BENCHMARK = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "LiveBenchmark.tsx"
+WEB_LIVE_BENCHMARK = (
+    REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "LiveBenchmark.tsx"
+)
 WEB_FILE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "FileOutput.tsx"
 WEB_IMAGE_OUTPUT = REPO_ROOT / "apps" / "web" / "src" / "components" / "demo" / "ImageOutput.tsx"
-WEB_PURCHASE_BUTTON = REPO_ROOT / "apps" / "web" / "src" / "components" / "billing" / "PurchaseToolButton.tsx"
+WEB_PURCHASE_BUTTON = (
+    REPO_ROOT / "apps" / "web" / "src" / "components" / "billing" / "PurchaseToolButton.tsx"
+)
 WEB_SAFE_URL = REPO_ROOT / "apps" / "web" / "src" / "lib" / "safe-url.ts"
+WEB_CONVERTER_TOOLS = REPO_ROOT / "apps" / "web" / "src" / "lib" / "converterTools.ts"
+SELLER_TOOL_ROOT = REPO_ROOT / "apps" / "seller-tools" / "home-accessibility-checker"
+SELLER_TOOL_SERVER = SELLER_TOOL_ROOT / "server.js"
+SELLER_TOOL_OPENROUTER = SELLER_TOOL_ROOT / "services" / "openrouter-service.js"
+SELLER_TOOL_VISION = SELLER_TOOL_ROOT / "services" / "rekognition-service.js"
+SELLER_TOOL_COMPREHENSIVE = SELLER_TOOL_ROOT / "services" / "comprehensive-analysis-service.js"
+SELLER_TOOL_URL_SAFETY = SELLER_TOOL_ROOT / "services" / "url-safety.js"
+SELLER_TOOL_LISTING_SCRAPER = SELLER_TOOL_ROOT / "services" / "listing-scraper-service.js"
+SELLER_TOOL_IMAGE_SERVICE = SELLER_TOOL_ROOT / "services" / "image-service.js"
+CONVERTER_SERVICE = REPO_ROOT / "apps" / "converter" / "main.py"
 PRODUCTION_LAUNCH_CHECKLIST = REPO_ROOT / "docs" / "production-launch-checklist.md"
 
 
@@ -197,7 +224,11 @@ def check_render_blueprint(failures: list[str]) -> None:
     }.items():
         if service is None:
             continue
-        expect(service.get("plan") not in {None, "free"}, f"{name} must not use a free Render plan", failures)
+        expect(
+            service.get("plan") not in {None, "free"},
+            f"{name} must not use a free Render plan",
+            failures,
+        )
         expect(
             service.get("autoDeployTrigger") == "checksPass" or service.get("type") == "keyvalue",
             f"{name} should auto-deploy only after checks pass",
@@ -212,7 +243,11 @@ def check_render_blueprint(failures: list[str]) -> None:
             "hackmarket-db must not use a free Render database plan",
             failures,
         )
-        expect(database.get("ipAllowList") == [], "hackmarket-db should not expose public IP access", failures)
+        expect(
+            database.get("ipAllowList") == [],
+            "hackmarket-db should not expose public IP access",
+            failures,
+        )
 
     for name, service in {"start": api, "start-worker": worker}.items():
         if service is None:
@@ -220,8 +255,16 @@ def check_render_blueprint(failures: list[str]) -> None:
         env = env_map(service)
         missing = sorted(API_REQUIRED_ENV - set(env))
         expect(not missing, f"{name} is missing env vars: {', '.join(missing)}", failures)
-        expect(env.get("ENVIRONMENT", {}).get("value") == "production", f"{name} must run production env", failures)
-        expect(env.get("DEBUG", {}).get("value") == "false", f"{name} must disable debug mode", failures)
+        expect(
+            env.get("ENVIRONMENT", {}).get("value") == "production",
+            f"{name} must run production env",
+            failures,
+        )
+        expect(
+            env.get("DEBUG", {}).get("value") == "false",
+            f"{name} must disable debug mode",
+            failures,
+        )
         expect(
             env.get("RUN_BILLING_SCHEDULER_IN_API", {}).get("value") == "false",
             f"{name} must keep API billing scheduler disabled",
@@ -315,6 +358,39 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
 
+    if seller_tool is not None:
+        seller_env = env_map(seller_tool)
+        expect(
+            seller_tool.get("healthCheckPath") == "/ready",
+            "home-accessibility-checker must use its provider-aware readiness endpoint",
+            failures,
+        )
+        expect(
+            seller_env.get("OPENROUTER_API_KEY", {}).get("sync") is False,
+            "home-accessibility-checker must define OPENROUTER_API_KEY as a secret",
+            failures,
+        )
+        expect(
+            seller_env.get("NODE_ENV", {}).get("value") == "production",
+            "home-accessibility-checker must run with NODE_ENV=production",
+            failures,
+        )
+        expect(
+            seller_env.get("OPENROUTER_MODEL", {}).get("value"),
+            "home-accessibility-checker must configure its OpenRouter model",
+            failures,
+        )
+        expect(
+            seller_env.get("ALLOWED_ORIGINS", {}).get("value", "").startswith("https://"),
+            "home-accessibility-checker must use an explicit HTTPS CORS origin",
+            failures,
+        )
+        expect(
+            not ({"OPENAI_API_KEY", "GEMINI_API_KEY"} & set(seller_env)),
+            "home-accessibility-checker must not request unused provider secrets",
+            failures,
+        )
+
 
 def check_repo_files(failures: list[str]) -> None:
     package_json = load_json(WEB_PACKAGE)
@@ -329,21 +405,45 @@ def check_repo_files(failures: list[str]) -> None:
     dev_requirements = API_DEV_REQUIREMENTS.read_text(encoding="utf-8")
     ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     web_dockerfile = WEB_DOCKERFILE.read_text(encoding="utf-8")
-    expect("arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures)
-    expect("PyJWT[crypto]==" in requirements, "API auth must use the audited PyJWT cryptography backend", failures)
-    expect("python-jose" not in requirements, "API runtime must not include the vulnerable python-jose stack", failures)
+    web_docker_ci = ci_workflow.split("- name: Build web image", 1)[-1]
+    expect(
+        "arq==" in requirements, "apps/api requirements must include arq for worker jobs", failures
+    )
+    expect(
+        "PyJWT[crypto]==" in requirements,
+        "API auth must use the audited PyJWT cryptography backend",
+        failures,
+    )
+    expect(
+        "python-jose" not in requirements,
+        "API runtime must not include the vulnerable python-jose stack",
+        failures,
+    )
     expect(
         "ruff==" in dev_requirements and "pip-audit==" in dev_requirements,
         "backend development requirements must include lint and dependency audit tools",
         failures,
     )
     expect(JOBS_MIGRATION.exists(), "tool processing jobs migration is missing", failures)
-    expect(DATA_INTEGRITY_MIGRATION.exists(), "data integrity constraints migration is missing", failures)
+    expect(
+        DATA_INTEGRITY_MIGRATION.exists(),
+        "data integrity constraints migration is missing",
+        failures,
+    )
     expect(ADMIN_AUDIT_MIGRATION.exists(), "admin audit log migration is missing", failures)
+    expect(
+        SYNTHETIC_METRICS_MIGRATION.exists(),
+        "synthetic curated-tool metric cleanup migration is missing",
+        failures,
+    )
     expect(SECURITY_SCAN.exists(), "tracked-file security scan is missing", failures)
-    expect(REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures)
+    expect(
+        REPO_HYGIENE_CHECK.exists(), "tracked-file repository hygiene check is missing", failures
+    )
     expect(MIGRATION_SAFETY_CHECK.exists(), "migration safety check is missing", failures)
-    expect(ALEMBIC_MIGRATION_CHECK.exists(), "Alembic upgrade validation check is missing", failures)
+    expect(
+        ALEMBIC_MIGRATION_CHECK.exists(), "Alembic upgrade validation check is missing", failures
+    )
     expect(PRODUCTION_SMOKE_CHECK.exists(), "production smoke check is missing", failures)
     expect(PRODUCTION_LOAD_SMOKE_CHECK.exists(), "production load smoke check is missing", failures)
     expect(URL_SAFETY.exists(), "production URL safety guard is missing", failures)
@@ -352,16 +452,25 @@ def check_repo_files(failures: list[str]) -> None:
         "ARG NEXT_PUBLIC_API_URL" in web_dockerfile
         and "ARG NEXT_PUBLIC_APP_URL" in web_dockerfile
         and "ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in web_dockerfile
-        and "ARG CLERK_SECRET_KEY" in web_dockerfile,
-        "web production Dockerfile must accept strict build-time env vars",
+        and "ARG CLERK_SECRET_KEY" not in web_dockerfile
+        and "CLERK_SECRET_KEY=$CLERK_SECRET_KEY" not in web_dockerfile,
+        "web production Dockerfile must accept public build args without baking Clerk secrets",
         failures,
     )
     expect(
-        "build-args:" in ci_workflow
-        and "NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1" in ci_workflow
-        and "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_" in ci_workflow
-        and "CLERK_SECRET_KEY=sk_live_ci" in ci_workflow,
-        "CI web Docker image build must pass strict production env placeholders",
+        WEB_CONTAINER_START.exists()
+        and 'CMD ["node", "start-container.mjs"]' in web_dockerfile
+        and "CLERK_SECRET_KEY is required at container runtime"
+        in WEB_CONTAINER_START.read_text(encoding="utf-8"),
+        "web production container must validate the Clerk secret at runtime",
+        failures,
+    )
+    expect(
+        "build-args:" in web_docker_ci
+        and "NEXT_PUBLIC_API_URL=https://api.hackmarket.io/v1" in web_docker_ci
+        and "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_" in web_docker_ci
+        and "CLERK_SECRET_KEY=" not in web_docker_ci,
+        "CI web Docker image build must pass public placeholders without a Clerk secret",
         failures,
     )
 
@@ -378,7 +487,8 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
-        "_terminate_stale_pending_purchase" in billing_service and "_fail_checkout_creation" in billing_service,
+        "_terminate_stale_pending_purchase" in billing_service
+        and "_fail_checkout_creation" in billing_service,
         "tool purchases must not leave unrecoverable pending checkout records",
         failures,
     )
@@ -417,7 +527,9 @@ def check_repo_files(failures: list[str]) -> None:
         "checkout session webhooks must verify purchase and transaction metadata match before state changes",
         failures,
     )
-    billing_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "billing.py").read_text(encoding="utf-8")
+    billing_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "billing.py").read_text(
+        encoding="utf-8"
+    )
     expect(
         "stripe_webhook_misconfigured" in billing_router
         and "stripe_webhook_secret" in billing_router
@@ -427,8 +539,16 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
-    expect("IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service, "tool creation must retry slug races caused by concurrent submissions", failures)
-    expect('return slug[:90] or "tool"' in tool_service, "tool slug generation must have a safe fallback for non-sluggable names", failures)
+    expect(
+        "IntegrityError" in tool_service and "_MAX_SLUG_CREATE_ATTEMPTS" in tool_service,
+        "tool creation must retry slug races caused by concurrent submissions",
+        failures,
+    )
+    expect(
+        'return slug[:90] or "tool"' in tool_service,
+        "tool slug generation must have a safe fallback for non-sluggable names",
+        failures,
+    )
     expect(
         "get_tool_for_seller" in tool_service and "Tool.seller_id == seller_id" in tool_service,
         "seller-owned tool routes must use account-scoped tool lookup",
@@ -443,7 +563,9 @@ def check_repo_files(failures: list[str]) -> None:
         "API key creation must serialize per user before enforcing the active-key cap",
         failures,
     )
-    dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(encoding="utf-8")
+    dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(
+        encoding="utf-8"
+    )
     expect(
         "is_api_key_format" in hashing_utils
         and "is_api_key_format(x_api_key)" in dependencies
@@ -451,7 +573,9 @@ def check_repo_files(failures: list[str]) -> None:
         "gateway API key validation must reject malformed keys before hashing and database lookup",
         failures,
     )
-    api_keys_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "api_keys.py").read_text(encoding="utf-8")
+    api_keys_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "api_keys.py").read_text(
+        encoding="utf-8"
+    )
     expect(
         "get_api_key_for_user" in api_key_service
         and "APIKey.user_id == user_id" in api_key_service
@@ -477,8 +601,16 @@ def check_repo_files(failures: list[str]) -> None:
         "API middleware must normalize inbound request IDs before echoing them in logs and response headers",
         failures,
     )
-    expect("enable_bootstrap_tool_seed: bool = False" in api_config, "bootstrap tool seed must default off", failures)
-    expect("ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config, "production must reject fixed bootstrap marketplace seeds", failures)
+    expect(
+        "enable_bootstrap_tool_seed: bool = False" in api_config,
+        "bootstrap tool seed must default off",
+        failures,
+    )
+    expect(
+        "ENABLE_BOOTSTRAP_TOOL_SEED must be false in production" in api_config,
+        "production must reject fixed bootstrap marketplace seeds",
+        failures,
+    )
     expect(
         "Production provider keys must use live mode" in api_config
         and "_is_test_mode_provider_key" in api_config,
@@ -486,6 +618,89 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(BOOTSTRAP_SERVICE.exists(), "bootstrap seed service is missing", failures)
+    bootstrap_service = BOOTSTRAP_SERVICE.read_text(encoding="utf-8")
+    expect(
+        "avg_response_time_ms=420" not in bootstrap_service
+        and 'uptime_percentage=Decimal("99.90")' not in bootstrap_service,
+        "bootstrap data must not seed synthetic latency or uptime metrics",
+        failures,
+    )
+
+    converter_tools = WEB_CONVERTER_TOOLS.read_text(encoding="utf-8")
+    expect(
+        "avg_response_time_ms: c.qa_avg_ms ?? null" in converter_tools
+        and "uptime_percentage: null" in converter_tools,
+        "converter fallback tools must not invent latency or uptime metrics",
+        failures,
+    )
+    expect(
+        'status: "draft"' in converter_tools and "api_endpoint: null" in converter_tools,
+        "converter fallback records must remain drafts without synthetic demo endpoints",
+        failures,
+    )
+    converter_service = CONVERTER_SERVICE.read_text(encoding="utf-8")
+    expect(
+        "_run_demo_once" not in converter_service
+        and '"latency_ms"' not in converter_service
+        and "Runtime QA requires a deployed tool endpoint" in converter_service,
+        "converter QA must never certify simulated calls or report synthetic latency",
+        failures,
+    )
+
+    seller_server = SELLER_TOOL_SERVER.read_text(encoding="utf-8")
+    seller_openrouter = SELLER_TOOL_OPENROUTER.read_text(encoding="utf-8")
+    seller_vision = SELLER_TOOL_VISION.read_text(encoding="utf-8")
+    seller_comprehensive = SELLER_TOOL_COMPREHENSIVE.read_text(encoding="utf-8")
+    seller_url_safety = SELLER_TOOL_URL_SAFETY.read_text(encoding="utf-8")
+    seller_listing_scraper = SELLER_TOOL_LISTING_SCRAPER.read_text(encoding="utf-8")
+    seller_image_service = SELLER_TOOL_IMAGE_SERVICE.read_text(encoding="utf-8")
+    expect(
+        'app.get("/ready"' in seller_server and "isAnalysisProviderConfigured" in seller_server,
+        "seller tool readiness must fail closed when its provider is not configured",
+        failures,
+    )
+    expect(
+        "providerNotConfiguredError" in seller_openrouter
+        and "providerNotConfiguredError" in seller_vision
+        and "generateDynamicAnalysis" not in seller_openrouter
+        and "generateDynamicAnalysis" not in seller_vision,
+        "seller tool provider failures must never return synthetic analysis",
+        failures,
+    )
+    expect(
+        "successfulVisionResults.length === 0" in seller_comprehensive
+        and "throw error" in seller_comprehensive
+        and "overall_score: 0" not in seller_comprehensive,
+        "seller tool must fail honestly when every provider-backed analysis fails",
+        failures,
+    )
+    expect(
+        "assertPublicHttpsUrl" in seller_url_safety
+        and "isPublicIpAddress" in seller_url_safety
+        and "LISTING_HOST_SUFFIXES" in seller_url_safety,
+        "seller tool remote fetches must validate HTTPS hosts and resolved IP addresses",
+        failures,
+    )
+    expect(
+        'redirect: "manual"' in seller_listing_scraper
+        and "assertSafeRemoteUrl" in seller_listing_scraper
+        and "readResponseText" in seller_listing_scraper,
+        "listing fetches must revalidate redirects and cap response size",
+        failures,
+    )
+    expect(
+        'redirect: "error"' in seller_image_service
+        and "assertSafeRemoteUrl" in seller_image_service
+        and "readResponseBuffer" in seller_image_service,
+        "remote image fetches must block redirects, SSRF targets, and unbounded bodies",
+        failures,
+    )
+    for obsolete_service in ["bedrock-service.js", "gemini-service.js", "openai-service.js"]:
+        expect(
+            not (SELLER_TOOL_ROOT / "services" / obsolete_service).exists(),
+            f"remove obsolete seller tool provider adapter {obsolete_service}",
+            failures,
+        )
     tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
     expect(
         'settings.environment == "production" and current_user is None' in tools_router,
@@ -501,7 +716,9 @@ def check_repo_files(failures: list[str]) -> None:
         "public tool APIs must redact seller secrets, storage keys, and raw endpoints",
         failures,
     )
-    gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(encoding="utf-8")
+    gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(
+        encoding="utf-8"
+    )
     expect(
         "_ensure_gateway_entitlement" in gateway_router
         and "OwnershipType.full_sale" in gateway_router
@@ -529,10 +746,20 @@ def check_repo_files(failures: list[str]) -> None:
         "internal converter imports must not mark tools live without an invokable endpoint",
         failures,
     )
-    expect(OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures)
+    expect(
+        OPERATIONS_HEALTH_SERVICE.exists(), "shared operations health service is missing", failures
+    )
     operations_health_service = OPERATIONS_HEALTH_SERVICE.read_text(encoding="utf-8")
-    expect("get_operations_health" in operations_health_service, "operations health service must expose shared health summary", failures)
-    expect("processing_job_check" in operations_health_service, "operations health service must centralize processing-job risk classification", failures)
+    expect(
+        "get_operations_health" in operations_health_service,
+        "operations health service must expose shared health summary",
+        failures,
+    )
+    expect(
+        "processing_job_check" in operations_health_service,
+        "operations health service must centralize processing-job risk classification",
+        failures,
+    )
     expect(
         "worker_heartbeat" in api_main and "missing_heartbeat" in api_main,
         "API readiness must expose worker heartbeat status",
@@ -553,7 +780,9 @@ def check_repo_files(failures: list[str]) -> None:
         "early request body limit errors must use the standard traceable error envelope",
         failures,
     )
-    error_handler = (REPO_ROOT / "apps" / "api" / "app" / "middleware" / "error_handler.py").read_text(encoding="utf-8")
+    error_handler = (
+        REPO_ROOT / "apps" / "api" / "app" / "middleware" / "error_handler.py"
+    ).read_text(encoding="utf-8")
     expect(
         "_safe_validation_errors" in error_handler
         and "SENSITIVE_VALIDATION_ERROR_KEYS" in error_handler
@@ -566,16 +795,36 @@ def check_repo_files(failures: list[str]) -> None:
         "shared operations health must degrade when worker queue depth is too high",
         failures,
     )
-    expect("operations_health_service.get_operations_health" in api_main, "API readiness must use the shared operations health service", failures)
+    expect(
+        "operations_health_service.get_operations_health" in api_main,
+        "API readiness must use the shared operations health service",
+        failures,
+    )
 
     admin_router = API_ADMIN_ROUTER.read_text(encoding="utf-8")
     tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
-    expect("operations_health_service.get_operations_health" in admin_router, "admin health endpoint must use the shared operations health service", failures)
+    expect(
+        "operations_health_service.get_operations_health" in admin_router,
+        "admin health endpoint must use the shared operations health service",
+        failures,
+    )
     expect(ADMIN_AUDIT_SERVICE.exists(), "admin audit service is missing", failures)
     admin_audit_service = ADMIN_AUDIT_SERVICE.read_text(encoding="utf-8")
-    expect("record_admin_action" in admin_audit_service, "admin mutations must have a durable audit recorder", failures)
-    expect("list_admin_audit_logs" in admin_audit_service, "admin dashboard must expose audit history", failures)
-    expect("record_admin_action" in admin_router, "admin mutation routes must record audit actions", failures)
+    expect(
+        "record_admin_action" in admin_audit_service,
+        "admin mutations must have a durable audit recorder",
+        failures,
+    )
+    expect(
+        "list_admin_audit_logs" in admin_audit_service,
+        "admin dashboard must expose audit history",
+        failures,
+    )
+    expect(
+        "record_admin_action" in admin_router,
+        "admin mutation routes must record audit actions",
+        failures,
+    )
     expect(
         '"previous"' in admin_router
         and '"new"' in admin_router
@@ -587,22 +836,58 @@ def check_repo_files(failures: list[str]) -> None:
     expect("/audit-logs" in admin_router, "admin API must expose audit logs to admins", failures)
 
     smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
-    expect("check_api_auth_boundary" in smoke_check, "smoke checks must verify protected API routes", failures)
-    expect("parse_json_error" in smoke_check, "smoke checks must verify structured API error payloads", failures)
-    expect("check_api_cors" in smoke_check, "smoke checks must verify production CORS behavior", failures)
-    expect("check_api_debug_routes_closed" in smoke_check, "smoke checks must verify production API docs and OpenAPI schema are disabled", failures)
+    expect(
+        "check_api_auth_boundary" in smoke_check,
+        "smoke checks must verify protected API routes",
+        failures,
+    )
+    expect(
+        "parse_json_error" in smoke_check,
+        "smoke checks must verify structured API error payloads",
+        failures,
+    )
+    expect(
+        "check_api_cors" in smoke_check,
+        "smoke checks must verify production CORS behavior",
+        failures,
+    )
+    expect(
+        "check_api_debug_routes_closed" in smoke_check,
+        "smoke checks must verify production API docs and OpenAPI schema are disabled",
+        failures,
+    )
     expect(
         "production CSP includes unsafe directives" in smoke_check
         and "strict-transport-security" in smoke_check,
         "smoke checks must reject unsafe production frontend security headers",
         failures,
     )
-    expect("check_submission_status_page" in smoke_check, "smoke checks must verify submission status pages", failures)
-    expect("check_admin_operations_health" in smoke_check, "smoke checks must verify admin operations health when an admin token is provided", failures)
+    expect(
+        "check_submission_status_page" in smoke_check,
+        "smoke checks must verify submission status pages",
+        failures,
+    )
+    expect(
+        "check_admin_operations_health" in smoke_check,
+        "smoke checks must verify admin operations health when an admin token is provided",
+        failures,
+    )
     load_smoke_check = PRODUCTION_LOAD_SMOKE_CHECK.read_text(encoding="utf-8")
-    expect("ThreadPoolExecutor" in load_smoke_check, "load smoke check must exercise concurrent requests", failures)
-    expect("gateway invocation" in load_smoke_check, "load smoke check must support gateway invocation checks", failures)
-    expect("public discovery" in load_smoke_check, "load smoke check must cover tool discovery under load", failures)
+    expect(
+        "ThreadPoolExecutor" in load_smoke_check,
+        "load smoke check must exercise concurrent requests",
+        failures,
+    )
+    expect(
+        "gateway invocation" in load_smoke_check,
+        "load smoke check must support gateway invocation checks",
+        failures,
+    )
+    expect(
+        "public discovery" in load_smoke_check,
+        "load smoke check must cover tool discovery under load",
+        failures,
+    )
     expect(
         "api_origin_url" in smoke_check
         and "rest_api_url" in smoke_check
@@ -614,9 +899,17 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
-    expect("/admin/operations-health" in admin_page, "admin dashboard must load production operations health", failures)
+    expect(
+        "/admin/operations-health" in admin_page,
+        "admin dashboard must load production operations health",
+        failures,
+    )
     expect("/admin/audit-logs" in admin_page, "admin dashboard must load audit logs", failures)
-    expect("Production health" in admin_page, "admin dashboard must render production health status", failures)
+    expect(
+        "Production health" in admin_page,
+        "admin dashboard must render production health status",
+        failures,
+    )
     expect("Audit trail" in admin_page, "admin dashboard must render admin audit trail", failures)
 
     web_env = WEB_ENV.read_text(encoding="utf-8")
@@ -726,11 +1019,31 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     url_safety = URL_SAFETY.read_text(encoding="utf-8")
-    expect("validate_public_tool_endpoint" in url_safety, "API must validate outbound seller tool URLs", failures)
-    expect("is_private" in url_safety and "is_loopback" in url_safety, "URL safety must reject private/loopback IPs", failures)
-    expect("getaddrinfo" in url_safety, "URL safety must resolve hostnames before outbound tool calls", failures)
-    expect("validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety, "URL safety DNS checks must not block the async request path", failures)
-    expect("https" in url_safety, "URL safety must require HTTPS tool endpoints in production", failures)
+    expect(
+        "validate_public_tool_endpoint" in url_safety,
+        "API must validate outbound seller tool URLs",
+        failures,
+    )
+    expect(
+        "is_private" in url_safety and "is_loopback" in url_safety,
+        "URL safety must reject private/loopback IPs",
+        failures,
+    )
+    expect(
+        "getaddrinfo" in url_safety,
+        "URL safety must resolve hostnames before outbound tool calls",
+        failures,
+    )
+    expect(
+        "validate_public_tool_endpoint_async" in url_safety and "to_thread" in url_safety,
+        "URL safety DNS checks must not block the async request path",
+        failures,
+    )
+    expect(
+        "https" in url_safety,
+        "URL safety must require HTTPS tool endpoints in production",
+        failures,
+    )
 
     proxy_service = PROXY_SERVICE.read_text(encoding="utf-8")
     expect(
@@ -751,15 +1064,41 @@ def check_repo_files(failures: list[str]) -> None:
     source_archive = SOURCE_ARCHIVE.read_text(encoding="utf-8")
     container_service = CONTAINER_SERVICE.read_text(encoding="utf-8")
     expect("stat.S_ISLNK" in source_archive, "source ZIP validation must reject symlinks", failures)
-    expect("PureWindowsPath" in source_archive, "source ZIP validation must reject Windows absolute and traversal paths", failures)
-    expect("duplicate file paths" in source_archive, "source ZIP validation must reject normalized duplicate paths", failures)
-    expect("extract_safe_zip" in container_service, "worker source extraction must use the shared safe ZIP extractor", failures)
-    expect("extractall" not in container_service, "worker source extraction must not use zipfile.extractall", failures)
-    expect("unpack_archive" not in container_service, "worker source extraction must not use shutil.unpack_archive", failures)
+    expect(
+        "PureWindowsPath" in source_archive,
+        "source ZIP validation must reject Windows absolute and traversal paths",
+        failures,
+    )
+    expect(
+        "duplicate file paths" in source_archive,
+        "source ZIP validation must reject normalized duplicate paths",
+        failures,
+    )
+    expect(
+        "extract_safe_zip" in container_service,
+        "worker source extraction must use the shared safe ZIP extractor",
+        failures,
+    )
+    expect(
+        "extractall" not in container_service,
+        "worker source extraction must not use zipfile.extractall",
+        failures,
+    )
+    expect(
+        "unpack_archive" not in container_service,
+        "worker source extraction must not use shutil.unpack_archive",
+        failures,
+    )
 
-    auth_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "auth_service.py").read_text(encoding="utf-8")
-    auth_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "auth.py").read_text(encoding="utf-8")
-    auth_dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(encoding="utf-8")
+    auth_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "auth_service.py").read_text(
+        encoding="utf-8"
+    )
+    auth_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "auth.py").read_text(
+        encoding="utf-8"
+    )
+    auth_dependencies = (REPO_ROOT / "apps" / "api" / "app" / "dependencies.py").read_text(
+        encoding="utf-8"
+    )
     api_config = API_CONFIG.read_text(encoding="utf-8")
     expect(
         "clerk_issuer_url" in api_config
@@ -785,7 +1124,7 @@ def check_repo_files(failures: list[str]) -> None:
         "_handle_user_created" in auth_router
         and "_handle_user_updated" in auth_router
         and "sync_user_from_identity" in auth_router
-        and "avatar_url=clerk_user.get(\"image_url\")" in auth_router
+        and 'avatar_url=clerk_user.get("image_url")' in auth_router
         and ".values(avatar_url" not in auth_router,
         "Clerk webhooks must route avatar updates through auth sync sanitization",
         failures,
@@ -797,7 +1136,11 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     tool_service = TOOL_SERVICE.read_text(encoding="utf-8")
-    expect("flush_total_requests_if_needed" in tools_router, "public demos must flush request counters for durable production metrics", failures)
+    expect(
+        "flush_total_requests_if_needed" in tools_router,
+        "public demos must flush request counters for durable production metrics",
+        failures,
+    )
     expect(
         "raise ToolNotLiveError(slug)" in tools_router
         and "docs_service.generate_tool_docs(tool)" in tools_router
@@ -805,21 +1148,40 @@ def check_repo_files(failures: list[str]) -> None:
         "public tool docs must only expose live tools and use configured public API URLs",
         failures,
     )
-    docs_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "docs_service.py").read_text(encoding="utf-8")
+    docs_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "docs_service.py").read_text(
+        encoding="utf-8"
+    )
     expect(
         "_gateway_api_base" in docs_service
         and 'base.endswith("/v1")' in docs_service
         and 'base.endswith("/api/v1")' in docs_service
-        and 'endpoint_url = f"{_gateway_api_base(public_api_base_url)}/tools/{tool.slug}"' in docs_service,
+        and 'endpoint_url = f"{_gateway_api_base(public_api_base_url)}/tools/{tool.slug}"'
+        in docs_service,
         "generated tool docs must normalize PUBLIC_API_BASE_URL before publishing gateway URLs",
         failures,
     )
-    expect("getdel" in tool_service, "request counter flushes must atomically drain Redis before writing to Postgres", failures)
+    expect(
+        "getdel" in tool_service,
+        "request counter flushes must atomically drain Redis before writing to Postgres",
+        failures,
+    )
 
-    expect("python scripts/security_scan.py" in ci_workflow, "CI must scan tracked files for secrets", failures)
-    expect("pip-audit -r requirements.txt" in ci_workflow, "CI must audit backend runtime dependencies", failures)
+    expect(
+        "python scripts/security_scan.py" in ci_workflow,
+        "CI must scan tracked files for secrets",
+        failures,
+    )
+    expect(
+        "pip-audit -r requirements.txt" in ci_workflow,
+        "CI must audit backend runtime dependencies",
+        failures,
+    )
     expect("ruff check app tests" in ci_workflow, "CI must enforce backend linting", failures)
-    expect("ruff format --check app tests" in ci_workflow, "CI must enforce backend formatting", failures)
+    expect(
+        "ruff format --check app tests" in ci_workflow,
+        "CI must enforce backend formatting",
+        failures,
+    )
     expect("npm run test:e2e" in ci_workflow, "CI must run frontend browser tests", failures)
     expect(
         "python ../../scripts/check_migration_safety.py" in ci_workflow,
@@ -836,12 +1198,20 @@ def check_repo_files(failures: list[str]) -> None:
         "CI must block committed build artifacts and local files",
         failures,
     )
-    expect("npm audit --audit-level=high" in ci_workflow, "CI must audit Node dependencies", failures)
-    expect("npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures)
-    expect("npm run test:security" in ci_workflow, "CI must test frontend security headers", failures)
+    expect(
+        "npm audit --audit-level=high" in ci_workflow, "CI must audit Node dependencies", failures
+    )
+    expect(
+        "npm run test:env" in ci_workflow, "CI must test frontend environment validation", failures
+    )
+    expect(
+        "npm run test:security" in ci_workflow, "CI must test frontend security headers", failures
+    )
     expect("npm run build" in ci_workflow, "CI must build the frontend", failures)
 
-    validate_env_test = (REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.test.mjs").read_text(encoding="utf-8")
+    validate_env_test = (
+        REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.test.mjs"
+    ).read_text(encoding="utf-8")
     expect(
         "NEXT_PUBLIC_DEMO_API_KEY must not be set" in validate_env_test,
         "frontend env tests must reject public demo API keys in deploy builds",
@@ -849,7 +1219,10 @@ def check_repo_files(failures: list[str]) -> None:
     )
     expect(
         "rejects test Clerk keys in deploy builds" in validate_env_test
-        and "must use a live Clerk key in deploy builds" in (REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.mjs").read_text(encoding="utf-8"),
+        and "must use a live Clerk key in deploy builds"
+        in (REPO_ROOT / "apps" / "web" / "scripts" / "validate-env.mjs").read_text(
+            encoding="utf-8"
+        ),
         "frontend deploy env validation must reject test-mode Clerk keys",
         failures,
     )
@@ -883,7 +1256,11 @@ def check_repo_files(failures: list[str]) -> None:
         expect(f"{key}=" in env_example, f".env.example is missing {key}", failures)
 
     for legacy_path in ["render 2.yaml", "render copy.yaml"]:
-        expect(not (REPO_ROOT / legacy_path).exists(), f"remove stale blueprint file {legacy_path}", failures)
+        expect(
+            not (REPO_ROOT / legacy_path).exists(),
+            f"remove stale blueprint file {legacy_path}",
+            failures,
+        )
 
 
 def main() -> int:

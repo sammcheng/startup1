@@ -14,6 +14,8 @@ describe("config helpers", () => {
     UPLOAD_DIR: process.env.UPLOAD_DIR,
     PUBLIC_APP_URL: process.env.PUBLIC_APP_URL,
     OPENROUTER_TIMEOUT_MS: process.env.OPENROUTER_TIMEOUT_MS,
+    OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
+    MAX_LISTING_HTML_BYTES: process.env.MAX_LISTING_HTML_BYTES,
   };
 
   afterEach(() => {
@@ -68,6 +70,8 @@ describe("config helpers", () => {
     process.env.MAX_INLINE_IMAGES = "3";
     process.env.PUBLIC_APP_URL = "https://example.com";
     process.env.OPENROUTER_TIMEOUT_MS = "15000";
+    process.env.OPENROUTER_MODEL = "openai/test-vision";
+    process.env.MAX_LISTING_HTML_BYTES = "123456";
 
     const config = getRuntimeConfig();
 
@@ -76,6 +80,8 @@ describe("config helpers", () => {
     expect(config.uploadDir).toBe("/var/uploads");
     expect(config.publicAppUrl).toBe("https://example.com");
     expect(config.openrouterTimeoutMs).toBe(15000);
+    expect(config.openrouterModel).toBe("openai/test-vision");
+    expect(config.maxListingHtmlBytes).toBe(123456);
   });
 
   test("getRuntimeConfig returns a copy of allowedMimeTypes", () => {

@@ -12,6 +12,10 @@ test("can browse marketplace and filter by category", async ({ page }) => {
   await page.getByRole("button", { name: "NLP", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: "Document Signal Extractor" })).toBeVisible();
+  const toolCard = page.locator('a[href="/tools/document-signal-extractor"]');
+  await expect(toolCard.getByText("latency", { exact: true })).toBeVisible();
+  await expect(toolCard.getByText("calls", { exact: true })).toBeVisible();
+  await expect(toolCard.getByText("Test Seller", { exact: true })).toBeVisible();
 });
 
 test("can view tool detail page", async ({ page }) => {

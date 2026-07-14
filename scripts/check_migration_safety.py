@@ -9,10 +9,8 @@ SQL during a production launch.
 from __future__ import annotations
 
 import ast
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO_ROOT / "apps" / "api" / "alembic" / "versions"
@@ -81,7 +79,11 @@ def inspect_call(path: Path, call: ast.Call) -> Finding | None:
 
     for arg in call.args:
         text = literal_text(arg)
-        if text is None and isinstance(arg, ast.Call) and dotted_name(arg.func) in {"sa.text", "sqlalchemy.text"}:
+        if (
+            text is None
+            and isinstance(arg, ast.Call)
+            and dotted_name(arg.func) in {"sa.text", "sqlalchemy.text"}
+        ):
             text = literal_text(arg.args[0]) if arg.args else None
         if text is None:
             continue

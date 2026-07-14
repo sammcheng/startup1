@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "type-check": "next typegen && node scripts/clean-next-types.mjs && tsc --noEmit",
     "validate:env": "node scripts/validate-env.mjs",
-    "test:env": "node --test scripts/validate-env.test.mjs",
+    "test:env": "node --test scripts/validate-env.test.mjs scripts/start-container.test.mjs",
     "test:security": "node --test scripts/security-headers.test.mjs",
     "test:e2e": "playwright test"
   },

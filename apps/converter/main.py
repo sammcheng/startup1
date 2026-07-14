@@ -20,12 +20,12 @@ import re
 import sqlite3
 import subprocess
 import tempfile
-import time
 import uuid
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,24 +37,41 @@ log = logging.getLogger("converter")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GROQ_API_KEY      = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL        = "llama-3.1-8b-instant"
-DB_PATH           = os.environ.get("DB_PATH", "tools.db")
-MAX_FILE_BYTES    = 3_000
-MAX_FILES         = 6
-MAIN_API_URL      = os.environ.get("MAIN_API_URL", "http://localhost:8000")
-CONVERTER_SECRET  = os.environ.get("CONVERTER_SECRET", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = "llama-3.1-8b-instant"
+DB_PATH = os.environ.get("DB_PATH", "tools.db")
+MAX_FILE_BYTES = 3_000
+MAX_FILES = 6
+MAIN_API_URL = os.environ.get("MAIN_API_URL", "http://localhost:8000")
+CONVERTER_SECRET = os.environ.get("CONVERTER_SECRET", "")
 
 SUPPORTED_EXT = {
-    ".py", ".js", ".ts", ".go", ".rs", ".rb", ".java", ".cpp", ".c",
+    ".py",
+    ".js",
+    ".ts",
+    ".go",
+    ".rs",
+    ".rb",
+    ".java",
+    ".cpp",
+    ".c",
 }
 
 SKIP_DIRS = {
-    "node_modules", ".git", "__pycache__", "venv", ".venv",
-    "dist", "build", ".next", "vendor", "target",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "dist",
+    "build",
+    ".next",
+    "vendor",
+    "target",
 }
 
 # ── Database ──────────────────────────────────────────────────────────────────
+
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -88,15 +105,35 @@ def init_db() -> None:
                 conn.execute(migration)
             except Exception:
                 log.warning("Migration skipped (likely already applied): %s", migration[:30])
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS converter_migrations (
+                key        TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+        """)
+        cleanup_key = "clear_synthetic_qa_metrics_v1"
+        cleanup_applied = conn.execute(
+            "SELECT 1 FROM converter_migrations WHERE key = ?", (cleanup_key,)
+        ).fetchone()
+        if not cleanup_applied:
+            # Every certification produced by older builds came from a simulated sleep.
+            conn.execute(
+                "UPDATE tools SET qa_avg_ms = NULL, qa_certified = 0 WHERE qa_certified = 1"
+            )
+            conn.execute(
+                "INSERT INTO converter_migrations (key, applied_at) VALUES (?, ?)",
+                (cleanup_key, datetime.now(UTC).isoformat()),
+            )
         conn.commit()
 
 
 # ── In-memory job store ───────────────────────────────────────────────────────
 
-jobs: dict[str, dict] = {}          # job_id → {status, logs, result, error}
+jobs: dict[str, dict] = {}  # job_id → {status, logs, result, error}
 executor = ThreadPoolExecutor(max_workers=4)
 
 # ── Code analysis helpers ─────────────────────────────────────────────────────
+
 
 def _collect_files(root: Path) -> list[dict]:
     files = []
@@ -196,7 +233,6 @@ def _extract_json(text: str) -> dict:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             # Count unclosed depth and append closing chars
-            depth2 = 0
             stack = []
             in_str = False
             esc = False
@@ -224,26 +260,34 @@ def _extract_json(text: str) -> dict:
             return json.loads(cleaned)
 
 
-async def _generate_pdf_summary(spec: dict, slug: str, repo_url: str, qa_avg_ms: int | None, qa_certified: bool) -> str:
+async def _generate_pdf_summary(spec: dict, slug: str, repo_url: str) -> str:
     """Generate a structured markdown summary for human review."""
     name = spec.get("repo_name", slug)
     language = spec.get("language", "unknown")
     description = spec.get("description", "")
     endpoints = spec.get("endpoints", [])
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     ep_rows = "\n".join(
-        f"| {ep.get('method','?')} | `{ep.get('path','?')}` | {ep.get('summary','')[:80]} |"
+        f"| {ep.get('method', '?')} | `{ep.get('path', '?')}` | {ep.get('summary', '')[:80]} |"
         for ep in endpoints
     )
-    ep_table = f"| Method | Path | Summary |\n|--------|------|---------|\n{ep_rows}" if ep_rows else "_No endpoints detected_"
+    ep_table = (
+        f"| Method | Path | Summary |\n|--------|------|---------|\n{ep_rows}"
+        if ep_rows
+        else "_No endpoints detected_"
+    )
 
     first_ep = endpoints[0] if endpoints else None
     input_fields = first_ep.get("request_body", {}) if first_ep else {}
     input_rows = "\n".join(f"| `{k}` | {v} |" for k, v in input_fields.items())
-    input_table = f"| Field | Type / Description |\n|-------|------------------|\n{input_rows}" if input_rows else "_No input schema_"
+    input_table = (
+        f"| Field | Type / Description |\n|-------|------------------|\n{input_rows}"
+        if input_rows
+        else "_No input schema_"
+    )
 
-    qa_line = f"✓ QA Certified — {qa_avg_ms}ms avg latency" if qa_certified else "✗ Not QA Certified"
+    qa_line = "Not executed; deploy and test the real endpoint before approval"
 
     summary = f"""# API Review Summary — {name}
 
@@ -305,6 +349,7 @@ async def _generate_qa_inputs(spec: dict) -> dict:
 
     def _call() -> dict:
         from groq import Groq
+
         client = Groq(api_key=GROQ_API_KEY)
         resp = client.chat.completions.create(
             model=GROQ_MODEL,
@@ -322,26 +367,16 @@ async def _generate_qa_inputs(spec: dict) -> dict:
         return {}
 
 
-async def _run_demo_once(spec: dict) -> dict:
-    """Run one simulated demo call and return elapsed ms."""
-    t0 = time.perf_counter()
-    try:
-        await asyncio.sleep(0.18)
-        ms = int((time.perf_counter() - t0) * 1000)
-        return {"ok": True, "ms": ms}
-    except Exception:
-        return {"ok": False, "ms": 0}
-
-
 def _call_groq(files: list[dict], tree: str) -> dict:
     from groq import Groq
+
     client = Groq(api_key=GROQ_API_KEY)
     files_text = "\n\n".join(f"=== {f['path']} ===\n{f['content']}" for f in files)
     resp = client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": f"File tree:\n{tree}\n\nSource:\n{files_text}"},
+            {"role": "user", "content": f"File tree:\n{tree}\n\nSource:\n{files_text}"},
         ],
         temperature=0,
         max_tokens=2048,
@@ -350,6 +385,7 @@ def _call_groq(files: list[dict], tree: str) -> dict:
 
 
 # ── Background analysis task ──────────────────────────────────────────────────
+
 
 def _log(job_id: str, msg: str) -> None:
     jobs[job_id]["logs"].append(msg)
@@ -371,14 +407,17 @@ def _slugify(name: str) -> str:
 def _register_with_main_api(spec: dict, repo_url: str) -> str:
     """POST the analyzed spec to the main API's internal import endpoint. Returns marketplace URL."""
     import urllib.request
-    payload = json.dumps({
-        "repo_url": repo_url,
-        "repo_name": spec.get("repo_name", "tool"),
-        "language": spec.get("language", "unknown"),
-        "description": spec.get("description", ""),
-        "endpoints": spec.get("endpoints", []),
-        "setup_notes": spec.get("setup_notes", ""),
-    }).encode()
+
+    payload = json.dumps(
+        {
+            "repo_url": repo_url,
+            "repo_name": spec.get("repo_name", "tool"),
+            "language": spec.get("language", "unknown"),
+            "description": spec.get("description", ""),
+            "endpoints": spec.get("endpoints", []),
+            "setup_notes": spec.get("setup_notes", ""),
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{MAIN_API_URL.rstrip('/')}/v1/internal/tools/import",
         data=payload,
@@ -401,15 +440,17 @@ def _run_analysis(job_id: str, repo_url: str) -> None:
             _log(job_id, "Cloning repository...")
             r = subprocess.run(
                 ["git", "clone", "--depth", "1", repo_url, tmp],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if r.returncode != 0:
                 raise RuntimeError(f"Clone failed: {r.stderr.strip()[:200]}")
 
             _log(job_id, "Reading source files...")
-            root  = Path(tmp)
+            root = Path(tmp)
             files = _collect_files(root)
-            tree  = _build_tree(root)
+            tree = _build_tree(root)
             _log(job_id, f"{len(files)} file(s) selected for analysis")
 
             _log(job_id, "Detecting language and entry points...")
@@ -422,7 +463,7 @@ def _run_analysis(job_id: str, repo_url: str) -> None:
             _log(job_id, "Registering tool...")
             slug = _slugify(spec.get("repo_name", "tool"))
             tool_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
             with get_conn() as conn:
                 conn.execute(
@@ -451,11 +492,12 @@ def _run_analysis(job_id: str, repo_url: str) -> None:
 
     except Exception as exc:
         log.exception("Analysis failed for %s", job_id)
-        job["status"]  = "error"
-        job["error"]   = str(exc)
+        job["status"] = "error"
+        job["error"] = str(exc)
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
+
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
@@ -464,7 +506,7 @@ def _sse(data: dict) -> str:
 async def _stream(job_id: str) -> AsyncIterator[str]:
     last = 0
     while True:
-        job  = jobs.get(job_id)
+        job = jobs.get(job_id)
         if job is None:
             yield _sse({"type": "error", "message": "job not found"})
             return
@@ -486,7 +528,6 @@ async def _stream(job_id: str) -> AsyncIterator[str]:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
@@ -507,6 +548,7 @@ app.add_middleware(
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
 
 @app.get("/health")
 def health() -> dict:
@@ -540,7 +582,7 @@ async def stream_analyze(job_id: str) -> StreamingResponse:
         _stream(job_id),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
+            "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
@@ -565,7 +607,7 @@ def list_tools(limit: int = 20, offset: int = 0, q: str = "", show_all: bool = F
             total = conn.execute(
                 f"SELECT COUNT(*) FROM tools WHERE 1=1 {listed_clause}"
             ).fetchone()[0]
-            rows  = conn.execute(
+            rows = conn.execute(
                 f"SELECT {cols} FROM tools "
                 f"WHERE 1=1 {listed_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 (limit, offset),
@@ -573,28 +615,30 @@ def list_tools(limit: int = 20, offset: int = 0, q: str = "", show_all: bool = F
     tools = []
     for r in rows:
         spec = json.loads(r["spec"])
-        tools.append({
-            "id":           r["id"],
-            "slug":         r["slug"],
-            "repo_url":     r["repo_url"],
-            "name":         spec.get("repo_name", r["slug"]),
-            "language":     spec.get("language", ""),
-            "description":  spec.get("description", ""),
-            "endpoints":    spec.get("endpoints", []),
-            "setup_notes":  spec.get("setup_notes", ""),
-            "created_at":   r["created_at"],
-            "listed":       bool(r["listed"]),
-            "qa_inputs":     json.loads(r["qa_inputs"]) if r["qa_inputs"] else None,
-            "qa_avg_ms":     r["qa_avg_ms"],
-            "qa_certified":  bool(r["qa_certified"]),
-            "review_status": r["review_status"] or "draft",
-        })
+        tools.append(
+            {
+                "id": r["id"],
+                "slug": r["slug"],
+                "repo_url": r["repo_url"],
+                "name": spec.get("repo_name", r["slug"]),
+                "language": spec.get("language", ""),
+                "description": spec.get("description", ""),
+                "endpoints": spec.get("endpoints", []),
+                "setup_notes": spec.get("setup_notes", ""),
+                "created_at": r["created_at"],
+                "listed": bool(r["listed"]),
+                "qa_inputs": json.loads(r["qa_inputs"]) if r["qa_inputs"] else None,
+                "qa_avg_ms": r["qa_avg_ms"],
+                "qa_certified": bool(r["qa_certified"]),
+                "review_status": r["review_status"] or "draft",
+            }
+        )
     return {"tools": tools, "total": total}
 
 
 @app.post("/api/tools/{slug}/qa")
 async def qa_tool(slug: str) -> dict:
-    """Run AI QA check: generate smart inputs via Groq + benchmark 3 calls."""
+    """Generate candidate test inputs without claiming runtime certification."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT spec, qa_certified, qa_inputs, qa_avg_ms FROM tools WHERE slug = ?", (slug,)
@@ -602,33 +646,22 @@ async def qa_tool(slug: str) -> dict:
     if not row:
         raise HTTPException(404, "Tool not found")
 
-    if row["qa_certified"]:
-        return {
-            "certified": True,
-            "avg_ms": row["qa_avg_ms"],
-            "inputs": json.loads(row["qa_inputs"]) if row["qa_inputs"] else {},
-        }
-
     spec = json.loads(row["spec"])
     inputs = await _generate_qa_inputs(spec)
-
-    times: list[int] = []
-    for _ in range(3):
-        r = await _run_demo_once(spec)
-        if r["ok"]:
-            times.append(r["ms"])
-
-    avg_ms = int(sum(times) / len(times)) if times else None
-    certified = len(times) >= 2
 
     with get_conn() as conn:
         conn.execute(
             "UPDATE tools SET qa_inputs = ?, qa_avg_ms = ?, qa_certified = ? WHERE slug = ?",
-            (json.dumps(inputs), avg_ms, 1 if certified else 0, slug),
+            (json.dumps(inputs), None, 0, slug),
         )
         conn.commit()
 
-    return {"certified": certified, "avg_ms": avg_ms, "inputs": inputs}
+    return {
+        "certified": False,
+        "avg_ms": None,
+        "inputs": inputs,
+        "message": "Runtime QA requires a deployed tool endpoint.",
+    }
 
 
 @app.post("/api/tools/{slug}/list")
@@ -641,10 +674,7 @@ async def list_tool(slug: str) -> dict:
             raise HTTPException(404, "Tool not found")
 
     spec = json.loads(row["spec"])
-    pdf = await _generate_pdf_summary(
-        spec, slug, row["repo_url"],
-        row["qa_avg_ms"], bool(row["qa_certified"]),
-    )
+    pdf = await _generate_pdf_summary(spec, slug, row["repo_url"])
 
     with get_conn() as conn:
         conn.execute(
@@ -665,19 +695,21 @@ def list_pending_tools() -> dict:
     tools = []
     for r in rows:
         spec = json.loads(r["spec"])
-        tools.append({
-            "id":           r["id"],
-            "slug":         r["slug"],
-            "repo_url":     r["repo_url"],
-            "name":         spec.get("repo_name", r["slug"]),
-            "language":     spec.get("language", ""),
-            "description":  spec.get("description", ""),
-            "endpoints":    spec.get("endpoints", []),
-            "qa_certified": bool(r["qa_certified"]),
-            "qa_avg_ms":    r["qa_avg_ms"],
-            "pdf_summary":  r["pdf_summary"],
-            "created_at":   r["created_at"],
-        })
+        tools.append(
+            {
+                "id": r["id"],
+                "slug": r["slug"],
+                "repo_url": r["repo_url"],
+                "name": spec.get("repo_name", r["slug"]),
+                "language": spec.get("language", ""),
+                "description": spec.get("description", ""),
+                "endpoints": spec.get("endpoints", []),
+                "qa_certified": bool(r["qa_certified"]),
+                "qa_avg_ms": r["qa_avg_ms"],
+                "pdf_summary": r["pdf_summary"],
+                "created_at": r["created_at"],
+            }
+        )
     return {"tools": tools, "total": len(tools)}
 
 
@@ -687,11 +719,10 @@ def approve_tool(slug: str) -> dict:
         row = conn.execute("SELECT id FROM tools WHERE slug = ?", (slug,)).fetchone()
         if not row:
             raise HTTPException(404, "Tool not found")
-        conn.execute(
-            "UPDATE tools SET listed = 1, review_status = 'approved' WHERE slug = ?", (slug,)
-        )
-        conn.commit()
-    return {"slug": slug, "approved": True}
+    raise HTTPException(
+        409,
+        "Converter analysis cannot approve a tool without a deployed endpoint. Submit it through the seller pipeline.",
+    )
 
 
 class RejectRequest(BaseModel):
@@ -712,36 +743,18 @@ def reject_tool(slug: str, body: RejectRequest) -> dict:
     return {"slug": slug, "rejected": True}
 
 
-class DemoRequest(BaseModel):
-    model_config = {"extra": "allow"}
-
-
 @app.post("/api/tools/{slug}/demo")
-async def demo_tool(slug: str, body: DemoRequest = None) -> dict:
-    """Return a realistic demo response based on the spec's response_example."""
+async def demo_tool(slug: str) -> dict:
+    """Reject synthetic previews; demos require a deployed tool endpoint."""
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT spec FROM tools WHERE slug = ?", (slug,)
-        ).fetchone()
+        row = conn.execute("SELECT spec FROM tools WHERE slug = ?", (slug,)).fetchone()
     if not row:
         raise HTTPException(404, "Tool not found")
 
-    spec = json.loads(row["spec"])
-    endpoints = spec.get("endpoints", [])
-    first_ep = endpoints[0] if endpoints else None
-
-    if first_ep and first_ep.get("response_example"):
-        response_data = first_ep["response_example"]
-    else:
-        response_data = {"status": "ok", "message": "Demo response from Hackmarket Converter"}
-
-    await asyncio.sleep(0.18)
-    return {
-        "result": response_data,
-        "tool": slug,
-        "demo": True,
-        "latency_ms": 180,
-    }
+    raise HTTPException(
+        501,
+        "A live demo is unavailable until this tool has a deployed endpoint.",
+    )
 
 
 @app.get("/api/tools/{slug}")
@@ -749,20 +762,21 @@ def get_tool(slug: str) -> dict:
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, slug, repo_url, spec, created_at, qa_inputs, qa_avg_ms, qa_certified, review_status "
-            "FROM tools WHERE slug = ?", (slug,)
+            "FROM tools WHERE slug = ?",
+            (slug,),
         ).fetchone()
     if not row:
         raise HTTPException(404, "Tool not found")
     spec = json.loads(row["spec"])
     return {
-        "id":            row["id"],
-        "slug":          row["slug"],
-        "repo_url":      row["repo_url"],
-        "created_at":    row["created_at"],
-        "qa_inputs":     json.loads(row["qa_inputs"]) if row["qa_inputs"] else None,
-        "qa_avg_ms":     row["qa_avg_ms"],
-        "qa_certified":  bool(row["qa_certified"]),
+        "id": row["id"],
+        "slug": row["slug"],
+        "repo_url": row["repo_url"],
+        "created_at": row["created_at"],
+        "qa_inputs": json.loads(row["qa_inputs"]) if row["qa_inputs"] else None,
+        "qa_avg_ms": row["qa_avg_ms"],
+        "qa_certified": bool(row["qa_certified"]),
         "review_status": row["review_status"] or "draft",
-        "name":          spec.get("repo_name", row["slug"]),
+        "name": spec.get("repo_name", row["slug"]),
         **spec,
     }

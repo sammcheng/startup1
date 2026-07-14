@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 API_DIR = REPO_ROOT / "apps" / "api"
 
@@ -21,7 +20,9 @@ SAFE_DATABASE_NAME_MARKERS = ("test", "testing", "ci", "tmp", "temp", "disposabl
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
-def run_alembic(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def run_alembic(
+    args: list[str], *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", ALEMBIC_ENTRYPOINT, *args],
         cwd=API_DIR,

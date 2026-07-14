@@ -64,6 +64,41 @@ describe("ValidationService", () => {
     ).toBe(true);
   });
 
+  test("caps remote listing analysis at the configured file limit", () => {
+    process.env.MAX_FILES = "2";
+    const service = new ValidationService();
+
+    expect(
+      service.validateAnalyzeRequest({
+        url: "https://www.zillow.com/homedetails/123",
+        maxImages: 3,
+      }).error,
+    ).toBeTruthy();
+    expect(
+      service.validateAnalyzeRequest({
+        url: "https://www.zillow.com/homedetails/123",
+      }).value.maxImages,
+    ).toBe(2);
+  });
+
+  test("listing URLs require HTTPS on an exact supported host", () => {
+    const service = new ValidationService();
+
+    expect(
+      service.validateAnalyzeRequest({
+        url: "https://www.zillow.com/homedetails/123-main-st",
+      }).error,
+    ).toBeNull();
+    for (const url of [
+      "http://www.zillow.com/homedetails/123-main-st",
+      "https://zillow.com.attacker.example/listing",
+      "https://attacker.example/?next=zillow.com",
+      "https://127.0.0.1/zillow.com",
+    ]) {
+      expect(service.validateAnalyzeRequest({ url }).error).toBeTruthy();
+    }
+  });
+
   test("validateBase64Image uses the configured file size ceiling", () => {
     process.env.MAX_FILE_SIZE = "6";
     const service = new ValidationService();

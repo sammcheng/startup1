@@ -64,7 +64,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                 input_schema={
                     "example_input": {
                         "url": "https://www.zillow.com/homedetails/example-listing",
-                        "maxImages": 8,
+                        "maxImages": 5,
                     },
                     "fields": [
                         {
@@ -83,7 +83,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                             "name": "maxImages",
                             "type": "number",
                             "required": False,
-                            "placeholder": "8",
+                            "placeholder": "5",
                         },
                     ],
                 },
@@ -97,7 +97,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                         "source": {
                             "type": "url",
                             "url": "https://www.zillow.com/homedetails/example-listing",
-                            "scraped_images": 8,
+                            "scraped_images": 5,
                         },
                         "timestamp": "2026-05-01T00:00:00Z",
                     },
@@ -120,8 +120,6 @@ async def ensure_bootstrap_marketplace_data() -> None:
                     "scraping in production, so direct photo uploads are the most reliable path. "
                     "The service returns accessibility findings, an overall score, and recommendations."
                 ),
-                avg_response_time_ms=420,
-                uptime_percentage=Decimal("99.90"),
                 is_featured=True,
             )
             session.add(tool)
@@ -135,7 +133,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
             tool.input_schema = {
                 "example_input": {
                     "url": "https://www.zillow.com/homedetails/example-listing",
-                    "maxImages": 8,
+                    "maxImages": 5,
                 },
                 "fields": [
                     {
@@ -154,7 +152,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                         "name": "maxImages",
                         "type": "number",
                         "required": False,
-                        "placeholder": "8",
+                        "placeholder": "5",
                     },
                 ],
             }
@@ -168,7 +166,7 @@ async def ensure_bootstrap_marketplace_data() -> None:
                     "source": {
                         "type": "url",
                         "url": "https://www.zillow.com/homedetails/example-listing",
-                        "scraped_images": 8,
+                        "scraped_images": 5,
                     },
                     "timestamp": "2026-05-01T00:00:00Z",
                 },

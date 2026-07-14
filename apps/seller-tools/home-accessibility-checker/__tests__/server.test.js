@@ -1,4 +1,5 @@
 const request = require("supertest");
+const sharp = require("sharp");
 const { createApp } = require("../server");
 
 describe("seller tool server", () => {
@@ -7,11 +8,13 @@ describe("seller tool server", () => {
   const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
   const originalRateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS;
   const originalRateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
 
   beforeEach(() => {
     delete process.env.ALLOWED_ORIGINS;
     delete process.env.RATE_LIMIT_MAX_REQUESTS;
     delete process.env.RATE_LIMIT_WINDOW_MS;
+    delete process.env.OPENROUTER_API_KEY;
     app = createApp();
   });
 
@@ -31,6 +34,11 @@ describe("seller tool server", () => {
       delete process.env.RATE_LIMIT_WINDOW_MS;
     } else {
       process.env.RATE_LIMIT_WINDOW_MS = originalRateLimitWindowMs;
+    }
+    if (originalOpenRouterApiKey === undefined) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
     }
   });
 
@@ -55,6 +63,32 @@ describe("seller tool server", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers["x-hackmarket-request-id"]).toBe("req-test-123");
+  });
+
+  test("GET /ready fails when the analysis provider is not configured", async () => {
+    const response = await request(app).get("/ready");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      status: "not_ready",
+      checks: {
+        analysis_provider: {
+          configured: false,
+        },
+      },
+      timestamp: expect.any(String),
+    });
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
+
+  test("GET /ready succeeds when the analysis provider is configured", async () => {
+    process.env.OPENROUTER_API_KEY = "configured-test-key";
+
+    const response = await request(app).get("/ready");
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("ready");
+    expect(response.body.checks.analysis_provider.configured).toBe(true);
   });
 
   test("GET /health allows arbitrary origins without credentials when wildcard CORS is used", async () => {
@@ -157,6 +191,63 @@ describe("seller tool server", () => {
     expect(response.body.error).toBe("Invalid request");
     expect(response.body.requestId).toBeTruthy();
     expect(Array.isArray(response.body.details)).toBe(true);
+  });
+
+  test("POST / rejects bytes that are not a real image", async () => {
+    const response = await request(app)
+      .post("/")
+      .send({
+        images: [
+          {
+            filename: "not-an-image.jpg",
+            base64: "A".repeat(120),
+            mimetype: "image/jpeg",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: "Invalid image data",
+      message: 'The file "not-an-image.jpg" is not a valid supported image.',
+      requestId: expect.any(String),
+    });
+  });
+
+  test("POST / returns an honest 503 when the provider key is missing", async () => {
+    const jpeg = await sharp({
+      create: {
+        width: 16,
+        height: 16,
+        channels: 3,
+        background: { r: 240, g: 240, b: 240 },
+      },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const response = await request(app)
+      .post("/")
+      .send({
+        images: [
+          {
+            filename: "entry.jpg",
+            base64: jpeg.toString("base64"),
+            mimetype: "image/jpeg",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: "Analysis service unavailable",
+      message:
+        "Image analysis is not configured right now. Please try again later.",
+      code: "ANALYSIS_PROVIDER_NOT_CONFIGURED",
+      retryable: false,
+      requestId: expect.any(String),
+    });
+    expect(response.headers["retry-after"]).toBeUndefined();
   });
 
   test("POST /api/scrape rejects unsupported urls", async () => {
