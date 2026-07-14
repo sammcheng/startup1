@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Tool } from "@/types/tool";
+import { getToolPriceDisplay } from "@/lib/tool-pricing";
 import HeroPipeline from "@/components/HeroPipeline";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -434,8 +435,7 @@ function HowItWorks() {
 
 function MiniToolCard({ tool, href }: { tool: Tool; href?: string }) {
   const color = CAT_COLORS[tool.category] ?? "#6b7280";
-  const price = parseFloat(tool.price_per_request ?? "0");
-  const priceStr = price === 0 ? "Free" : price < 0.01 ? `$${price.toFixed(4)}` : `$${price.toFixed(3)}`;
+  const price = getToolPriceDisplay(tool);
   const totalStr =
     tool.total_requests >= 1000
       ? `${(tool.total_requests / 1000).toFixed(1)}k`
@@ -492,13 +492,13 @@ function MiniToolCard({ tool, href }: { tool: Tool; href?: string }) {
               className="text-sm font-semibold block"
               style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}
             >
-              {priceStr}
+              {price.formatted}
             </span>
             <span
               className="text-xs"
               style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}
             >
-              /request
+              {price.suffix}
             </span>
           </div>
           <div className="text-right">

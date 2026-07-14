@@ -1,3 +1,5 @@
+import pytest
+
 from app.models.tool import ToolStatus
 from app.routers import internal
 from app.services import discovery_service, repo_analyzer, tool_service
@@ -286,6 +288,46 @@ def test_update_own_tool(client, auth_overrides, seller, live_tool, monkeypatch)
     assert response.json()["tagline"] == "Now even faster"
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "live"),
+        ("api_endpoint", "https://attacker.example.com"),
+        ("docker_image_uri", "registry.example.com/unreviewed:latest"),
+        ("source_s3_key", "tools/other/source.zip"),
+        ("environment_variables", [{"key": "INJECTED", "value": "true"}]),
+    ],
+)
+def test_seller_update_rejects_operational_fields(
+    client,
+    auth_overrides,
+    seller,
+    live_tool,
+    field,
+    value,
+):
+    auth_overrides(current_user=seller)
+
+    response = client.put(f"/v1/tools/{live_tool.id}", json={field: value})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["name", "tagline", "description", "category", "ownership_type"])
+def test_seller_update_rejects_null_required_fields(
+    client,
+    auth_overrides,
+    seller,
+    live_tool,
+    field,
+):
+    auth_overrides(current_user=seller)
+
+    response = client.put(f"/v1/tools/{live_tool.id}", json={field: None})
+
+    assert response.status_code == 422
+
+
 def test_update_other_sellers_tool(client, auth_overrides, buyer, live_tool, monkeypatch):
     auth_overrides(current_user=buyer)
 
@@ -315,6 +357,44 @@ def test_update_processing_tool_rejected(client, auth_overrides, seller, live_to
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "tool_processing"
+
+
+def test_update_live_tool_rejects_pricing_and_contract_changes(
+    client,
+    auth_overrides,
+    seller,
+    live_tool,
+    monkeypatch,
+):
+    auth_overrides(current_user=seller)
+
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        assert seller_id == seller.id
+        return live_tool
+
+    async def fail_update(*args, **kwargs):
+        raise AssertionError("locked live fields must be rejected before persistence")
+
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
+    monkeypatch.setattr(tool_service, "update_tool", fail_update)
+
+    response = client.put(
+        f"/v1/tools/{live_tool.id}",
+        json={
+            "ownership_type": "full_sale",
+            "one_time_price": "199.00",
+            "input_schema": {"fields": []},
+        },
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "tool_live_fields_locked"
+    assert error["details"]["locked_fields"] == [
+        "input_schema",
+        "one_time_price",
+        "ownership_type",
+    ]
 
 
 def test_delete_own_tool_pauses_it(client, auth_overrides, seller, live_tool, monkeypatch):

@@ -41,6 +41,7 @@ function sanitizeName(raw: string | null | undefined): string {
 
 type RangeKey = "7d" | "30d" | "90d";
 type DashboardMode = "buyer" | "seller";
+type DashboardLoadStatus = "idle" | "loading" | "ready" | "guest" | "error";
 const RANGE_DAYS: Record<RangeKey, number> = { "7d": 7, "30d": 30, "90d": 90 };
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -342,7 +343,10 @@ export default function DashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [accountSummary, setAccountSummary] = useState<DashboardSummaryResponse | null>(null);
   const [sellerSummary, setSellerSummary] = useState<SellerDashboardResponse | null>(null);
-  const [remoteStatus, setRemoteStatus] = useState<"idle" | "loading" | "ready" | "guest" | "error">("idle");
+  const [remoteStatuses, setRemoteStatuses] = useState<Record<DashboardMode, DashboardLoadStatus>>({
+    buyer: "idle",
+    seller: "idle",
+  });
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -352,7 +356,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!account.isLoaded) return;
     if (!account.isSignedIn) {
-      setRemoteStatus("guest");
+      setRemoteStatuses({ buyer: "guest", seller: "guest" });
       setAccountSummary(null);
       setSellerSummary(null);
       return;
@@ -360,25 +364,30 @@ export default function DashboardPage() {
 
     let active = true;
     async function loadAccountDashboards() {
-      setRemoteStatus("loading");
+      setRemoteStatuses({ buyer: "loading", seller: "loading" });
       try {
         const token = await account.getToken();
         if (account.user) {
           await syncCurrentUser(account.user, token);
         }
-        const [dashboard, seller] = await Promise.all([
+        const [dashboardResult, sellerResult] = await Promise.allSettled([
           api.get<DashboardSummaryResponse>("/dashboard/summary", { token }),
           api.get<SellerDashboardResponse>("/seller/dashboard", { token }),
         ]);
         if (!active) return;
-        setAccountSummary(dashboard);
-        setSellerSummary(seller);
-        setRemoteStatus("ready");
+        setAccountSummary(
+          dashboardResult.status === "fulfilled" ? dashboardResult.value : null,
+        );
+        setSellerSummary(sellerResult.status === "fulfilled" ? sellerResult.value : null);
+        setRemoteStatuses({
+          buyer: dashboardResult.status === "fulfilled" ? "ready" : "error",
+          seller: sellerResult.status === "fulfilled" ? "ready" : "error",
+        });
       } catch {
         if (!active) return;
         setAccountSummary(null);
         setSellerSummary(null);
-        setRemoteStatus("error");
+        setRemoteStatuses({ buyer: "error", seller: "error" });
       }
     }
 
@@ -424,6 +433,7 @@ export default function DashboardPage() {
     account.user?.username ||
     account.user?.emailAddresses[0]?.emailAddress ||
     "Guest account";
+  const remoteStatus = remoteStatuses[mode];
   const buyerSnapshot = useMemo(
     () => buildBuyerSnapshot(accountSummary),
     [accountSummary],

@@ -13,6 +13,8 @@ from app.models.tool import InputType, OutputType, OwnershipType, ToolCategory, 
 
 
 class ToolCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=100)
     tagline: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1)
@@ -20,8 +22,8 @@ class ToolCreate(BaseModel):
     ownership_type: OwnershipType
     input_type: InputType | None = None
     output_type: OutputType | None = None
-    price_per_request: Decimal | None = Field(default=None, ge=0, decimal_places=6)
-    one_time_price: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    price_per_request: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=6)
+    one_time_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     input_schema: dict | None = None
     output_schema: dict | None = None
     environment_variables: list[dict[str, str]] | None = None
@@ -32,21 +34,36 @@ class ToolCreate(BaseModel):
     documentation: str | None = None
 
 
-class ToolUpdate(BaseModel):
-    """All fields are optional — only provided fields are updated."""
+class SellerToolUpdate(BaseModel):
+    """Listing fields a seller may edit without bypassing review or deployment."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
     tagline: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = None
+    description: str | None = Field(default=None, min_length=1)
     category: ToolCategory | None = None
-    status: ToolStatus | None = None
     input_type: InputType | None = None
     output_type: OutputType | None = None
     ownership_type: OwnershipType | None = None
-    price_per_request: Decimal | None = Field(default=None, ge=0, decimal_places=6)
-    one_time_price: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    price_per_request: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=6)
+    one_time_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     input_schema: dict | None = None
     output_schema: dict | None = None
+    documentation: str | None = None
+
+    @field_validator("name", "tagline", "description", "category", "ownership_type")
+    @classmethod
+    def reject_null_required_fields(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("field cannot be null when provided")
+        return value
+
+
+class ToolUpdate(SellerToolUpdate):
+    """Trusted pipeline update, including operational deployment fields."""
+
+    status: ToolStatus | None = None
     environment_variables: list[dict[str, str]] | None = None
     github_url: str | None = None
     demo_url: str | None = None
@@ -58,7 +75,13 @@ class ToolUpdate(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     processing_error: str | None = None
     source_file_tree: list[str] | None = None
-    documentation: str | None = None
+
+    @field_validator("status", "port")
+    @classmethod
+    def reject_null_operational_fields(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("field cannot be null when provided")
+        return value
 
 
 class AdminToolReviewUpdate(BaseModel):

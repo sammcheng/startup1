@@ -1,10 +1,12 @@
 import uuid
+from decimal import Decimal
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from app.models.tool import OwnershipType, ToolCategory
-from app.schemas.tool import ToolCreate
+from app.schemas.tool import SellerToolUpdate, ToolCreate
 from app.services import tool_service
 
 
@@ -44,6 +46,18 @@ class CreateToolSession:
         return ScalarResult(self.added[-1])
 
 
+class UpdateToolSession:
+    def __init__(self, tool):
+        self.tool = tool
+        self.commits = 0
+
+    async def commit(self):
+        self.commits += 1
+
+    async def execute(self, query):
+        return ScalarResult(self.tool)
+
+
 def make_tool_create(name: str) -> ToolCreate:
     return ToolCreate(
         name=name,
@@ -79,3 +93,37 @@ async def test_create_tool_retries_after_slug_unique_race(monkeypatch):
     assert session.commits == 2
     assert session.rollbacks == 1
     assert [created.slug for created in session.added] == ["vision-agent", "vision-agent-2"]
+
+
+@pytest.mark.asyncio
+async def test_update_tool_keeps_only_the_active_price(draft_tool):
+    draft_tool.price_per_request = Decimal("0.250000")
+    draft_tool.one_time_price = Decimal("50.00")
+    session = UpdateToolSession(draft_tool)
+
+    updated = await tool_service.update_tool(
+        session,
+        draft_tool,
+        SellerToolUpdate(
+            ownership_type=OwnershipType.full_sale,
+            one_time_price=Decimal("125.00"),
+        ),
+    )
+
+    assert updated.ownership_type == OwnershipType.full_sale
+    assert updated.one_time_price == Decimal("125.00")
+    assert updated.price_per_request is None
+    assert session.commits == 1
+
+
+def test_effective_price_expression_includes_both_pricing_models():
+    sql = str(
+        tool_service._effective_price_expression().compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "CASE" in sql
+    assert "tools.one_time_price" in sql
+    assert "tools.price_per_request" in sql

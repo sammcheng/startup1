@@ -43,7 +43,7 @@ export interface Tool {
   source_file_tree?: string[] | null;
   /** Decimal serialised as string from Python */
   price_per_request: string | null;
-  one_time_price?: string | null;
+  one_time_price: string | null;
   demo_url: string | null;
   api_endpoint: string | null;
   docker_image_uri: string | null;

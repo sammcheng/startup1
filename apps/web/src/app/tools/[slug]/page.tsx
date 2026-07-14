@@ -12,6 +12,7 @@ import LiveBenchmark from "@/components/demo/LiveBenchmark";
 import DemoTabs from "@/components/demos/DemoTabs";
 import PurchaseToolButton from "@/components/billing/PurchaseToolButton";
 import { safeCssImageUrl, safeGithubUrl } from "@/lib/safe-url";
+import { getToolPriceDisplay } from "@/lib/tool-pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -78,14 +79,6 @@ const CAT_COLORS: Record<string, string> = {
   generation: "#ec4899",
   other: "#6b7280",
 };
-
-function formatPrice(p: string | null): string {
-  const n = parseFloat(p ?? "0");
-  if (n === 0) return "Free";
-  if (n < 0.001) return `$${n.toFixed(6)}`;
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(3)}`;
-}
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -165,6 +158,7 @@ export default async function ToolPage({
   const toolDocs = await fetchToolDocs(slug);
 
   const catColor = CAT_COLORS[tool.category] ?? "#6b7280";
+  const price = getToolPriceDisplay(tool);
   const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
   const githubUrl = safeGithubUrl(tool.github_url);
   const listingUrlAndImageTool = supportsListingUrlAndImages(tool.input_schema as Record<string, unknown> | null);
@@ -316,15 +310,13 @@ export default async function ToolPage({
                   className="text-3xl font-bold"
                   style={{ color: "var(--text)" }}
                 >
-                  {formatPrice(tool.price_per_request)}
+                  {price.formatted}
                 </span>
                 <span
                   className="text-xs"
                   style={{ color: "var(--faint)" }}
                 >
-                  {tool.ownership_type === "royalty"
-                    ? "per request"
-                    : "one-time"}
+                  {price.suffix}
                 </span>
               </div>
               {isQaCertified && (

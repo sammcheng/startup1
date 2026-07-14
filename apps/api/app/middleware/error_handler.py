@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping, Sequence
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -96,9 +97,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         request_id = getattr(request.state, "request_id", get_request_id())
-        details = {
-            "errors": exc.errors() if settings.debug else _safe_validation_errors(exc.errors())
-        }
+        details = {"errors": _serializable_validation_errors(exc.errors(), settings.debug)}
         return _error_response(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "validation_error",
@@ -146,12 +145,29 @@ def setup_error_handlers(app: FastAPI) -> None:
         )
 
 
-def _safe_validation_errors(errors: list[dict]) -> list[dict]:
-    return [
-        {key: value for key, value in error.items() if key not in SENSITIVE_VALIDATION_ERROR_KEYS}
-        for error in errors
-        if isinstance(error, dict)
-    ]
+def _serializable_validation_errors(errors: list[dict], include_sensitive: bool) -> list[dict]:
+    serialized: list[dict] = []
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        serialized.append(
+            {
+                key: _json_safe(value)
+                for key, value in error.items()
+                if include_sensitive or key not in SENSITIVE_VALIDATION_ERROR_KEYS
+            }
+        )
+    return serialized
+
+
+def _json_safe(value: object) -> object:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_json_safe(item) for item in value]
+    return str(value)
 
 
 def _status_to_code(status_code: int) -> str:

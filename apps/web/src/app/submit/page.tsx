@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useCurrentAccount } from "@/hooks/useAuth";
 import { toolToSubmissionRecord } from "@/lib/submission-adapter";
 import type { SubmissionRecord } from "@/lib/submissions";
-import type { Tool } from "@/types/tool";
+import type { Tool, ToolCategory } from "@/types/tool";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -24,16 +24,14 @@ const EXAMPLE_REPOS = [
   "https://github.com/expressjs/express",
 ];
 
-const CATEGORIES = [
-  "Auth",
-  "Payments",
-  "Notifications",
-  "Analytics",
-  "AI/ML",
-  "DevOps",
-  "UI Components",
-  "Data Pipelines",
-] as const;
+const CATEGORIES: { value: ToolCategory; label: string }[] = [
+  { value: "nlp", label: "NLP" },
+  { value: "computer_vision", label: "Computer Vision" },
+  { value: "data_analysis", label: "Data Analysis" },
+  { value: "automation", label: "Automation" },
+  { value: "generation", label: "Generation" },
+  { value: "other", label: "Other" },
+];
 
 // Page wrapper — natural height (was a constrained "min(900px, calc(100vh - 56px))"
 // with overflow:hidden, but that combination can collapse to ~0 in some
@@ -50,7 +48,7 @@ interface Listing {
   id: string | null;
   name: string;
   description: string;
-  category: string;
+  category: ToolCategory;
   stack: string[];
   inputs: string;
   outputs: string;
@@ -58,10 +56,8 @@ interface Listing {
   license: string;
 }
 
-// Shape of /tools/submit response — kept loose so the kc-shape `analysis`
-// fields can be consumed without dragging in every nested ToolResponse field.
 interface SubmitResponse {
-  tool: { id: string; [key: string]: unknown };
+  tool: Tool;
   analysis: {
     name: string;
     description: string;
@@ -99,6 +95,13 @@ function inferLanguage(stack: string[]): string {
   if (stack.some((s) => /node|express|next|react/i.test(s))) return "TypeScript";
   if (stack.some((s) => /flask|fastapi|django/i.test(s))) return "Python";
   return stack[0] || "Unknown";
+}
+
+function isValidPriceAmount(rawAmount: string, pricingModel: PricingModel): boolean {
+  if (!rawAmount.trim()) return false;
+  const amount = Number(rawAmount);
+  const maximum = pricingModel === "buy" ? 99_999_999.99 : 9_999.999999;
+  return Number.isFinite(amount) && amount > 0 && amount <= maximum;
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -193,7 +196,7 @@ export default function SubmitPage() {
         id: apiResponse.tool.id,
         name: a.name,
         description: a.description,
-        category: a.category,
+        category: apiResponse.tool.category,
         stack,
         inputs: a.input_contract,
         outputs: a.output_contract,
@@ -204,7 +207,7 @@ export default function SubmitPage() {
         setPricingModel(a.pricing_model);
       }
       if (a.suggested_price_cents > 0) {
-        setAmount(String(Math.round(a.suggested_price_cents / 100)));
+        setAmount((a.suggested_price_cents / 100).toFixed(2));
       }
       setPhase("review");
     }, 320);
@@ -229,7 +232,7 @@ export default function SubmitPage() {
 
   async function submitForReview() {
     if (!listing) return;
-    if (!amount || Number(amount) <= 0) return;
+    if (!isValidPriceAmount(amount, pricingModel)) return;
     setSubmitError("");
     setIsSubmitting(true);
     const token = account.isSignedIn ? await account.getToken() : null;
@@ -240,20 +243,46 @@ export default function SubmitPage() {
       }
 
       const body: Record<string, unknown> = {
-        name: listing.name,
-        description: listing.description,
+        name: listing.name.trim(),
+        tagline: listing.description.trim().slice(0, 200),
+        description: listing.description.trim(),
+        category: listing.category,
+        input_schema: {
+          fields: [
+            {
+              name: "input",
+              type: "string",
+              description: listing.inputs.trim(),
+              required: false,
+            },
+          ],
+        },
+        output_schema: {
+          fields: [
+            {
+              name: "result",
+              type: "object",
+              description: listing.outputs.trim(),
+            },
+          ],
+        },
         documentation:
-          `# ${listing.name}\n\n${listing.description}\n\n` +
+          `# ${listing.name.trim()}\n\n${listing.description.trim()}\n\n` +
+          `**Category:** ${listing.category.replace(/_/g, " ")}\n\n` +
+          `**Language:** ${listing.language.trim() || "unspecified"}\n\n` +
+          `**License:** ${listing.license.trim() || "unspecified"}\n\n` +
           `**Tech stack:** ${listing.stack.join(", ") || "unspecified"}\n\n` +
-          `## Input\n${listing.inputs}\n\n## Output\n${listing.outputs}\n`,
+          `## Input\n${listing.inputs.trim()}\n\n## Output\n${listing.outputs.trim()}\n`,
       };
-      const cents = Math.round(Number(amount)) * 100;
+      const parsedAmount = Number(amount);
       if (pricingModel === "buy") {
         body.ownership_type = "full_sale";
-        body.one_time_price = cents / 100;
+        body.one_time_price = parsedAmount.toFixed(2);
+        body.price_per_request = null;
       } else {
         body.ownership_type = "royalty";
-        body.price_per_request = cents / 100;
+        body.price_per_request = parsedAmount.toFixed(6);
+        body.one_time_price = null;
       }
 
       if (account.isSignedIn && listing.id && token) {
@@ -292,7 +321,13 @@ export default function SubmitPage() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const canSubmit = !!amount && Number(amount) > 0;
+  const canSubmit = Boolean(
+    listing?.name.trim()
+      && listing.description.trim()
+      && listing.inputs.trim()
+      && listing.outputs.trim()
+      && isValidPriceAmount(amount, pricingModel),
+  );
 
   return (
     <>
@@ -1115,7 +1150,7 @@ function ReviewPhase({
                     color: selected ? "var(--blue)" : "var(--text)",
                   }}
                 >
-                  {mode === "buy" ? "Lump sum" : "Royalty / mo"}
+                  {mode === "buy" ? "Lump sum" : "Usage royalty"}
                 </div>
                 <div
                   style={{
@@ -1124,7 +1159,7 @@ function ReviewPhase({
                     lineHeight: 1.3,
                   }}
                 >
-                  {mode === "buy" ? "One payment, walk away." : "Earn per integration / mo."}
+                  {mode === "buy" ? "One payment, walk away." : "Earn from every successful call."}
                 </div>
               </button>
             );
@@ -1154,7 +1189,7 @@ function ReviewPhase({
             }}
           >
             <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
-              {pricingModel === "buy" ? "Price (USD)" : "Per month (USD)"} · you earn 80%
+              {pricingModel === "buy" ? "One-time price (USD)" : "Per request (USD)"} · you earn 80%
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
               <span
@@ -1169,7 +1204,10 @@ function ReviewPhase({
               </span>
               <input
                 type="number"
-                placeholder={pricingModel === "buy" ? "1200" : "45"}
+                min={pricingModel === "buy" ? "0.01" : "0.000001"}
+                max={pricingModel === "buy" ? "99999999.99" : "9999.999999"}
+                step={pricingModel === "buy" ? "0.01" : "0.000001"}
+                placeholder={pricingModel === "buy" ? "1200.00" : "0.010000"}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 style={{
@@ -1195,7 +1233,7 @@ function ReviewPhase({
                     marginLeft: 6,
                   }}
                 >
-                  / mo
+                  / request
                 </span>
               )}
             </div>
@@ -1497,8 +1535,8 @@ function CategoryPicker({
   selected,
   onChange,
 }: {
-  selected: string;
-  onChange: (c: string) => void;
+  selected: ToolCategory;
+  onChange: (c: ToolCategory) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1517,8 +1555,9 @@ function CategoryPicker({
 
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? CATEGORIES.filter((c) => c.toLowerCase().includes(q))
+    ? CATEGORIES.filter((category) => category.label.toLowerCase().includes(q))
     : CATEGORIES;
+  const selectedLabel = CATEGORIES.find((category) => category.value === selected)?.label ?? "Other";
 
   return (
     <div ref={rootRef} style={{ position: "relative" }}>
@@ -1539,7 +1578,7 @@ function CategoryPicker({
             whiteSpace: "nowrap",
           }}
         >
-          {selected || "—"}
+          {selectedLabel}
         </span>
         <button
           type="button"
@@ -1605,12 +1644,12 @@ function CategoryPicker({
                 No matches
               </div>
             ) : (
-              filtered.map((c) => (
+              filtered.map((category) => (
                 <button
-                  key={c}
+                  key={category.value}
                   type="button"
                   onClick={() => {
-                    onChange(c);
+                    onChange(category.value);
                     setOpen(false);
                     setQuery("");
                   }}
@@ -1620,23 +1659,23 @@ function CategoryPicker({
                     borderRadius: 7,
                     border: "none",
                     background:
-                      c === selected ? "rgba(59,130,246,0.10)" : "transparent",
-                    color: c === selected ? "var(--blue)" : "var(--text)",
+                      category.value === selected ? "rgba(59,130,246,0.10)" : "transparent",
+                    color: category.value === selected ? "var(--blue)" : "var(--text)",
                     fontSize: 12.5,
                     fontFamily: "var(--font-mono)",
                     cursor: "pointer",
                   }}
                   onMouseEnter={(e) => {
-                    if (c !== selected)
+                    if (category.value !== selected)
                       e.currentTarget.style.background = "var(--bg)";
                   }}
                   onMouseLeave={(e) => {
-                    if (c !== selected)
+                    if (category.value !== selected)
                       e.currentTarget.style.background = "transparent";
                   }}
                 >
-                  {c === selected ? "✓ " : "  "}
-                  {c}
+                  {category.value === selected ? "✓ " : "  "}
+                  {category.label}
                 </button>
               ))
             )}

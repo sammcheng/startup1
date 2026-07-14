@@ -81,6 +81,7 @@ function toTool(c: ConverterTool): Tool {
     input_schema: inputSchema,
     output_schema: firstResponse ? { example_output: firstResponse } : null,
     price_per_request: null,
+    one_time_price: null,
     demo_url: null,
     api_endpoint: null,
     docker_image_uri: null,

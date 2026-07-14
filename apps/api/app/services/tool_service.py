@@ -5,15 +5,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import AsyncSessionLocal
-from app.models.tool import Tool, ToolStatus
+from app.models.tool import OwnershipType, Tool, ToolStatus
 from app.models.usage_log import UsageLog
-from app.schemas.tool import ToolCreate, ToolFilters, ToolUpdate
+from app.schemas.tool import SellerToolUpdate, ToolCreate, ToolFilters, ToolUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,28 @@ _VIEW_FLUSH_THRESHOLD = 50  # flush to DB every N increments (future background 
 _REQUEST_COUNT_KEY_PREFIX = "tool:requests:"
 _REQUEST_FLUSH_THRESHOLD = 25
 _MAX_SLUG_CREATE_ATTEMPTS = 5
+
+
+def _normalize_price_fields(
+    ownership_type: OwnershipType,
+    values: dict[str, object],
+) -> dict[str, object]:
+    normalized = dict(values)
+    if ownership_type == OwnershipType.full_sale:
+        normalized["price_per_request"] = None
+    else:
+        normalized["one_time_price"] = None
+    return normalized
+
+
+def _effective_price_expression():
+    return case(
+        (
+            Tool.ownership_type == OwnershipType.full_sale,
+            func.coalesce(Tool.one_time_price, 0),
+        ),
+        else_=func.coalesce(Tool.price_per_request, 0),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +175,7 @@ async def create_tool(
     seller_id: uuid.UUID,
     data: ToolCreate,
 ) -> Tool:
+    values = _normalize_price_fields(data.ownership_type, data.model_dump())
     base_slug = _slugify(data.name)
     first_available_slug = await _find_unique_slug(db, base_slug)
     first_attempt = max(_slug_suffix_attempt(first_available_slug, base_slug), 0)
@@ -167,7 +190,7 @@ async def create_tool(
             seller_id=seller_id,
             slug=slug,
             status=ToolStatus.draft,
-            **data.model_dump(),
+            **values,
         )
         db.add(tool)
         try:
@@ -264,6 +287,7 @@ async def list_live_tools(
         select(Tool).where(Tool.status == ToolStatus.live).options(selectinload(Tool.seller))
     )
     count_query = select(func.count()).select_from(Tool).where(Tool.status == ToolStatus.live)
+    effective_price = _effective_price_expression()
 
     # --- filters ---
     if filters.category is not None:
@@ -271,12 +295,12 @@ async def list_live_tools(
         count_query = count_query.where(Tool.category == filters.category)
 
     if filters.min_price is not None:
-        base_query = base_query.where(Tool.price_per_request >= filters.min_price)
-        count_query = count_query.where(Tool.price_per_request >= filters.min_price)
+        base_query = base_query.where(effective_price >= filters.min_price)
+        count_query = count_query.where(effective_price >= filters.min_price)
 
     if filters.max_price is not None:
-        base_query = base_query.where(Tool.price_per_request <= filters.max_price)
-        count_query = count_query.where(Tool.price_per_request <= filters.max_price)
+        base_query = base_query.where(effective_price <= filters.max_price)
+        count_query = count_query.where(effective_price <= filters.max_price)
 
     if filters.search:
         pattern = f"%{filters.search}%"
@@ -296,8 +320,8 @@ async def list_live_tools(
     order = {
         "popular": Tool.total_requests.desc(),
         "newest": Tool.created_at.desc(),
-        "price_low": Tool.price_per_request.asc(),
-        "price_high": Tool.price_per_request.desc(),
+        "price_low": effective_price.asc(),
+        "price_high": effective_price.desc(),
     }
     base_query = base_query.order_by(order[filters.sort_by])
 
@@ -345,10 +369,15 @@ async def list_admin_tools(
 
 
 async def update_tool(
-    db: AsyncSession, tool: Tool, data: ToolUpdate, redis: Redis | None = None
+    db: AsyncSession,
+    tool: Tool,
+    data: SellerToolUpdate | ToolUpdate,
+    redis: Redis | None = None,
 ) -> Tool:
     """Apply only the fields explicitly provided in *data*."""
     updates = data.model_dump(exclude_unset=True)
+    ownership_type = OwnershipType(updates.get("ownership_type", tool.ownership_type))
+    updates = _normalize_price_fields(ownership_type, updates)
     for field, value in updates.items():
         setattr(tool, field, value)
     await db.commit()

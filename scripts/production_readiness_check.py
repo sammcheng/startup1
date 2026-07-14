@@ -68,6 +68,7 @@ RENDER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "render_servi
 SOURCE_ARCHIVE = REPO_ROOT / "apps" / "api" / "app" / "services" / "source_archive.py"
 CONTAINER_SERVICE = REPO_ROOT / "apps" / "api" / "app" / "services" / "container_service.py"
 WEB_ADMIN_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "admin" / "page.tsx"
+WEB_DASHBOARD_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "dashboard" / "page.tsx"
 WEB_ENV = REPO_ROOT / "apps" / "web" / "src" / "lib" / "env.ts"
 WEB_SECURITY_HEADERS = REPO_ROOT / "apps" / "web" / "security-headers.mjs"
 WEB_API_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "lib" / "api.ts"
@@ -791,6 +792,13 @@ def check_repo_files(failures: list[str]) -> None:
         "public tool APIs must redact seller secrets, storage keys, and raw endpoints",
         failures,
     )
+    expect(
+        "body: SellerToolUpdate" in tools_router
+        and "LIVE_LOCKED_SELLER_FIELDS" in tools_router
+        and "tool_live_fields_locked" in tools_router,
+        "seller edits must not expose operational fields or mutate live pricing contracts",
+        failures,
+    )
     gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(
         encoding="utf-8"
     )
@@ -859,9 +867,10 @@ def check_repo_files(failures: list[str]) -> None:
         REPO_ROOT / "apps" / "api" / "app" / "middleware" / "error_handler.py"
     ).read_text(encoding="utf-8")
     expect(
-        "_safe_validation_errors" in error_handler
+        "_serializable_validation_errors" in error_handler
         and "SENSITIVE_VALIDATION_ERROR_KEYS" in error_handler
-        and "settings.debug else _safe_validation_errors" in error_handler,
+        and "_serializable_validation_errors(exc.errors(), settings.debug)" in error_handler
+        and "include_sensitive or key not in SENSITIVE_VALIDATION_ERROR_KEYS" in error_handler,
         "production validation errors must not echo raw submitted input values",
         failures,
     )
@@ -974,6 +983,12 @@ def check_repo_files(failures: list[str]) -> None:
     )
 
     admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
+    dashboard_page = WEB_DASHBOARD_PAGE.read_text(encoding="utf-8")
+    expect(
+        "Promise.allSettled" in dashboard_page and "remoteStatuses[mode]" in dashboard_page,
+        "buyer and seller dashboard failures must remain isolated",
+        failures,
+    )
     expect(
         "/admin/operations-health" in admin_page,
         "admin dashboard must load production operations health",

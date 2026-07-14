@@ -110,8 +110,8 @@ Return ONLY a single valid JSON object with this exact shape (no markdown, no co
   "inputContract": "string — concise description of the request body shape clients should send",
   "outputContract": "string — concise description of the response body shape clients receive",
   "complexity": "string — exactly one of: Easy, Medium, Advanced",
-  "suggestedPrice": "number — price in USD cents, typically 500-50000",
-  "pricingModel": "string — exactly one of: buy (one-time purchase, e.g. components/libs), royalty (usage-based, e.g. APIs/infra)"
+  "suggestedPrice": "integer — price in USD cents; use 500-50000 for buy, or 1-100 per request for royalty",
+  "pricingModel": "string — exactly one of: buy (one-time purchase, e.g. components/libs), royalty (price applies to each successful API request)"
 }
 
 Use 'AI/ML' if any LLM, embedding, or inference is involved. Use 'DevOps' for tooling/CI/CD. Default category 'AI/ML' if genuinely unclear.

@@ -28,6 +28,7 @@ from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
 from app.schemas.docs import ToolDocumentation
 from app.schemas.tool import (
+    SellerToolUpdate,
     ToolCreate,
     ToolDiscoverRequest,
     ToolDiscoverResponse,
@@ -38,13 +39,23 @@ from app.schemas.tool import (
     ToolSubmitAnalysis,
     ToolSubmitRequest,
     ToolSubmitResponse,
-    ToolUpdate,
 )
 from app.services import discovery_service, docs_service, proxy_service, repo_analyzer, tool_service
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 DEMO_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
+LIVE_LOCKED_SELLER_FIELDS = frozenset(
+    {
+        "ownership_type",
+        "price_per_request",
+        "one_time_price",
+        "input_type",
+        "output_type",
+        "input_schema",
+        "output_schema",
+    }
+)
 
 
 def _tool_response(tool, *, view_count: int = 0) -> ToolResponse:
@@ -529,7 +540,7 @@ async def get_tool(
 )
 async def update_tool(
     tool_id: uuid.UUID,
-    body: ToolUpdate,
+    body: SellerToolUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
@@ -543,6 +554,14 @@ async def update_tool(
             message="Cannot update a tool while it is being processed.",
             status_code=status.HTTP_409_CONFLICT,
             error_code="tool_processing",
+        )
+    locked_fields = body.model_fields_set & LIVE_LOCKED_SELLER_FIELDS
+    if tool.status == ToolStatus.live and locked_fields:
+        raise AppError(
+            message="Pricing and API contracts are locked while a tool is live.",
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="tool_live_fields_locked",
+            details={"locked_fields": sorted(locked_fields)},
         )
 
     updated = await tool_service.update_tool(db, tool, body, redis=redis)

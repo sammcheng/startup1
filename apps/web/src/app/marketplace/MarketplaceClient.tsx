@@ -9,6 +9,7 @@ import Composer from "@/components/ui/Composer";
 import type { Tool, ToolCategory, ToolListResponse, SortBy } from "@/types/tool";
 import { ALLOW_CONVERTER_CATALOG_FALLBACK, CONVERTER_URL } from "@/lib/env";
 import { safeCssImageUrl } from "@/lib/safe-url";
+import { getToolPriceDisplay } from "@/lib/tool-pricing";
 
 // ── Converter adapter ──────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ function converterToTool(c: ConverterTool): Tool {
     input_type: inputSchema ? "json" : "text", output_type: "json",
     input_schema: inputSchema,
     output_schema: firstResponse ? { example_output: firstResponse } : null,
-    price_per_request: null, demo_url: null,
+    price_per_request: null, one_time_price: null, demo_url: null,
     api_endpoint: null,
     docker_image_uri: null, github_url: c.repo_url,
     documentation: c.endpoints.length > 0
@@ -146,14 +147,6 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-function formatPrice(p: string | null): string {
-  const n = parseFloat(p ?? "0");
-  if (n === 0) return "Free";
-  if (n < 0.001) return `$${n.toFixed(6)}`;
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(3)}/req`;
-}
-
 function cardPattern(seed: string): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i += 1) {
@@ -204,6 +197,7 @@ function XIcon({ size = 12 }: { size?: number }) {
 function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
   const color = CAT_COLORS[tool.category] ?? "#6b7280";
   const visual = CATEGORY_VISUALS[tool.category] ?? CATEGORY_VISUALS.other;
+  const price = getToolPriceDisplay(tool);
   const sellerAvatarBackgroundImage = safeCssImageUrl(tool.seller.avatar_url);
   const patternPosition = cardPattern(tool.slug);
   return (
@@ -308,8 +302,8 @@ function BrowseCard({ tool, index }: { tool: Tool; index: number }) {
           </p>
           <div className="border-t pt-4 mb-4 grid grid-cols-3 gap-2" style={{ borderColor: "var(--border)" }}>
             <div>
-              <div className="text-sm font-semibold" style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{formatPrice(tool.price_per_request)}</div>
-              <div className="text-xs mt-0.5" style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}>/req</div>
+              <div className="text-sm font-semibold" style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{price.formatted}</div>
+              <div className="text-xs mt-0.5" style={{ fontFamily: "var(--font-mono)", color: "var(--faint)" }}>{price.suffix}</div>
             </div>
             <div>
               <div className="text-sm font-semibold" style={{ fontFamily: "var(--font-mono)", color: "var(--green)" }}>
@@ -403,6 +397,7 @@ function Pagination({ page, pages, total, limit, onChange }: {
 
 function ResultCard({ row, delay, onClick }: { row: ScoredTool; delay: number; onClick: () => void }) {
   const { tool, fit } = row;
+  const price = getToolPriceDisplay(tool);
   return (
     <button className="v3-result-card" style={{ animationDelay: `${delay}ms` }} onClick={onClick}>
       <div className="v3-result-main">
@@ -424,9 +419,9 @@ function ResultCard({ row, delay, onClick }: { row: ScoredTool; delay: number; o
         </div>
       </div>
       <div className="v3-result-side">
-        <div className="v3-result-price">{formatPrice(tool.price_per_request)}</div>
+        <div className="v3-result-price">{price.formatted}</div>
         <div className="v3-result-meta">
-          <span>{formatCount(tool.total_requests)} calls</span>
+          <span>{price.suffix} · {formatCount(tool.total_requests)} calls</span>
         </div>
         <div className="v3-result-chev"><ArrowRight size={14} /></div>
       </div>
