@@ -55,6 +55,8 @@ async def sync_authenticated_user(
         raise Unauthorized(
             "Verified account email is required. Check your Clerk JWT claims or webhook sync."
         ) from exc
+    if not user.is_active:
+        raise Unauthorized("This account is suspended.")
     return AuthSyncResponse(
         id=str(user.id),
         clerk_id=user.clerk_id,

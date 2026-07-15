@@ -1,13 +1,14 @@
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from app.models.tool import OwnershipType, ToolCategory
-from app.schemas.tool import SellerToolUpdate, ToolCreate
-from app.services import tool_service
+from app.schemas.tool import SellerToolUpdate, ToolCreate, ToolFilters
+from app.services import discovery_service, tool_service
 
 
 class ScalarResult:
@@ -56,6 +57,35 @@ class UpdateToolSession:
 
     async def execute(self, query):
         return ScalarResult(self.tool)
+
+
+class QueryResult:
+    def __init__(self, *, rows=None, scalar=0):
+        self.rows = rows or []
+        self.scalar = scalar
+
+    def scalars(self):
+        return self.rows
+
+    def scalar_one(self):
+        return self.scalar
+
+    def one(self):
+        return SimpleNamespace(
+            live_tools=0,
+            active_sellers=0,
+            api_calls_served=0,
+            avg_response_time_ms=None,
+        )
+
+
+class CapturingQuerySession:
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return QueryResult()
 
 
 def make_tool_create(name: str) -> ToolCreate:
@@ -127,3 +157,71 @@ def test_effective_price_expression_includes_both_pricing_models():
     assert "CASE" in sql
     assert "tools.one_time_price" in sql
     assert "tools.price_per_request" in sql
+
+
+@pytest.mark.asyncio
+async def test_marketplace_queries_require_an_active_seller():
+    session = CapturingQuerySession()
+
+    await tool_service.list_live_tools(session, ToolFilters(), page=1, limit=20)
+    await discovery_service.discover_tools(session, query="", categories=None, limit=12)
+
+    compiled = [
+        str(
+            statement.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        for statement in session.statements
+    ]
+    assert len(compiled) == 3
+    assert all("users.is_active IS true" in sql for sql in compiled)
+    assert all("tools.status = 'live'" in sql for sql in compiled)
+
+
+@pytest.mark.asyncio
+async def test_marketplace_stats_are_derived_from_live_database_queries():
+    session = CapturingQuerySession()
+
+    stats = await tool_service.get_marketplace_stats(session)
+
+    assert stats == {
+        "live_tools": 0,
+        "active_sellers": 0,
+        "api_calls_served": 0,
+        "avg_response_time_ms": None,
+    }
+    sql = str(
+        session.statements[0].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "users.is_active IS true" in sql
+    assert "count(usage_logs.id)" in sql
+
+
+@pytest.mark.asyncio
+async def test_marketplace_stats_cache_avoids_repeated_database_scans(fake_redis, monkeypatch):
+    calls = 0
+    expected = {
+        "live_tools": 12,
+        "active_sellers": 7,
+        "api_calls_served": 3456,
+        "avg_response_time_ms": 87.4,
+    }
+
+    async def fake_get_marketplace_stats(db):
+        nonlocal calls
+        calls += 1
+        return expected
+
+    monkeypatch.setattr(tool_service, "get_marketplace_stats", fake_get_marketplace_stats)
+
+    first = await tool_service.get_marketplace_stats_cached(object(), fake_redis)
+    second = await tool_service.get_marketplace_stats_cached(object(), fake_redis)
+
+    assert first == expected
+    assert second == expected
+    assert calls == 1

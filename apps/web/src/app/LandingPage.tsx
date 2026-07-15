@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { Tool } from "@/types/tool";
+import type { MarketplaceStats, Tool } from "@/types/tool";
 import { getToolPriceDisplay } from "@/lib/tool-pricing";
 import HeroPipeline from "@/components/HeroPipeline";
 
@@ -94,13 +94,15 @@ function useCountUp(target: number, active: boolean, duration = 2200) {
   useEffect(() => {
     if (!active) return;
     const start = performance.now();
+    let frameId = 0;
     const tick = (now: number) => {
       const t = Math.min((now - start) / duration, 1);
       const ease = 1 - Math.pow(1 - t, 4);
       setCount(Math.floor(ease * target));
-      if (t < 1) requestAnimationFrame(tick);
+      if (t < 1) frameId = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
   }, [target, duration, active]);
   return count;
 }
@@ -131,7 +133,11 @@ function FloatingSnippets() {
   );
 }
 
-function HeroSection() {
+function formatMetric(value: number): string {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function HeroSection({ stats }: { stats: MarketplaceStats | null }) {
   return (
     <section
       className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-10 pb-16 overflow-hidden"
@@ -224,16 +230,22 @@ function HeroSection() {
           </Link>
         </div>
 
-        {/* Social proof row */}
+        {/* Live marketplace totals */}
         <div
           className="animate-fade-up delay-400 flex flex-wrap items-center justify-center lg:justify-start gap-x-6 gap-y-2 mt-12"
           style={{ color: "var(--faint)" }}
         >
-          <span className="text-xs font-mono">89 developers earning</span>
-          <span className="w-1 h-1 rounded-full bg-current opacity-50" />
-          <span className="text-xs font-mono">1,247 tools listed</span>
-          <span className="w-1 h-1 rounded-full bg-current opacity-50" />
-          <span className="text-xs font-mono">4.2M API calls served</span>
+          {stats ? (
+            <>
+              <span className="text-xs font-mono">{formatMetric(stats.active_sellers)} active sellers</span>
+              <span className="w-1 h-1 rounded-full bg-current opacity-50" />
+              <span className="text-xs font-mono">{formatMetric(stats.live_tools)} live tools</span>
+              <span className="w-1 h-1 rounded-full bg-current opacity-50" />
+              <span className="text-xs font-mono">{formatMetric(stats.api_calls_served)} API calls served</span>
+            </>
+          ) : (
+            <span className="text-xs font-mono">Live marketplace totals are temporarily unavailable</span>
+          )}
         </div>
         </div>
 
@@ -282,17 +294,17 @@ function HowItWorks() {
     {
       num: "01",
       title: "Upload your project",
-      desc: "Push your GitHub repo or drop a Docker image. We accept any language, any framework.",
+      desc: "Submit your GitHub repository or source archive with the command and environment your tool needs.",
     },
     {
       num: "02",
       title: "We containerize & deploy",
-      desc: "Our pipeline wraps your tool in a production-grade container with auto-scaling, monitoring, and a clean REST API.",
+      desc: "A durable worker validates the source, builds the container, deploys an endpoint, and sends it through review.",
     },
     {
       num: "03",
       title: "Earn on every API call",
-      desc: "Set your price per request. Get paid automatically — weekly payouts, no invoices, no chasing.",
+      desc: "Choose per-request or one-time pricing, then receive monthly payouts from completed buyer charges.",
     },
   ];
 
@@ -305,7 +317,7 @@ function HowItWorks() {
     {
       num: "02",
       title: "Grab an API key",
-      desc: "One key, one credit balance. Works across every tool in the marketplace. No per-tool billing headaches.",
+      desc: "Create an API key for entitled tools, with usage and purchase history kept in your account dashboard.",
     },
     {
       num: "03",
@@ -568,9 +580,13 @@ function FeaturedTools({ tools, unavailable }: { tools: Tool[]; unavailable: boo
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
           >
             <p className="text-sm font-mono uppercase tracking-widest mb-3" style={{ color: "var(--faint)" }}>Featured tools</p>
-            <h3 className="text-2xl font-bold mb-3" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>Be the first on the marketplace.</h3>
+            <h3 className="text-2xl font-bold mb-3" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
+              {unavailable ? "The live catalog is reconnecting." : "Be the first on the marketplace."}
+            </h3>
             <p className="text-sm leading-7 max-w-2xl" style={{ color: "var(--muted)" }}>
-              {"Be the first to publish a tool. Browse the marketplace to see live listings, or convert your GitHub project into a callable API in under a minute."}
+              {unavailable
+                ? "We could not load marketplace listings right now. Retry shortly or submit your own build while the catalog reconnects."
+                : "Be the first to publish a tool. Browse the marketplace to see live listings, or submit your GitHub project for review."}
             </p>
             <div className="flex flex-wrap gap-3 mt-6">
               <Link href="/marketplace" className="hero-btn-primary">Browse marketplace</Link>
@@ -641,13 +657,13 @@ function LandingDemo() {
               className="text-xs font-mono"
               style={{ color: "var(--faint)" }}
             >
-              Previewing a real tool call
+              Example marketplace workflow
             </span>
             <span
               className="text-xs font-mono px-2 py-0.5 rounded"
               style={{ background: "rgba(34,197,94,0.1)", color: "var(--green)" }}
             >
-              live
+              preview
             </span>
           </div>
 
@@ -862,15 +878,14 @@ function LandingDemo() {
               className="text-xs font-mono"
               style={{ color: "var(--faint)" }}
             >
-              Powered by{" "}
-              <span style={{ color: "var(--muted)" }}>ML Studio</span> · Hackmarket API
+              Example response · no API request is sent from this preview
             </span>
             <Link
               href="/marketplace"
               className="text-xs font-mono transition-colors hover:text-white"
               style={{ color: "var(--blue)" }}
             >
-              Browse 1,247 more tools →
+              Browse live tools →
             </Link>
           </div>
         </div>
@@ -886,13 +901,15 @@ function StatItem({
   active,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   suffix: string;
   active: boolean;
 }) {
-  const count = useCountUp(value, active);
+  const count = useCountUp(value ?? 0, active);
   const formatted =
-    value >= 1_000_000
+    value === null
+      ? "—"
+      : value >= 1_000_000
       ? `${(count / 1_000_000).toFixed(1)}M`
       : value >= 1_000
       ? count.toLocaleString()
@@ -914,15 +931,17 @@ function StatItem({
   );
 }
 
-function StatsSection() {
+function StatsSection({ stats, unavailable }: { stats: MarketplaceStats | null; unavailable: boolean }) {
   const [ref, inView] = useInView(0.3);
 
-  const stats = [
-    { label: "Tools listed", value: 1247, suffix: "" },
-    { label: "API calls served", value: 4_200_000, suffix: "" },
-    { label: "Developers earning", value: 89, suffix: "" },
-    { label: "Avg response time", value: 94, suffix: "ms" },
-  ];
+  const items = stats
+    ? [
+        { label: "Live tools", value: stats.live_tools, suffix: "" },
+        { label: "API calls served", value: stats.api_calls_served, suffix: "" },
+        { label: "Active sellers", value: stats.active_sellers, suffix: "" },
+        { label: "Avg response time", value: stats.avg_response_time_ms, suffix: "ms" },
+      ]
+    : [];
 
   return (
     <section
@@ -946,21 +965,28 @@ function StatsSection() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 divide-x"
-          style={{ borderColor: "var(--border)" }}
-        >
-          {stats.map((s) => (
-            <StatItem key={s.label} {...s} active={inView} />
-          ))}
-        </div>
+        {stats ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 divide-x"
+            style={{ borderColor: "var(--border)" }}
+          >
+            {items.map((item) => (
+              <StatItem key={item.label} {...item} active={inView} />
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-2xl border px-6 py-8 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+            {unavailable ? "Live marketplace totals are temporarily unavailable." : "No marketplace activity has been recorded yet."}
+          </p>
+        )}
 
-        {/* Micro note */}
-        <p
-          className="text-center text-xs font-mono mt-10 reveal"
-          style={{ color: "var(--faint)" }}
-        >
-          Updated in real-time · Numbers are live marketplace data
-        </p>
+        {stats ? (
+          <p
+            className="text-center text-xs font-mono mt-10 reveal"
+            style={{ color: "var(--faint)" }}
+          >
+            Live database totals · Cached for up to one minute
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -1010,18 +1036,14 @@ function SellerCTA() {
                   dead GitHub repo.
                 </h2>
                 <p className="text-base leading-relaxed mb-6" style={{ color: "var(--muted)" }}>
-                  Average seller earns{" "}
-                  <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)" }}>
-                    $340/month
-                  </span>{" "}
-                  in passive income from tools they built at hackathons. No infrastructure to
-                  manage. No customers to support. Just recurring revenue.
+                  Publish a reviewed tool, set transparent pricing, and track real usage and
+                  revenue from your seller dashboard. Earnings depend entirely on buyer activity.
                 </p>
                 <div className="grid grid-cols-3 gap-6">
                   {[
                     { label: "Setup time", value: "< 1 hour" },
-                    { label: "Platform fee", value: "15%" },
-                    { label: "Payout cycle", value: "Weekly" },
+                    { label: "Platform fee", value: "20%" },
+                    { label: "Payout cycle", value: "Monthly" },
                   ].map(({ label, value }) => (
                     <div key={label}>
                       <div
@@ -1048,7 +1070,7 @@ function SellerCTA() {
                   <span>→</span>
                 </Link>
                 <Link
-                  href="#"
+                  href="/docs"
                   className="text-center text-sm transition-colors hover:text-white"
                   style={{ color: "var(--muted)" }}
                 >
@@ -1066,14 +1088,13 @@ function SellerCTA() {
 function SiteFooter() {
   const navLinks = [
     ["Marketplace", "/marketplace"],
-    ["Documentation", "#"],
-    ["Pricing", "#"],
-    ["About", "#"],
-    ["Contact", "#"],
+    ["Documentation", "/docs"],
+    ["Pricing", "/pricing"],
+    ["Support", "/support"],
   ];
   const legalLinks = [
-    ["Terms of Service", "#"],
-    ["Privacy Policy", "#"],
+    ["Terms of Service", "/terms"],
+    ["Privacy Policy", "/privacy"],
   ];
 
   return (
@@ -1113,7 +1134,7 @@ function SiteFooter() {
           style={{ borderColor: "var(--border)" }}
         >
           <p className="text-xs font-mono" style={{ color: "var(--faint)" }}>
-            © 2025 Hackmarket. Built by developers, for developers.
+            © {new Date().getUTCFullYear()} Hackmarket. Built by developers, for developers.
           </p>
           <div className="flex items-center gap-5">
             {legalLinks.map(([label, href]) => (
@@ -1137,17 +1158,27 @@ function SiteFooter() {
 // Root component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function LandingPage({ featuredTools, featuredToolsUnavailable = false }: { featuredTools: Tool[]; featuredToolsUnavailable?: boolean }) {
+export default function LandingPage({
+  featuredTools,
+  featuredToolsUnavailable = false,
+  marketplaceStats,
+  marketplaceStatsUnavailable = false,
+}: {
+  featuredTools: Tool[];
+  featuredToolsUnavailable?: boolean;
+  marketplaceStats: MarketplaceStats | null;
+  marketplaceStatsUnavailable?: boolean;
+}) {
   useScrollReveal();
 
   return (
     <div style={{ background: "var(--bg)", color: "var(--text)" }}>
-      <HeroSection />
+      <HeroSection stats={marketplaceStats} />
       <TickerBand />
       <HowItWorks />
       <FeaturedTools tools={featuredTools} unavailable={featuredToolsUnavailable} />
       <LandingDemo />
-      <StatsSection />
+      <StatsSection stats={marketplaceStats} unavailable={marketplaceStatsUnavailable} />
       <SellerCTA />
       <SiteFooter />
     </div>

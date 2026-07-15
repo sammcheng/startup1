@@ -637,8 +637,8 @@ export default function DocsContent() {
               listing has a live, interactive demo so you can try the tool before committing —
               paste a real input, see a real response. Generate an API key from your dashboard,
               add it to your client as an <Code>X-API-Key</Code> header, and start making calls.
-              Billing is metered per request, surfaced in your usage tab in near real time, and
-              invoiced on the first of every month. There is no SDK install, no Docker image to
+              Billing is metered per request, surfaced in your dashboard, and aggregated into
+              weekly usage invoices. There is no SDK install, no Docker image to
               pull, no infra to manage — just HTTP.
             </p>
           </section>
@@ -660,8 +660,7 @@ export default function DocsContent() {
             <div style={callout}>
               <strong style={{ color: "var(--text)" }}>Heads up.</strong> Hackmarket never accepts
               keys in query strings. If you find yourself appending <Code>?api_key=...</Code> to a
-              URL, stop — the gateway will reject the request with a 401 and log the key as
-              compromised. Use the header.
+              URL, stop — the gateway only authenticates the <Code>X-API-Key</Code> header.
             </div>
 
             <SubHeader id="gateway">Gateway — invoke a tool</SubHeader>
@@ -938,17 +937,15 @@ export default function DocsContent() {
             <SubHeader id="pricing">Pricing models</SubHeader>
             <p style={bodyText}>
               Hackmarket supports two pricing models. <Code>buy</Code> is a one-time license: the
-              buyer pays a fixed price and gets unlimited use plus the source artifact. This fits
-              components and libraries — UI kits, design systems, code generators that produce
-              static output. <Code>royalty</Code> is per-call: the buyer pays a few cents per
-              request, you get the bulk of it (Hackmarket takes a 15% platform fee). This fits
+              buyer pays a fixed price and unlocks gateway access for that account. Source-code
+              delivery is not part of the current checkout flow. <Code>royalty</Code> is per-call:
+              the buyer pays the listed request price and Hackmarket retains a 20% platform fee. This fits
               APIs and live infrastructure — classifiers, generators, transformers that need to
               run for each call.
             </p>
             <p style={bodyText}>
-              You can switch pricing models post-launch, but it triggers a re-review because the
-              contract with existing buyers changes. Set a model you can live with for at least 90
-              days.
+              Live pricing and API contracts are locked to protect existing buyers. Pause the
+              listing and contact support before making a contract or pricing-model change.
             </p>
           </section>
 
@@ -1080,9 +1077,8 @@ export default function DocsContent() {
 
             <SubHeader id="sdks">SDKs</SubHeader>
             <p style={bodyText}>
-              Official SDKs for TypeScript, Python, Go, and Ruby are on the roadmap and tracked
-              publicly on the GitHub status page. For now, the recommendation is the same
-              regardless of language: call the REST endpoints directly. Hackmarket&apos;s API is
+              Official SDKs are not part of the current launch release. The recommendation is the
+              same regardless of language: call the REST endpoints directly. Hackmarket&apos;s API is
               intentionally narrow — three endpoint groups, one auth header, one envelope — so a
               hand-rolled wrapper is usually 20 lines and easier to maintain than a generated
               client.
@@ -1109,63 +1105,50 @@ export default function DocsContent() {
             <SectionHeader id="faq" kicker="07 — Common questions" title="FAQ" />
 
             <FaqItem question="How fast does my tool need to respond?">
-              For high-tier listings (featured placement, discovery boost, the &quot;Verified
-              Fast&quot; badge) the gateway requires p95 latency under 200ms on a warm path. For
-              general listings, the cap is 500ms p95. Tools that consistently exceed 30 seconds
-              get downgraded to async — the gateway returns a job ID immediately and the client
-              polls or waits for a webhook. You can opt into async explicitly in your manifest if
-              your work is naturally long-running.
+              The gateway currently has a 30-second request timeout. Requests that exceed it
+              return a 504 response; automatic async conversion is not available. Design the
+              public tool endpoint to finish comfortably inside that limit.
             </FaqItem>
 
             <FaqItem question="Do I keep ownership of my code?">
-              Yes. Hackmarket hosts a build artifact from your GitHub repository, not the source
-              itself. You retain copyright and all IP rights. You can revoke the listing at any
-              time and the artifact is destroyed within 24 hours. The marketplace agreement is
-              non-exclusive — list the same tool elsewhere if you want, run your own hosted
-              version in parallel, anything you like.
+              Yes. You retain your copyright and IP rights. Hackmarket stores the submitted source
+              archive and deployment artifacts so it can build and operate the listing. Pausing a
+              listing disables public access; contact support for account or artifact deletion
+              requests under the applicable retention policy.
             </FaqItem>
 
             <FaqItem question="How do I get paid?">
-              Per-call royalties are aggregated in real time, totaled weekly, and paid out
-              monthly via Stripe Connect. The first payout requires a one-time Stripe onboarding
-              flow (tax info, bank details, identity verification) — about 10 minutes. After
-              that, payouts are automatic on the 1st of every month for the previous month&apos;s
-              earnings. The minimum payout threshold is $10; balances under that roll forward.
+              Per-call royalties are aggregated into weekly buyer invoices. Eligible completed
+              revenue is paid monthly through Stripe Connect after onboarding. Refunds, disputes,
+              failed payments, and chargebacks can delay or reduce the amount available to transfer.
             </FaqItem>
 
             <FaqItem question="What if my tool depends on a third-party API?">
               That is fine as long as you have authorized access to it. You must disclose the
-              dependency in your listing — the &quot;Powered by&quot; field on the tool page — so
-              consumers know about the chain. Tools that secretly proxy to a paid third-party
+              dependency in your listing description and documentation so consumers know about
+              the chain. Tools that secretly proxy to a paid third-party
               API the author does not have rights to are rejected and the account is flagged.
               Pricing should reflect the upstream cost; Hackmarket does not subsidize your
               margin.
             </FaqItem>
 
             <FaqItem question="Can I update my tool after listing?">
-              Yes. Push a new commit to the default branch and re-submit the same repo from your
-              dashboard. AI testing reruns automatically. If the update changes the public I/O
-              contract — different fields, different status codes, different output shape — it
-              triggers a fresh human review because consumers may need to update their clients.
-              Patch-level updates (bug fixes, performance work) skip human review and go live
-              within minutes of passing AI testing.
+              You can edit descriptive listing fields from your dashboard. Live pricing and I/O
+              contracts are locked. Uploading replacement source starts a new processing job, and
+              changes that affect the public contract must be reviewed before buyers rely on them.
             </FaqItem>
 
             <FaqItem question="What languages and runtimes are supported?">
-              Anything that exposes an HTTP server on a port Hackmarket can probe. Node, Python,
-              Go, Rust, Ruby, Java, .NET, PHP, Elixir — all supported out of the box. If your
-              tool ships a <Code>Dockerfile</Code>, Hackmarket builds it as-is. If not, the
-              auto-build detects common runtimes from the manifest and produces a sensible
-              default. Static binaries work too; just declare the entrypoint in{" "}
-              <Code>hackmarket.yaml</Code>.
+              Automated builds currently detect Python, Node.js, Go, and Rust projects. Provide a
+              valid entry command and listening port. Existing Dockerfiles are used when the
+              project also contains one of those supported manifests.
             </FaqItem>
 
             <FaqItem question="Is there a free tier for testing?">
-              Yes. Every account gets 1,000 free gateway calls per month and unlimited free
-              discovery and submit calls. That is enough to develop and demo against, and it does
-              not require a credit card on file. Past the free tier, calls are billed at the
-              listed per-call price for each tool. Spending caps and email alerts can be
-              configured in your billing settings.
+              Public tool demos are rate limited to 10 calls per browser session and server-side
+              client window. Authenticated gateway calls follow the tool&apos;s listed pricing and
+              entitlement rules. A separate 1,000-call allowance, spending caps, and billing email
+              alerts are not part of the current launch release.
             </FaqItem>
           </section>
         </article>

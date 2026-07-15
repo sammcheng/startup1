@@ -44,6 +44,36 @@ def test_auth_sync_returns_user_payload(client, buyer, monkeypatch):
     assert payload["role"] == buyer.role.value
 
 
+def test_auth_sync_rejects_suspended_account(client, buyer, monkeypatch):
+    buyer.is_active = False
+
+    async def fake_identity():
+        return auth_service.AuthIdentity(
+            clerk_id=buyer.clerk_id,
+            email=buyer.email,
+            username=buyer.username,
+            display_name=buyer.display_name,
+        )
+
+    async def fake_sync_user_from_identity(db, identity, profile):
+        return buyer
+
+    app.dependency_overrides[get_current_identity] = fake_identity
+    monkeypatch.setattr(auth, "sync_user_from_identity", fake_sync_user_from_identity)
+
+    response = client.post(
+        "/v1/auth/sync",
+        json={
+            "email": buyer.email,
+            "username": buyer.username,
+            "display_name": buyer.display_name,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["message"] == "This account is suspended."
+
+
 @pytest.mark.asyncio
 async def test_account_can_use_seller_capabilities_from_buyer_role(buyer):
     assert await auth_dependencies.require_seller(buyer) is buyer
@@ -204,6 +234,65 @@ def test_resolve_jwks_url_prefers_configured_clerk_issuer(monkeypatch):
     assert jwks_url == "https://pleasing-racer-55.clerk.accounts.dev/.well-known/jwks.json"
 
 
+def test_resolve_jwks_url_rejects_untrusted_configured_jwks(monkeypatch):
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "clerk_jwks_url",
+        "https://attacker.example.com/.well-known/jwks.json",
+    )
+
+    with pytest.raises(Unauthorized, match="JWKS"):
+        auth_dependencies._resolve_jwks_url("fake-token")
+
+
+def test_clerk_authorized_party_must_match_frontend_origin(monkeypatch):
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "cors_origins",
+        ["https://app.hackmarket.example"],
+    )
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "app_base_url",
+        "https://app.hackmarket.example",
+    )
+
+    auth_dependencies._validate_clerk_authorized_party({"azp": "https://app.hackmarket.example"})
+
+    with pytest.raises(Unauthorized, match="authorized party"):
+        auth_dependencies._validate_clerk_authorized_party({"azp": "https://attacker.example.com"})
+
+
+@pytest.mark.parametrize("subject", [None, "", 123, ["clerk_user"]])
+@pytest.mark.asyncio
+async def test_verify_clerk_identity_rejects_invalid_subject(subject, monkeypatch):
+    async def fake_get_jwks(jwks_url):
+        return [{"kid": "kid_123"}]
+
+    monkeypatch.setattr(
+        auth_dependencies.settings,
+        "clerk_jwks_url",
+        "https://pleasing-racer-55.clerk.accounts.dev/.well-known/jwks.json",
+    )
+    monkeypatch.setattr(
+        auth_dependencies.jwt, "get_unverified_header", lambda token: {"kid": "kid_123"}
+    )
+    monkeypatch.setattr(
+        auth_dependencies.jwt.PyJWK,
+        "from_dict",
+        lambda jwk: type("SigningKey", (), {"key": "public-key"})(),
+    )
+    monkeypatch.setattr(auth_dependencies, "_get_jwks", fake_get_jwks)
+    monkeypatch.setattr(
+        auth_dependencies.jwt,
+        "decode",
+        lambda *args, **kwargs: {"sub": subject},
+    )
+
+    with pytest.raises(Unauthorized, match="subject"):
+        await auth_dependencies.verify_clerk_identity("fake-token")
+
+
 @pytest.mark.asyncio
 async def test_verify_clerk_identity_validates_configured_issuer(monkeypatch):
     async def fake_get_jwks(jwks_url):
@@ -273,6 +362,17 @@ class _FakeAuthSession:
         self.refreshed.append(obj)
 
 
+class _ExistingAuthSession(_FakeAuthSession):
+    def __init__(self, user):
+        super().__init__()
+        self.user = user
+        self.execute_calls = 0
+
+    async def execute(self, statement):
+        self.execute_calls += 1
+        return _FakeAuthResult(self.user)
+
+
 @pytest.mark.asyncio
 async def test_sync_user_trusts_verified_identity_email_over_client_body():
     db = _FakeAuthSession()
@@ -312,6 +412,21 @@ async def test_sync_user_accepts_https_avatar_url():
 
 
 @pytest.mark.asyncio
+async def test_sync_user_normalizes_verified_email():
+    db = _FakeAuthSession()
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_normalized_email",
+        email="  User.Name@Example.COM ",
+        username="normalized-user",
+        display_name="Normalized User",
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity)
+
+    assert user.email == "user.name@example.com"
+
+
+@pytest.mark.asyncio
 async def test_sync_user_drops_unsafe_avatar_urls():
     db = _FakeAuthSession()
     identity = auth_service.AuthIdentity(
@@ -331,6 +446,26 @@ async def test_sync_user_drops_unsafe_avatar_urls():
     user = await auth_service.sync_user_from_identity(db, identity, profile)
 
     assert user.avatar_url is None
+
+
+@pytest.mark.asyncio
+async def test_sync_user_does_not_reactivate_suspended_account(buyer):
+    buyer.is_active = False
+    db = _ExistingAuthSession(buyer)
+    identity = auth_service.AuthIdentity(
+        clerk_id=buyer.clerk_id,
+        email="updated@example.com",
+        username=buyer.username,
+        display_name="Updated Buyer",
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity)
+
+    assert user is buyer
+    assert user.email == "updated@example.com"
+    assert user.display_name == "Updated Buyer"
+    assert user.is_active is False
+    assert db.commits == 1
 
 
 @pytest.mark.asyncio
@@ -405,3 +540,28 @@ async def test_get_current_user_lazily_syncs_verified_identity(monkeypatch):
     assert user.is_active is True
     assert db.added == [user]
     assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_suspended_account_without_resync(buyer, monkeypatch):
+    buyer.is_active = False
+    db = _ExistingAuthSession(buyer)
+
+    async def fake_verify_clerk_identity(token):
+        assert token == "test-token"
+        return auth_service.AuthIdentity(
+            clerk_id=buyer.clerk_id,
+            email=buyer.email,
+            username=buyer.username,
+        )
+
+    async def fail_sync(*args, **kwargs):
+        raise AssertionError("Suspended accounts must not be synchronized back to active.")
+
+    monkeypatch.setattr(auth_dependencies, "verify_clerk_identity", fake_verify_clerk_identity)
+    monkeypatch.setattr(auth_dependencies, "sync_user_from_identity", fail_sync)
+
+    with pytest.raises(Unauthorized, match="suspended"):
+        await auth_dependencies.get_current_user(db=db, authorization="Bearer test-token")
+
+    assert db.commits == 0

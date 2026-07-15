@@ -74,24 +74,36 @@ _jwks_cache: dict[str, dict] = {}
 _JWKS_TTL = 3600  # seconds before re-fetching
 
 
+def _is_trusted_clerk_host(host: str) -> bool:
+    allowed_suffixes = (".clerk.accounts.dev", ".clerk.com", ".clerkstage.dev")
+    return host.endswith(allowed_suffixes) or host == "clerk.com"
+
+
 def _jwks_url_from_issuer(issuer: str) -> str:
     parsed = urlparse(issuer)
     if parsed.scheme != "https":
         raise Unauthorized("Unsupported token issuer.")
 
-    host = parsed.netloc.lower()
-    allowed_suffixes = (".clerk.accounts.dev", ".clerk.com", ".clerkstage.dev")
-    if not (host.endswith(allowed_suffixes) or host == "clerk.com"):
+    host = (parsed.hostname or "").lower()
+    if not _is_trusted_clerk_host(host):
         raise Unauthorized("Unsupported token issuer.")
 
     return f"{issuer.rstrip('/')}/.well-known/jwks.json"
 
 
+def _validate_configured_jwks_url(jwks_url: str) -> str:
+    parsed = urlparse(jwks_url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not _is_trusted_clerk_host(host):
+        raise Unauthorized("Unsupported Clerk JWKS URL.")
+    return jwks_url
+
+
 def _resolve_jwks_url(token: str) -> str:
     if settings.clerk_jwks_url:
-        return settings.clerk_jwks_url
+        return _validate_configured_jwks_url(settings.clerk_jwks_url)
     if settings.clerk_issuer_url:
-        return f"{settings.clerk_issuer_url.rstrip('/')}/.well-known/jwks.json"
+        return _jwks_url_from_issuer(settings.clerk_issuer_url)
 
     try:
         claims = jwt.decode(
@@ -105,6 +117,20 @@ def _resolve_jwks_url(token: str) -> str:
     if not issuer or not isinstance(issuer, str):
         raise Unauthorized("Token issuer missing.")
     return _jwks_url_from_issuer(issuer)
+
+
+def _validate_clerk_authorized_party(claims: dict) -> None:
+    authorized_party = claims.get("azp")
+    if authorized_party is None:
+        return
+    if not isinstance(authorized_party, str):
+        raise Unauthorized("Token authorized party is invalid.")
+
+    allowed_origins = {
+        origin.rstrip("/") for origin in [settings.app_base_url, *settings.cors_origins] if origin
+    }
+    if authorized_party.rstrip("/") not in allowed_origins:
+        raise Unauthorized("Token authorized party is not allowed.")
 
 
 async def _get_jwks(jwks_url: str) -> list[dict]:
@@ -157,6 +183,11 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
     except (jwt.PyJWTError, ValueError) as exc:
         raise Unauthorized("Token verification failed.") from exc
 
+    _validate_clerk_authorized_party(claims)
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject:
+        raise Unauthorized("Token subject missing.")
+
     email = claims.get("email")
     if not isinstance(email, str):
         email = None
@@ -181,7 +212,7 @@ async def verify_clerk_identity(token: str) -> AuthIdentity:
         avatar_url = None
 
     return AuthIdentity(
-        clerk_id=str(claims["sub"]),
+        clerk_id=subject,
         email=email,
         username=username,
         display_name=name,
@@ -213,15 +244,20 @@ async def get_current_user(
     identity = await verify_clerk_identity(token)
     clerk_id = identity.clerk_id
 
-    result = await db.execute(
-        select(User).where(User.clerk_id == clerk_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
     user = result.scalar_one_or_none()
-    if not user:
+    if user is not None:
+        if not user.is_active:
+            raise Unauthorized("This account is suspended.")
+        return user
+
+    if user is None:
         try:
             user = await sync_user_from_identity(db, identity)
         except ValueError as exc:
             raise Unauthorized("No active account found. Please complete registration.") from exc
+    if not user.is_active:
+        raise Unauthorized("This account is suspended.")
     return user
 
 

@@ -57,6 +57,24 @@ def test_public_demo_rate_limit_enforced(client, live_tool, fake_redis, monkeypa
     assert response.json()["error"]["code"] == "rate_limit_exceeded"
 
 
+def test_public_demo_rejects_suspended_seller(client, live_tool, monkeypatch):
+    live_tool.seller.is_active = False
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fail_forward(**kwargs):
+        raise AssertionError("Suspended seller tools must not receive demo traffic.")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(proxy_service, "forward_request", fail_forward)
+
+    response = client.post(f"/v1/tools/{live_tool.slug}/demo", json={"text": "hello"})
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_live"
+
+
 def test_public_demo_timeout_returns_504(client, live_tool, monkeypatch):
     async def fake_get_tool_by_slug(db, slug):
         return live_tool

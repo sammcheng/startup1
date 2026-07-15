@@ -200,6 +200,13 @@ class ToolListResponse(BaseModel):
     pages: int
 
 
+class MarketplaceStatsResponse(BaseModel):
+    live_tools: int
+    active_sellers: int
+    api_calls_served: int
+    avg_response_time_ms: float | None = None
+
+
 # ---------------------------------------------------------------------------
 # Discovery (kc-style server-side keyword scoring)
 # ---------------------------------------------------------------------------

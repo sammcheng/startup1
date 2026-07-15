@@ -300,6 +300,48 @@ def test_configure_starts_processing_when_source_exists(
     assert queue_calls == [f"runtime_configuration:{draft_tool.id}"]
 
 
+def test_configure_allows_worker_to_infer_runtime_from_github_source(
+    client, auth_overrides, seller, draft_tool, monkeypatch
+):
+    auth_overrides(seller_user=seller)
+    queue_calls: list[str] = []
+    draft_tool.github_url = "https://github.com/example/tool"
+    draft_tool.status = ToolStatus.draft
+
+    async def fake_get_tool_for_seller(db, tool_id, seller_id):
+        return draft_tool
+
+    async def fake_update_tool(db, tool, updates):
+        return _apply_tool_updates(tool, updates)
+
+    async def fake_upload_json(key, payload):
+        return None
+
+    async def fake_enqueue_tool_processing(db, tool, *, trigger, payload=None):
+        queue_calls.append(f"{trigger}:{tool.id}")
+        return type("QueuedJob", (), {"id": "job_queued"})()
+
+    monkeypatch.setattr(tool_service, "get_tool_for_seller", fake_get_tool_for_seller)
+    monkeypatch.setattr(tool_service, "update_tool", fake_update_tool)
+    monkeypatch.setattr(storage_service, "upload_json", fake_upload_json)
+    monkeypatch.setattr(job_service, "enqueue_tool_processing", fake_enqueue_tool_processing)
+
+    response = client.post(
+        f"/v1/tools/{draft_tool.id}/configure",
+        json={
+            "input_schema": {},
+            "output_schema": {},
+            "environment_variables": [],
+            "entry_command": None,
+            "port": 8080,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == ToolStatus.processing.value
+    assert queue_calls == [f"runtime_configuration:{draft_tool.id}"]
+
+
 def test_configure_marks_tool_rejected_when_queue_is_unavailable(
     client, auth_overrides, seller, draft_tool, monkeypatch
 ):
@@ -452,7 +494,7 @@ def test_seller_submission_status_returns_not_found_for_other_seller(
     assert response.json()["error"]["code"] == "tool_not_found"
 
 
-def test_configure_with_deployed_api_goes_live(
+def test_configure_with_deployed_api_waits_for_admin_review(
     client, auth_overrides, seller, draft_tool, monkeypatch
 ):
     auth_overrides(seller_user=seller)
@@ -488,8 +530,8 @@ def test_configure_with_deployed_api_goes_live(
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == ToolStatus.live.value
-    assert draft_tool.status == ToolStatus.live
+    assert response.json()["status"] == ToolStatus.draft.value
+    assert draft_tool.status == ToolStatus.draft
     assert draft_tool.api_endpoint == "https://api.example.com"
 
 

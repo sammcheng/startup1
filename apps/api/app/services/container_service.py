@@ -253,17 +253,8 @@ class ContainerBuilder:
 
                 with tempfile.TemporaryDirectory(prefix=f"tool-{tool_id}-") as temp_dir:
                     source_dir = await self._prepare_source(tool, temp_dir)
-                    config = self._tool_config_from_tool(tool)
                     analysis = await self.analyze_project(str(source_dir))
-
-                    inferred_entry = analysis.entry_point and not tool.entry_command
-                    inferred_port = analysis.port and tool.port == 8080
-                    if inferred_entry and analysis.entry_point:
-                        config.entry_command = self._default_entry_command(
-                            analysis.language, analysis.entry_point
-                        )
-                    if inferred_port and analysis.port:
-                        config.port = analysis.port
+                    config = self._tool_config_from_tool(tool, analysis)
 
                     image_uri: str | None = None
                     if render_service.render_deployments_enabled() and tool.github_url:
@@ -288,11 +279,15 @@ class ContainerBuilder:
                         api_endpoint = await self.deploy(tool_id, image_uri, config)
                         deployed_port = self._extract_port(api_endpoint)
 
-                    tool.status = ToolStatus.live
+                    # A successful build is deployment-ready, not automatically public.
+                    # Admin review is the only path that promotes a tool to live.
+                    tool.status = ToolStatus.draft
                     tool.processing_error = None
                     tool.api_endpoint = api_endpoint
                     tool.docker_image_uri = image_uri
                     tool.source_file_tree = self._build_source_tree(source_dir)
+                    tool.entry_command = config.entry_command
+                    tool.port = config.port
                     await db.commit()
                     return ProcessUploadResult(succeeded=True, api_endpoint=api_endpoint)
             except Exception as exc:
@@ -455,20 +450,25 @@ class ContainerBuilder:
             "The container started but did not become healthy within 30 seconds."
         )
 
-    def _tool_config_from_tool(self, tool: Tool) -> ToolConfig:
+    def _tool_config_from_tool(self, tool: Tool, analysis: ProjectAnalysis) -> ToolConfig:
         environment_variables = {
             item["key"]: item["value"]
             for item in (tool.environment_variables or [])
             if item.get("key") and item.get("value") is not None
         }
         entry_command = tool.entry_command
+        if not entry_command and analysis.entry_point:
+            entry_command = self._default_entry_command(analysis.language, analysis.entry_point)
         if not entry_command:
             raise ContainerBuildError(
                 "No entry command is configured for this tool. Save the runtime configuration before uploading."
             )
+        port = tool.port or 8080
+        if analysis.port and port == 8080:
+            port = analysis.port
         return ToolConfig(
             entry_command=entry_command,
-            port=tool.port or 8080,
+            port=port,
             environment_variables=environment_variables,
         )
 

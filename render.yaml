@@ -142,6 +142,10 @@ services:
         value: "3600"
       - key: MAX_ACTIVE_API_KEYS_PER_USER
         value: "10"
+      - key: REPO_ANALYSIS_RATE_LIMIT_PER_HOUR
+        value: "5"
+      - key: REPO_ANALYSIS_LOCK_SECONDS
+        value: "180"
       - key: RENDER_REGISTRY_CREDENTIAL_ID
         sync: false
       - key: RENDER_REGISTRY_CREDENTIAL_NAME
@@ -295,6 +299,10 @@ services:
         value: "3600"
       - key: MAX_ACTIVE_API_KEYS_PER_USER
         value: "10"
+      - key: REPO_ANALYSIS_RATE_LIMIT_PER_HOUR
+        value: "5"
+      - key: REPO_ANALYSIS_LOCK_SECONDS
+        value: "180"
       - key: RENDER_REGISTRY_CREDENTIAL_ID
         sync: false
       - key: RENDER_REGISTRY_CREDENTIAL_NAME

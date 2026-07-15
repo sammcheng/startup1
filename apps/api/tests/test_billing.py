@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.exceptions import Forbidden
-from app.models import ToolPurchase, Transaction
+from app.exceptions import Forbidden, ToolNotLiveError
+from app.models import ToolPurchase, Transaction, User
 from app.models.tool import OwnershipType
 from app.models.tool_purchase import PurchaseStatus
 from app.services import billing_service
@@ -102,6 +102,9 @@ class FakePurchaseSession:
     async def get(self, model, key):
         if model is ToolPurchase or model is Transaction:
             return self.by_id.get(key)
+        if model is User:
+            tool = self.tool or self.tool_after_stale_retry
+            return tool.seller if tool is not None else None
         if self.tool is None:
             self.tool = self.tool_after_stale_retry
             return self.tool
@@ -881,6 +884,18 @@ async def test_purchase_tool_rejects_seller_buying_own_tool(seller, live_tool):
 
     with pytest.raises(Forbidden):
         await billing_service.purchase_tool(db, seller, live_tool.id)
+
+
+@pytest.mark.asyncio
+async def test_purchase_tool_rejects_suspended_seller(buyer, live_tool):
+    live_tool.seller.is_active = False
+    db = FakePurchaseSession(live_tool)
+
+    with pytest.raises(ToolNotLiveError):
+        await billing_service.purchase_tool(db, buyer, live_tool.id)
+
+    assert db.added == []
+    assert db.committed == 0
 
 
 def test_purchase_tool_route_returns_checkout_url(

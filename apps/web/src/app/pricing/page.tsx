@@ -20,24 +20,14 @@ const plans = [
   },
   {
     name: "Sellers",
-    price: "Marketplace revenue share",
+    price: "20% platform fee",
     description: "List tools, process buyer requests, and track revenue without building billing from scratch.",
     features: [
       "Free submission and review flow during MVP launch",
       "Tools stay in review until processed and approved",
       "Seller dashboard for requests, revenue, latency, and status",
-      "Payouts require Stripe Connect onboarding before launch payouts",
-    ],
-  },
-  {
-    name: "Teams",
-    price: "Custom",
-    description: "For teams that need higher limits, private tools, or hands-on launch support.",
-    features: [
-      "Custom rate limits and support paths",
-      "Private marketplace review workflows",
-      "Launch migration help for existing tools",
-      "Security and procurement documentation on request",
+      "Monthly payouts require completed Stripe Connect onboarding",
+      "Refunds and disputes can reduce eligible seller revenue",
     ],
   },
 ];
@@ -71,11 +61,12 @@ export default function PricingPage() {
 
       <section className="trust-cta">
         <div>
-          <p className="trust-eyebrow">Launch note</p>
-          <h2>Final fees should be confirmed before opening paid traffic.</h2>
+          <p className="trust-eyebrow">Transparent terms</p>
+          <h2>Know the fee before you publish or purchase.</h2>
           <p>
-            This page describes the product model. Confirm Stripe fees, marketplace take rate,
-            refund rules, and payout timing before inviting real buyers.
+            Hackmarket retains 20% of completed marketplace revenue. Eligible seller balances are
+            transferred monthly through Stripe Connect and may be adjusted for refunds, disputes,
+            fraud, or chargebacks.
           </p>
         </div>
         <Link href="/seller-agreement" className="trust-primary-link">

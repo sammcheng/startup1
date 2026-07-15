@@ -130,9 +130,10 @@ async def configure_tool(
     tool: Annotated[Tool, Depends(_get_owned_tool)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ToolResponse:
-    if not body.deployment_url and not body.entry_command:
+    has_processable_source = bool(tool.source_s3_key or tool.github_url)
+    if not body.deployment_url and not body.entry_command and not has_processable_source:
         raise AppError(
-            message="Provide either an entry command for Hackmarket to run or a live deployment URL.",
+            message="Provide source code, an entry command, or a live deployment URL.",
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             error_code="runtime_configuration_incomplete",
         )
@@ -154,11 +155,11 @@ async def configure_tool(
             input_schema=body.input_schema,
             output_schema=body.output_schema,
             environment_variables=[item.model_dump() for item in body.environment_variables],
-            entry_command=body.entry_command,
+            entry_command=body.entry_command or tool.entry_command,
             port=body.port,
             config_s3_key=config_s3_key,
             api_endpoint=normalized_deployment_url,
-            status=ToolStatus.live if normalized_deployment_url else tool.status,
+            status=ToolStatus.draft if normalized_deployment_url else tool.status,
             processing_error=None,
         ),
     )

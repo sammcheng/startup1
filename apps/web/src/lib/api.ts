@@ -140,9 +140,15 @@ async function request<T>(
   body?: unknown,
   options: RequestOptions = {}
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    [REQUEST_ID_HEADER]: options.requestId ?? createRequestId(),
-  };
+  const headers: Record<string, string> = {};
+  const requestId =
+    options.requestId ?? (options.next && !options.token ? null : createRequestId());
+
+  // Let the API assign an ID for Next-cached public requests. A random header
+  // would otherwise create a unique cache key for every render.
+  if (requestId) {
+    headers[REQUEST_ID_HEADER] = requestId;
+  }
 
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";

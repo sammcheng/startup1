@@ -1,4 +1,4 @@
-from app.models import APIKey, StripeWebhookEvent, ToolPurchase, Transaction
+from app.models import APIKey, StripeWebhookEvent, ToolPurchase, Transaction, User
 
 
 def test_api_key_hash_has_unique_database_index():
@@ -44,3 +44,10 @@ def test_usage_invoice_period_has_unique_database_index():
 
 def test_stripe_event_id_is_the_webhook_receipt_primary_key():
     assert [column.name for column in StripeWebhookEvent.__table__.primary_key.columns] == ["id"]
+
+
+def test_user_email_has_case_insensitive_unique_database_index():
+    index = next(index for index in User.__table__.indexes if index.name == "ux_users_email_lower")
+
+    assert index.unique is True
+    assert "lower(users.email)" in str(index.expressions[0])

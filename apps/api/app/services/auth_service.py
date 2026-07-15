@@ -27,9 +27,9 @@ async def sync_user_from_identity(
     # Email ownership must come from a verified Clerk token/webhook payload in
     # production. The client sync body is only a local/test fallback for Clerk
     # JWT templates that omit email claims while developers are wiring auth.
-    email = identity.email or ""
+    email = _normalize_email(identity.email or "")
     if not email and settings.environment != "production":
-        email = (profile.email if profile else "") or ""
+        email = _normalize_email((profile.email if profile else "") or "")
     if not email:
         raise ValueError("An email address is required to synchronize the user.")
 
@@ -74,7 +74,6 @@ async def sync_user_from_identity(
     user.avatar_url = _safe_avatar_url(
         (profile.avatar_url if profile else None), identity.avatar_url, user.avatar_url
     )
-    user.is_active = True
     await db.commit()
     await db.refresh(user)
     return user
@@ -107,6 +106,10 @@ def _normalize_username(value: str) -> str:
 
 def _username_from_email(email: str) -> str:
     return email.split("@", 1)[0]
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
 
 
 def _display_name_from_email(email: str) -> str:

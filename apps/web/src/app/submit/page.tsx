@@ -286,8 +286,24 @@ export default function SubmitPage() {
       }
 
       if (account.isSignedIn && listing.id && token) {
-        const updatedTool = await api.put<Tool>(`/tools/${listing.id}`, body, { token });
-        setSubmissionRecord(toolToSubmissionRecord(updatedTool));
+        await api.put<Tool>(`/tools/${listing.id}`, body, { token });
+        await api.post(
+          `/tools/${listing.id}/upload`,
+          { github_url: url.trim() },
+          { token },
+        );
+        const queuedTool = await api.post<Tool>(
+          `/tools/${listing.id}/configure`,
+          {
+            input_schema: body.input_schema,
+            output_schema: body.output_schema,
+            environment_variables: [],
+            entry_command: null,
+            port: 8080,
+          },
+          { token },
+        );
+        setSubmissionRecord(toolToSubmissionRecord(queuedTool));
         setCompletionMode("owned");
       } else {
         setSubmissionRecord(null);
@@ -1376,8 +1392,8 @@ function DonePhase({
       >
         {completionMode === "owned" ? (
           <>
-            Manual review within 48 hours. You&rsquo;ll get an email when{" "}
-            {listingName ? <strong>{listingName}</strong> : "your listing"} goes live.
+            {listingName ? <strong>{listingName}</strong> : "Your listing"} is queued for build,
+            deployment checks, and admin review. Track each stage from the status page.
           </>
         ) : (
           <>

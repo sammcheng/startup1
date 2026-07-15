@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,12 +14,15 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import AsyncSessionLocal
 from app.models.tool import OwnershipType, Tool, ToolStatus
 from app.models.usage_log import UsageLog
+from app.models.user import User
 from app.schemas.tool import SellerToolUpdate, ToolCreate, ToolFilters, ToolUpdate
 
 logger = logging.getLogger(__name__)
 
 _TOOL_CACHE_PREFIX = "tool:cache:"
 _TOOL_CACHE_TTL = 60  # seconds
+_MARKETPLACE_STATS_CACHE_KEY = "marketplace:stats"
+_MARKETPLACE_STATS_CACHE_TTL = 60
 
 _VIEW_KEY_PREFIX = "tool:views:"
 _VIEW_FLUSH_THRESHOLD = 50  # flush to DB every N increments (future background task hook)
@@ -47,6 +51,20 @@ def _effective_price_expression():
         ),
         else_=func.coalesce(Tool.price_per_request, 0),
     )
+
+
+def public_availability_conditions():
+    """Return the database filters shared by every public catalog query."""
+    return (
+        Tool.status == ToolStatus.live,
+        Tool.seller.has(User.is_active.is_(True)),
+    )
+
+
+def is_publicly_available(tool: Tool, seller: User | None = None) -> bool:
+    """Return whether a loaded tool may be shown, sold, or invoked."""
+    resolved_seller = seller if seller is not None else tool.seller
+    return tool.status == ToolStatus.live and bool(resolved_seller and resolved_seller.is_active)
 
 
 # ---------------------------------------------------------------------------
@@ -283,10 +301,9 @@ async def list_live_tools(
     """
     Return a page of live tools matching *filters*, plus the total count.
     """
-    base_query = (
-        select(Tool).where(Tool.status == ToolStatus.live).options(selectinload(Tool.seller))
-    )
-    count_query = select(func.count()).select_from(Tool).where(Tool.status == ToolStatus.live)
+    availability_conditions = public_availability_conditions()
+    base_query = select(Tool).where(*availability_conditions).options(selectinload(Tool.seller))
+    count_query = select(func.count()).select_from(Tool).where(*availability_conditions)
     effective_price = _effective_price_expression()
 
     # --- filters ---
@@ -333,6 +350,73 @@ async def list_live_tools(
     total_result = await db.execute(count_query)
 
     return list(items_result.scalars()), total_result.scalar_one()
+
+
+async def get_marketplace_stats(db: AsyncSession) -> dict[str, int | float | None]:
+    """Return live, database-backed aggregates for public marketplace copy."""
+    availability_conditions = public_availability_conditions()
+    live_tools = select(func.count(Tool.id)).where(*availability_conditions).scalar_subquery()
+    active_sellers = (
+        select(func.count(func.distinct(Tool.seller_id)))
+        .where(*availability_conditions)
+        .scalar_subquery()
+    )
+    result = await db.execute(
+        select(
+            live_tools.label("live_tools"),
+            active_sellers.label("active_sellers"),
+            func.count(UsageLog.id).label("api_calls_served"),
+            func.avg(UsageLog.response_time_ms).label("avg_response_time_ms"),
+        ).select_from(UsageLog)
+    )
+    row = result.one()
+    return {
+        "live_tools": int(row.live_tools or 0),
+        "active_sellers": int(row.active_sellers or 0),
+        "api_calls_served": int(row.api_calls_served or 0),
+        "avg_response_time_ms": (
+            float(row.avg_response_time_ms) if row.avg_response_time_ms is not None else None
+        ),
+    }
+
+
+async def get_marketplace_stats_cached(
+    db: AsyncSession,
+    redis: Redis,
+) -> dict[str, int | float | None]:
+    """Cache aggregate scans briefly while preserving a database fallback."""
+    try:
+        cached = await redis.get(_MARKETPLACE_STATS_CACHE_KEY)
+    except RedisError:
+        logger.warning("Marketplace stats cache read failed", exc_info=True)
+        cached = None
+
+    if cached:
+        try:
+            payload = json.loads(cached)
+            return {
+                "live_tools": int(payload["live_tools"]),
+                "active_sellers": int(payload["active_sellers"]),
+                "api_calls_served": int(payload["api_calls_served"]),
+                "avg_response_time_ms": (
+                    float(payload["avg_response_time_ms"])
+                    if payload["avg_response_time_ms"] is not None
+                    else None
+                ),
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Ignoring malformed marketplace stats cache entry")
+
+    stats = await get_marketplace_stats(db)
+    try:
+        await redis.set(
+            _MARKETPLACE_STATS_CACHE_KEY,
+            json.dumps(stats),
+            ex=_MARKETPLACE_STATS_CACHE_TTL,
+        )
+    except RedisError:
+        logger.warning("Marketplace stats cache write failed", exc_info=True)
+    return stats
 
 
 async def get_seller_tools(db: AsyncSession, seller_id: uuid.UUID) -> list[Tool]:

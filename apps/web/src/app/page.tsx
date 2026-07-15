@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { api, buildQuery } from "@/lib/api";
-import type { Tool, ToolListResponse } from "@/types/tool";
+import type { MarketplaceStats, Tool, ToolListResponse } from "@/types/tool";
 import { fetchConverterTools } from "@/lib/converterTools";
 import { ALLOW_CONVERTER_CATALOG_FALLBACK } from "@/lib/env";
 import LandingPage from "./LandingPage";
@@ -16,15 +16,21 @@ export const metadata: Metadata = {
 export default async function Home() {
   let featuredTools: Tool[] = [];
   let featuredToolsUnavailable = false;
+  let marketplaceStats: MarketplaceStats | null = null;
+  let marketplaceStatsUnavailable = false;
 
   // Production must reflect live user-owned marketplace data. Converter fallback is local/dev only.
-  try {
-    const data = await api.get<ToolListResponse>(
+  const [toolsResult, statsResult] = await Promise.allSettled([
+    api.get<ToolListResponse>(
       `/tools${buildQuery({ is_featured: true, limit: 4, sort_by: "popular" })}`,
-      { cache: "no-store" }
-    );
-    featuredTools = data.items;
-  } catch {
+      { next: { revalidate: 60 } },
+    ),
+    api.get<MarketplaceStats>("/tools/stats", { next: { revalidate: 60 } }),
+  ]);
+
+  if (toolsResult.status === "fulfilled") {
+    featuredTools = toolsResult.value.items;
+  } else {
     featuredToolsUnavailable = true;
     if (ALLOW_CONVERTER_CATALOG_FALLBACK) {
       try {
@@ -37,5 +43,18 @@ export default async function Home() {
     }
   }
 
-  return <LandingPage featuredTools={featuredTools} featuredToolsUnavailable={featuredToolsUnavailable} />;
+  if (statsResult.status === "fulfilled") {
+    marketplaceStats = statsResult.value;
+  } else {
+    marketplaceStatsUnavailable = true;
+  }
+
+  return (
+    <LandingPage
+      featuredTools={featuredTools}
+      featuredToolsUnavailable={featuredToolsUnavailable}
+      marketplaceStats={marketplaceStats}
+      marketplaceStatsUnavailable={marketplaceStatsUnavailable}
+    />
+  );
 }

@@ -260,6 +260,31 @@ def test_tool_not_live(client, auth_overrides, buyer, api_key, draft_tool, monke
     assert response.json()["error"]["code"] == "tool_not_live"
 
 
+def test_suspended_seller_tool_cannot_be_invoked(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
+    auth_overrides(api_key_context=(buyer, api_key))
+    live_tool.seller.is_active = False
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fail_forward(*args, **kwargs):
+        raise AssertionError("Suspended seller tools must not receive gateway traffic.")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(gateway, "_forward_request", fail_forward)
+
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_live"
+
+
 def test_full_sale_gateway_requires_active_purchase(
     client, auth_overrides, buyer, api_key, live_tool, monkeypatch
 ):

@@ -21,7 +21,7 @@ from app.exceptions import (
     ToolNotLiveError,
 )
 from app.models import APIKey, Tool, ToolPurchase, User
-from app.models.tool import OwnershipType, ToolStatus
+from app.models.tool import OwnershipType
 from app.models.tool_purchase import PurchaseStatus
 from app.schemas.usage import UsageLogCreate
 from app.services import (
@@ -88,7 +88,7 @@ async def _proxy_tool_request_impl(
     tool = await tool_service.get_tool_by_slug_cached(db, redis, tool_slug)
     if not tool:
         raise ToolNotFoundError(tool_slug)
-    if tool.status != ToolStatus.live or not tool.api_endpoint:
+    if not tool_service.is_publicly_available(tool) or not tool.api_endpoint:
         raise ToolNotLiveError(tool_slug)
     await _ensure_gateway_entitlement(db, buyer, tool)
 

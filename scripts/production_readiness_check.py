@@ -39,6 +39,14 @@ SYNTHETIC_METRICS_MIGRATION = (
     / "versions"
     / "0010_clear_synthetic_curated_tool_metrics.py"
 )
+USER_EMAIL_INTEGRITY_MIGRATION = (
+    REPO_ROOT
+    / "apps"
+    / "api"
+    / "alembic"
+    / "versions"
+    / "0012_enforce_case_insensitive_user_emails.py"
+)
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_SCAN = REPO_ROOT / "scripts" / "security_scan.py"
@@ -73,6 +81,12 @@ WEB_ENV = REPO_ROOT / "apps" / "web" / "src" / "lib" / "env.ts"
 WEB_SECURITY_HEADERS = REPO_ROOT / "apps" / "web" / "security-headers.mjs"
 WEB_API_CLIENT = REPO_ROOT / "apps" / "web" / "src" / "lib" / "api.ts"
 WEB_HOME_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "page.tsx"
+WEB_LANDING_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "LandingPage.tsx"
+WEB_PRICING_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "pricing" / "page.tsx"
+WEB_SELLER_AGREEMENT_PAGE = (
+    REPO_ROOT / "apps" / "web" / "src" / "app" / "seller-agreement" / "page.tsx"
+)
+WEB_SUBMIT_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "submit" / "page.tsx"
 WEB_MARKETPLACE_PAGE = REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "page.tsx"
 WEB_MARKETPLACE_CLIENT = (
     REPO_ROOT / "apps" / "web" / "src" / "app" / "marketplace" / "MarketplaceClient.tsx"
@@ -166,6 +180,8 @@ API_REQUIRED_ENV = {
     "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD",
     "GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS",
     "MAX_ACTIVE_API_KEYS_PER_USER",
+    "REPO_ANALYSIS_RATE_LIMIT_PER_HOUR",
+    "REPO_ANALYSIS_LOCK_SECONDS",
     "RENDER_REGISTRY_CREDENTIAL_ID",
     "RENDER_REGISTRY_CREDENTIAL_NAME",
     "IMAGE_REGISTRY_NAMESPACE",
@@ -318,6 +334,12 @@ def check_render_blueprint(failures: list[str]) -> None:
         expect(
             env.get("ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS", {}).get("value") == "1800",
             f"{name} must define the production stuck processing-job alert threshold",
+            failures,
+        )
+        expect(
+            env.get("REPO_ANALYSIS_RATE_LIMIT_PER_HOUR", {}).get("value") == "5"
+            and env.get("REPO_ANALYSIS_LOCK_SECONDS", {}).get("value") == "180",
+            f"{name} must bound account repository analysis load",
             failures,
         )
         expect(
@@ -689,6 +711,28 @@ def check_repo_files(failures: list[str]) -> None:
         "seller-owned tool routes must use account-scoped tool lookup",
         failures,
     )
+    discovery_service = (
+        REPO_ROOT / "apps" / "api" / "app" / "services" / "discovery_service.py"
+    ).read_text(encoding="utf-8")
+    tools_router = API_TOOLS_ROUTER.read_text(encoding="utf-8")
+    gateway_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "gateway.py").read_text(
+        encoding="utf-8"
+    )
+    expect(
+        "public_availability_conditions" in tool_service
+        and "Tool.seller.has(User.is_active.is_(True))" in tool_service
+        and "public_availability_conditions" in discovery_service
+        and "get_marketplace_stats" in tool_service,
+        "public marketplace queries must exclude tools owned by inactive sellers",
+        failures,
+    )
+    expect(
+        tools_router.count("tool_service.is_publicly_available(tool)") >= 3
+        and "tool_service.is_publicly_available(tool)" in gateway_router
+        and "tool_service.is_publicly_available(tool, seller)" in billing_service,
+        "inactive seller tools must be blocked from details, demos, docs, purchases, and gateway calls",
+        failures,
+    )
     api_key_service = API_KEY_SERVICE.read_text(encoding="utf-8")
     hashing_utils = HASHING_UTILS.read_text(encoding="utf-8")
     expect(
@@ -706,6 +750,35 @@ def check_repo_files(failures: list[str]) -> None:
         and "is_api_key_format(x_api_key)" in dependencies
         and "hash_api_key(x_api_key)" in dependencies,
         "gateway API key validation must reject malformed keys before hashing and database lookup",
+        failures,
+    )
+    auth_service = (REPO_ROOT / "apps" / "api" / "app" / "services" / "auth_service.py").read_text(
+        encoding="utf-8"
+    )
+    expect(
+        "user.is_active = True" not in auth_service,
+        "identity synchronization must not reactivate suspended or deleted accounts",
+        failures,
+    )
+    expect(
+        "_normalize_email(identity.email" in auth_service
+        and USER_EMAIL_INTEGRITY_MIGRATION.exists()
+        and "ux_users_email_lower" in USER_EMAIL_INTEGRITY_MIGRATION.read_text(encoding="utf-8"),
+        "verified emails must be normalized and uniquely enforced without case sensitivity",
+        failures,
+    )
+    expect(
+        "if not user.is_active:" in dependencies
+        and 'raise Unauthorized("This account is suspended.")' in dependencies,
+        "authenticated requests must reject suspended accounts before lazy synchronization",
+        failures,
+    )
+    expect(
+        "_validate_clerk_authorized_party(claims)" in dependencies
+        and "settings.app_base_url" in dependencies
+        and "settings.cors_origins" in dependencies
+        and "_validate_configured_jwks_url" in dependencies,
+        "Clerk tokens must validate their frontend origin and use a trusted JWKS host",
         failures,
     )
     api_keys_router = (REPO_ROOT / "apps" / "api" / "app" / "routers" / "api_keys.py").read_text(
@@ -864,8 +937,47 @@ def check_repo_files(failures: list[str]) -> None:
         and '"environment_variables": None' in tools_router
         and '"api_endpoint": None' in tools_router
         and '"source_s3_key": None' in tools_router
-        and '"config_s3_key": None' in tools_router,
-        "public tool APIs must redact seller secrets, storage keys, and raw endpoints",
+        and '"config_s3_key": None' in tools_router
+        and '"source_file_tree": None' in tools_router
+        and '"entry_command": None' in tools_router
+        and '"processing_error": None' in tools_router,
+        "public tool APIs must redact seller secrets, storage keys, source metadata, and raw endpoints",
+        failures,
+    )
+    web_home_page = WEB_HOME_PAGE.read_text(encoding="utf-8")
+    web_landing_page = WEB_LANDING_PAGE.read_text(encoding="utf-8")
+    expect(
+        'api.get<MarketplaceStats>("/tools/stats"' in web_home_page
+        and "marketplaceStats={marketplaceStats}" in web_home_page
+        and "Live database totals" in web_landing_page,
+        "homepage marketplace metrics must come from the live aggregate API",
+        failures,
+    )
+    expect(
+        "1,247" not in web_landing_page
+        and "$340/month" not in web_landing_page
+        and 'value: "15%"' not in web_landing_page
+        and 'value: "Weekly"' not in web_landing_page,
+        "homepage must not publish fabricated traction, earnings, fees, or payout claims",
+        failures,
+    )
+    web_pricing_page = WEB_PRICING_PAGE.read_text(encoding="utf-8")
+    web_seller_agreement = WEB_SELLER_AGREEMENT_PAGE.read_text(encoding="utf-8")
+    web_docs = WEB_DOCS_CLIENT.read_text(encoding="utf-8")
+    expect(
+        'PLATFORM_FEE_RATE = Decimal("0.20")' in billing_service
+        and "20% platform fee" in web_pricing_page
+        and "20% platform fee" in web_seller_agreement
+        and "20% platform fee" in web_docs
+        and "15% platform fee" not in web_docs,
+        "billing code, pricing, seller terms, and docs must publish the same platform fee",
+        failures,
+    )
+    web_submit_page = WEB_SUBMIT_PAGE.read_text(encoding="utf-8")
+    expect(
+        '`/tools/${listing.id}/upload`' in web_submit_page
+        and '`/tools/${listing.id}/configure`' in web_submit_page,
+        "seller submission must persist source and queue durable processing after draft review",
         failures,
     )
     expect(
@@ -1148,8 +1260,9 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         'REQUEST_ID_HEADER = "X-HackMarket-Request-Id"' in web_api_client
         and "createRequestId" in web_api_client
-        and "options.requestId ?? createRequestId()" in web_api_client,
-        "frontend API client must attach traceable request IDs to outbound API calls",
+        and "options.next && !options.token ? null : createRequestId()" in web_api_client
+        and "headers[REQUEST_ID_HEADER] = requestId" in web_api_client,
+        "frontend API client must attach traceable request IDs without defeating public Next.js caching",
         failures,
     )
     expect(
@@ -1301,6 +1414,13 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "unpack_archive" not in container_service,
         "worker source extraction must not use shutil.unpack_archive",
+        failures,
+    )
+    expect(
+        "tool.status = ToolStatus.live" not in container_service
+        and "status=ToolStatus.live" not in API_TOOLS_ROUTER.read_text(encoding="utf-8")
+        and "body.status == ToolStatus.live" in API_ADMIN_ROUTER.read_text(encoding="utf-8"),
+        "only an administrator review may promote a processed tool to live",
         failures,
     )
 

@@ -24,7 +24,7 @@ from app.models import (
     UsageLog,
     User,
 )
-from app.models.tool import OwnershipType, ToolStatus
+from app.models.tool import OwnershipType
 from app.models.tool_purchase import PurchaseStatus
 from app.schemas.billing import (
     BillingInvoiceSummary,
@@ -33,7 +33,7 @@ from app.schemas.billing import (
     SellerBalanceResponse,
     SellerPayoutHistoryItem,
 )
-from app.services import alert_service
+from app.services import alert_service, tool_service
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,8 @@ async def purchase_tool(
     tool = await db.get(Tool, tool_id)
     if not tool:
         raise ToolNotFoundError(str(tool_id))
-    if tool.status != ToolStatus.live:
+    seller = await db.get(User, tool.seller_id)
+    if not tool_service.is_publicly_available(tool, seller):
         raise ToolNotLiveError(tool.slug)
     if tool.seller_id == buyer.id:
         raise Forbidden("You cannot purchase your own tool.")

@@ -5,7 +5,11 @@ import zipfile
 import pytest
 
 from app.services import container_service, storage_service
-from app.services.container_service import ContainerBuilder, ContainerBuildError
+from app.services.container_service import (
+    ContainerBuilder,
+    ContainerBuildError,
+    ProjectAnalysis,
+)
 
 
 def _symlink_zip_bytes() -> bytes:
@@ -39,3 +43,22 @@ def test_container_service_uses_safe_zip_extractor() -> None:
     assert "extract_safe_zip" in source
     assert "extractall" not in source
     assert "unpack_archive" not in source
+
+
+def test_runtime_configuration_infers_entry_command_and_port(draft_tool):
+    draft_tool.entry_command = None
+    draft_tool.port = 8080
+    analysis = ProjectAnalysis(
+        source_path="/tmp/tool",
+        language="python",
+        framework="fastapi",
+        entry_point="main.py",
+        port=9000,
+        dependencies_file="requirements.txt",
+        has_dockerfile=False,
+    )
+
+    config = ContainerBuilder()._tool_config_from_tool(draft_tool, analysis)
+
+    assert config.entry_command == "python main.py"
+    assert config.port == 9000

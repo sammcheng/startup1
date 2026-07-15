@@ -71,6 +71,13 @@ export interface ToolListResponse {
   pages: number;
 }
 
+export interface MarketplaceStats {
+  live_tools: number;
+  active_sellers: number;
+  api_calls_served: number;
+  avg_response_time_ms: number | null;
+}
+
 export type SortBy = "popular" | "newest" | "price_low" | "price_high";
 
 export interface ToolFilters {

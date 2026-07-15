@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.tool import Tool, ToolCategory, ToolStatus
+from app.models.tool import Tool, ToolCategory
+from app.services import tool_service
 
 STOP_WORDS: frozenset[str] = frozenset(
     {
@@ -145,7 +146,11 @@ async def discover_tools(
     """Return ranked (tool, score, matched_keywords, fit_line) tuples."""
     tokens = tokenize(query)
 
-    stmt = select(Tool).where(Tool.status == ToolStatus.live).options(selectinload(Tool.seller))
+    stmt = (
+        select(Tool)
+        .where(*tool_service.public_availability_conditions())
+        .options(selectinload(Tool.seller))
+    )
     if categories:
         stmt = stmt.where(Tool.category.in_(categories))
 

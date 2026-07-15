@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     max_active_api_keys_per_user: int = 10
     demo_rate_limit_per_hour: int = 10
     public_rate_limit_per_minute: int = 60
+    repo_analysis_rate_limit_per_hour: int = 5
+    repo_analysis_lock_seconds: int = 180
 
     # API-to-tool request authentication. The private key stays on the API and
     # signs every proxied request; hosted tools receive only the public key.
@@ -296,6 +298,12 @@ class Settings(BaseSettings):
 
         if self.max_active_api_keys_per_user < 1:
             raise ValueError("MAX_ACTIVE_API_KEYS_PER_USER must be at least 1 in production.")
+
+        if self.repo_analysis_rate_limit_per_hour < 1:
+            raise ValueError("REPO_ANALYSIS_RATE_LIMIT_PER_HOUR must be at least 1 in production.")
+
+        if self.repo_analysis_lock_seconds < 120:
+            raise ValueError("REPO_ANALYSIS_LOCK_SECONDS must be at least 120 in production.")
 
         if self.stripe_webhook_job_expires_seconds <= self.worker_job_timeout_seconds:
             raise ValueError(

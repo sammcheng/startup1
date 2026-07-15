@@ -1,7 +1,10 @@
 import pytest
+from fastapi import HTTPException
 
+from app.exceptions import AppError
 from app.models.tool import ToolStatus
 from app.routers import internal
+from app.routers import tools as tools_router
 from app.services import discovery_service, repo_analyzer, tool_service
 
 
@@ -47,12 +50,38 @@ def test_create_tool_unauthenticated(client):
     assert response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_repo_analysis_is_rate_limited_per_account(fake_redis, seller, monkeypatch):
+    monkeypatch.setattr(tools_router.settings, "repo_analysis_rate_limit_per_hour", 1)
+
+    await tools_router._check_repo_analysis_rate_limit(fake_redis, seller.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tools_router._check_repo_analysis_rate_limit(fake_redis, seller.id)
+
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_repo_analysis_allows_only_one_active_run_per_account(fake_redis, seller):
+    async with tools_router._repo_analysis_slot(fake_redis, seller.id):
+        with pytest.raises(AppError, match="already has a repository analysis"):
+            async with tools_router._repo_analysis_slot(fake_redis, seller.id):
+                pass
+
+    async with tools_router._repo_analysis_slot(fake_redis, seller.id):
+        pass
+
+
 def test_list_tools_only_live(client, seller, live_tool, draft_tool, monkeypatch):
     live_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
     live_tool.api_endpoint = "https://seller.example.com"
     live_tool.source_s3_key = "tools/live/source.zip"
     live_tool.config_s3_key = "tools/live/config.json"
     live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+    live_tool.source_file_tree = ["src/private-model.py", ".env.example"]
+    live_tool.entry_command = "python src/private-model.py"
+    live_tool.processing_error = "registry.internal.example refused credentials"
 
     async def fake_list_live_tools(db, filters, page, limit):
         items = [tool for tool in [live_tool, draft_tool] if tool.status == ToolStatus.live]
@@ -74,6 +103,9 @@ def test_list_tools_only_live(client, seller, live_tool, draft_tool, monkeypatch
     assert item["source_s3_key"] is None
     assert item["config_s3_key"] is None
     assert item["docker_image_uri"] is None
+    assert item["source_file_tree"] is None
+    assert item["entry_command"] is None
+    assert item["processing_error"] is None
 
 
 def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monkeypatch):
@@ -100,12 +132,42 @@ def test_search_tools(client, seller, live_tool, draft_tool, tool_factory, monke
     assert response.json()["items"][0]["slug"] == live_tool.slug
 
 
+def test_marketplace_stats_return_live_aggregates(client, monkeypatch):
+    async def fake_get_marketplace_stats_cached(db, redis):
+        return {
+            "live_tools": 12,
+            "active_sellers": 7,
+            "api_calls_served": 3456,
+            "avg_response_time_ms": 87.4,
+        }
+
+    monkeypatch.setattr(
+        tool_service,
+        "get_marketplace_stats_cached",
+        fake_get_marketplace_stats_cached,
+    )
+
+    response = client.get("/v1/tools/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "live_tools": 12,
+        "active_sellers": 7,
+        "api_calls_served": 3456,
+        "avg_response_time_ms": 87.4,
+    }
+    assert response.headers["cache-control"] == ("public, max-age=60, stale-while-revalidate=300")
+
+
 def test_discovery_redacts_operational_fields(client, live_tool, monkeypatch):
     live_tool.environment_variables = [{"key": "OPENAI_API_KEY", "value": "sk-live-secret"}]
     live_tool.api_endpoint = "https://seller.example.com"
     live_tool.source_s3_key = "tools/live/source.zip"
     live_tool.config_s3_key = "tools/live/config.json"
     live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+    live_tool.source_file_tree = ["src/private-model.py"]
+    live_tool.entry_command = "python src/private-model.py"
+    live_tool.processing_error = "internal build output"
 
     async def fake_discover_tools(db, query, categories, limit):
         return [(live_tool, 1.0, ["live"], "Strong match")]
@@ -121,6 +183,9 @@ def test_discovery_redacts_operational_fields(client, live_tool, monkeypatch):
     assert tool["source_s3_key"] is None
     assert tool["config_s3_key"] is None
     assert tool["docker_image_uri"] is None
+    assert tool["source_file_tree"] is None
+    assert tool["entry_command"] is None
+    assert tool["processing_error"] is None
 
 
 def test_get_my_tool(client, auth_overrides, seller, draft_tool, monkeypatch):
@@ -154,6 +219,9 @@ def test_public_tool_detail_redacts_operational_fields(client, live_tool, monkey
     live_tool.source_s3_key = "tools/live/source.zip"
     live_tool.config_s3_key = "tools/live/config.json"
     live_tool.docker_image_uri = "ghcr.io/acme/live:latest"
+    live_tool.source_file_tree = ["src/private-model.py"]
+    live_tool.entry_command = "python src/private-model.py"
+    live_tool.processing_error = "internal build output"
 
     async def fake_get_tool_by_slug(db, slug):
         assert slug == live_tool.slug
@@ -174,6 +242,39 @@ def test_public_tool_detail_redacts_operational_fields(client, live_tool, monkey
     assert payload["source_s3_key"] is None
     assert payload["config_s3_key"] is None
     assert payload["docker_image_uri"] is None
+    assert payload["source_file_tree"] is None
+    assert payload["entry_command"] is None
+    assert payload["processing_error"] is None
+
+
+def test_public_tool_detail_rejects_non_live_tool(client, draft_tool, monkeypatch):
+    async def fake_get_tool_by_slug(db, slug):
+        return draft_tool
+
+    async def fail_increment(*args, **kwargs):
+        raise AssertionError("Unavailable tools must not record public views.")
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(tool_service, "increment_view_counter", fail_increment)
+
+    response = client.get(f"/v1/tools/{draft_tool.slug}")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_live"
+
+
+def test_public_tool_docs_reject_suspended_seller(client, live_tool, monkeypatch):
+    live_tool.seller.is_active = False
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+
+    response = client.get(f"/v1/tools/{live_tool.slug}/docs")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "tool_not_live"
 
 
 def test_public_tool_docs_require_live_tool(client, draft_tool, monkeypatch):

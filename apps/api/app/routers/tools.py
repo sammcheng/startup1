@@ -1,5 +1,7 @@
+import logging
 import math
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -28,6 +30,7 @@ from app.models.tool import OwnershipType, ToolCategory, ToolStatus
 from app.models.user import User
 from app.schemas.docs import ToolDocumentation
 from app.schemas.tool import (
+    MarketplaceStatsResponse,
     SellerToolUpdate,
     ToolCreate,
     ToolDiscoverRequest,
@@ -43,6 +46,7 @@ from app.schemas.tool import (
 from app.services import discovery_service, docs_service, proxy_service, repo_analyzer, tool_service
 
 router = APIRouter(prefix="/tools", tags=["tools"])
+logger = logging.getLogger(__name__)
 
 DEMO_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 LIVE_LOCKED_SELLER_FIELDS = frozenset(
@@ -56,6 +60,13 @@ LIVE_LOCKED_SELLER_FIELDS = frozenset(
         "output_schema",
     }
 )
+REPO_ANALYSIS_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
+REPO_ANALYSIS_LOCK_RELEASE_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 
 def _tool_response(tool, *, view_count: int = 0) -> ToolResponse:
@@ -66,10 +77,13 @@ def _public_tool_response(tool, *, view_count: int = 0) -> ToolResponse:
     return _tool_response(tool, view_count=view_count).model_copy(
         update={
             "environment_variables": None,
+            "source_file_tree": None,
             "api_endpoint": None,
             "docker_image_uri": None,
             "source_s3_key": None,
             "config_s3_key": None,
+            "entry_command": None,
+            "processing_error": None,
         }
     )
 
@@ -123,6 +137,45 @@ async def _check_demo_rate_limit(redis: Redis, request: Request, slug: str) -> t
     if current > limit:
         raise RateLimitExceededError(limit, 0)
     return limit, limit - current
+
+
+async def _check_repo_analysis_rate_limit(redis: Redis, user_id: uuid.UUID) -> None:
+    await check_rate_limit(
+        redis,
+        key=f"repo-analysis:user:{user_id}",
+        limit=settings.repo_analysis_rate_limit_per_hour,
+        window=REPO_ANALYSIS_RATE_LIMIT_WINDOW_SECONDS,
+    )
+
+
+@asynccontextmanager
+async def _repo_analysis_slot(redis: Redis, user_id: uuid.UUID):
+    lock_key = f"repo-analysis:active:{user_id}"
+    lock_token = uuid.uuid4().hex
+    acquired = await redis.set(
+        lock_key,
+        lock_token,
+        ex=settings.repo_analysis_lock_seconds,
+        nx=True,
+    )
+    if not acquired:
+        raise AppError(
+            message="This account already has a repository analysis in progress.",
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="repo_analysis_in_progress",
+        )
+    try:
+        yield
+    finally:
+        try:
+            await redis.eval(REPO_ANALYSIS_LOCK_RELEASE_SCRIPT, 1, lock_key, lock_token)
+        except Exception:
+            # The bounded TTL still releases the slot if Redis is unavailable here.
+            logger.warning(
+                "Failed to release repository analysis slot for user %s",
+                user_id,
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +313,8 @@ async def submit_repo(
     await _check_public_rate_limit(redis, request, "submit")
     if settings.environment == "production" and current_user is None:
         raise Unauthorized("Sign in before submitting a tool for analysis.")
+    if current_user is not None:
+        await _check_repo_analysis_rate_limit(redis, current_user.id)
 
     # Lazy imports to keep the module load fast.
     import secrets
@@ -274,27 +329,35 @@ async def submit_repo(
     clone_root = Path(settings.submit_repo_clone_dir)
     clone_id = secrets.token_hex(6)
     repo_path = clone_root / clone_id
-    try:
-        try:
-            await repo_analyzer.clone_repo(github_url, repo_path)
-        except Exception as exc:  # noqa: BLE001
-            raise AppError(
-                code="CLONE_FAILED",
-                message=f"Could not clone repository: {exc}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            ) from exc
 
+    async def analyze_repository():
         try:
-            analysis = await repo_analyzer.analyze_repo(repo_path, github_url)
-        except repo_analyzer.RepoAnalysisUnavailable as exc:
-            raise AppError(
-                message=str(exc),
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                error_code="repo_analysis_unavailable",
-            ) from exc
-    finally:
-        # Best-effort cleanup — keep the temp tree small.
-        shutil.rmtree(repo_path, ignore_errors=True)
+            try:
+                await repo_analyzer.clone_repo(github_url, repo_path)
+            except Exception as exc:  # noqa: BLE001
+                raise AppError(
+                    code="CLONE_FAILED",
+                    message=f"Could not clone repository: {exc}",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ) from exc
+
+            try:
+                return await repo_analyzer.analyze_repo(repo_path, github_url)
+            except repo_analyzer.RepoAnalysisUnavailable as exc:
+                raise AppError(
+                    message=str(exc),
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    error_code="repo_analysis_unavailable",
+                ) from exc
+        finally:
+            # Best-effort cleanup — keep the temp tree small.
+            shutil.rmtree(repo_path, ignore_errors=True)
+
+    if current_user is not None:
+        async with _repo_analysis_slot(redis, current_user.id):
+            analysis = await analyze_repository()
+    else:
+        analysis = await analyze_repository()
 
     # Map kc-shape analysis → main's ToolCreate.
     tool_data = ToolCreate(
@@ -370,6 +433,20 @@ async def submit_repo(
 
 
 @router.get(
+    "/stats",
+    response_model=MarketplaceStatsResponse,
+    summary="Get live marketplace statistics",
+)
+async def get_marketplace_stats(
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> MarketplaceStatsResponse:
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+    return MarketplaceStatsResponse(**(await tool_service.get_marketplace_stats_cached(db, redis)))
+
+
+@router.get(
     "",
     response_model=ToolListResponse,
     summary="List live tools",
@@ -416,7 +493,7 @@ async def run_tool_demo(
     tool = await tool_service.get_tool_by_slug(db, slug)
     if not tool:
         raise ToolNotFoundError(slug)
-    if tool.status != ToolStatus.live or not tool.api_endpoint:
+    if not tool_service.is_publicly_available(tool) or not tool.api_endpoint:
         raise ToolNotLiveError(slug)
 
     limit, remaining = await _check_demo_rate_limit(redis, request, slug)
@@ -499,7 +576,7 @@ async def get_tool_docs(
     tool = await tool_service.get_tool_by_slug(db, slug)
     if not tool:
         raise ToolNotFoundError(slug)
-    if tool.status != ToolStatus.live:
+    if not tool_service.is_publicly_available(tool):
         raise ToolNotLiveError(slug)
     return docs_service.generate_tool_docs(tool)
 
@@ -523,6 +600,8 @@ async def get_tool(
     tool = await tool_service.get_tool_by_slug(db, slug)
     if not tool:
         raise ToolNotFoundError(slug)
+    if not tool_service.is_publicly_available(tool):
+        raise ToolNotLiveError(slug)
 
     view_count = await tool_service.increment_view_counter(redis, slug)
     return _public_tool_response(tool, view_count=view_count)

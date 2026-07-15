@@ -38,8 +38,8 @@ export default function SellerAgreementPage() {
         <TrustList
           items={[
             "Seller payouts require completed Stripe Connect onboarding and valid tax/payment information where applicable.",
-            "Revenue may be adjusted for refunds, disputes, fraud, abuse, chargebacks, credits, or platform fees.",
-            "Marketplace take rate, payout timing, and final fees should be confirmed before paid launch traffic begins.",
+            "Hackmarket retains a 20% platform fee from completed marketplace revenue.",
+            "Eligible balances are paid monthly and may be adjusted for refunds, disputes, fraud, abuse, chargebacks, or credits.",
           ]}
         />
       </TrustSection>

@@ -12,7 +12,7 @@ os.environ.setdefault(
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_mock")
-os.environ.setdefault("CLERK_JWKS_URL", "https://example.com/.well-known/jwks.json")
+os.environ.setdefault("CLERK_JWKS_URL", "https://ci-test.clerk.accounts.dev/.well-known/jwks.json")
 
 import pytest
 from fastapi.testclient import TestClient

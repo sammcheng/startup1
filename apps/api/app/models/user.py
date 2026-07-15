@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, String, func
+from sqlalchemy import Boolean, DateTime, Enum, Index, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,3 +64,5 @@ class User(Base):
     tool_purchases_as_seller: Mapped[list["ToolPurchase"]] = relationship(
         "ToolPurchase", back_populates="seller", foreign_keys="ToolPurchase.seller_id"
     )
+
+    __table_args__ = (Index("ux_users_email_lower", func.lower(email), unique=True),)
