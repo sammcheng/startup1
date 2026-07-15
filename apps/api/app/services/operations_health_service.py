@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import job_service, queue_service
+from app.services import job_service, queue_service, stripe_event_service
 
 
 def processing_job_check(processing_jobs: dict[str, int]) -> str:
@@ -14,6 +14,15 @@ def processing_job_check(processing_jobs: dict[str, int]) -> str:
     if processing_jobs["stuck_active"]:
         risks.append("stuck_active")
     if processing_jobs["failed_recent"] >= processing_jobs["failed_threshold"]:
+        risks.append("failed_recent")
+    return "ok" if not risks else "degraded_" + "_and_".join(risks)
+
+
+def stripe_webhook_check(stripe_webhooks: dict[str, int]) -> str:
+    risks = []
+    if stripe_webhooks["stuck_active"]:
+        risks.append("stuck_active")
+    if stripe_webhooks["failed_recent"] >= stripe_webhooks["failed_threshold"]:
         risks.append("failed_recent")
     return "ok" if not risks else "degraded_" + "_and_".join(risks)
 
@@ -54,10 +63,13 @@ async def get_operations_health(db: AsyncSession, redis: Redis) -> dict[str, Any
 
     processing_jobs = await job_service.processing_job_health(db)
     checks["processing_jobs"] = processing_job_check(processing_jobs)
+    stripe_webhooks = await stripe_event_service.webhook_event_health(db)
+    checks["stripe_webhooks"] = stripe_webhook_check(stripe_webhooks)
 
     return {
         "status": "healthy" if all(value == "ok" for value in checks.values()) else "degraded",
         "checks": checks,
         "queue": queue,
         "processing_jobs": processing_jobs,
+        "stripe_webhooks": stripe_webhooks,
     }

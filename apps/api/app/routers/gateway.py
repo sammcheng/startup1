@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,9 +24,16 @@ from app.models import APIKey, Tool, ToolPurchase, User
 from app.models.tool import OwnershipType, ToolStatus
 from app.models.tool_purchase import PurchaseStatus
 from app.schemas.usage import UsageLogCreate
-from app.services import alert_service, proxy_service, tool_service, usage_service
+from app.services import (
+    alert_service,
+    proxy_service,
+    queue_service,
+    tool_service,
+    usage_service,
+)
 
 RATE_LIMIT_WINDOW_SECONDS = 60
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tools", tags=["gateway"])
 
@@ -148,23 +156,36 @@ async def _proxy_tool_request_impl(
 
     response_time_ms = max(int((datetime.now(UTC) - started_at).total_seconds() * 1000), 1)
 
-    background_tasks.add_task(
-        usage_service.create_usage_log,
-        UsageLogCreate(
-            api_key_id=api_key.id,
-            tool_id=tool.id,
-            user_id=buyer.id,
-            request_timestamp=started_at,
-            response_time_ms=response_time_ms,
-            status_code=upstream_status_code,
-            input_size_bytes=len(request_body),
-            output_size_bytes=len(upstream_content),
-            cost=_calculate_request_cost(tool, upstream_status_code),
-            error_message=error_message,
-        ),
+    usage_log_id = uuid.uuid4()
+    usage_entry = UsageLogCreate(
+        api_key_id=api_key.id,
+        tool_id=tool.id,
+        user_id=buyer.id,
+        request_timestamp=started_at,
+        response_time_ms=response_time_ms,
+        status_code=upstream_status_code,
+        input_size_bytes=len(request_body),
+        output_size_bytes=len(upstream_content),
+        cost=_calculate_request_cost(tool, upstream_status_code, buyer.id),
+        error_message=error_message,
     )
-    await tool_service.increment_total_requests(redis, tool.id)
-    background_tasks.add_task(tool_service.flush_total_requests_if_needed, redis, tool.id)
+    await _persist_or_queue_usage_log(db, usage_log_id, usage_entry)
+
+    try:
+        await tool_service.increment_total_requests(redis, tool.id)
+        background_tasks.add_task(tool_service.flush_total_requests_if_needed, redis, tool.id)
+    except Exception as exc:
+        logger.warning("Failed to update request counter for tool %s", tool.id, exc_info=True)
+        await alert_service.send_alert(
+            "gateway_request_counter_failed",
+            severity="warning",
+            summary="A tool request succeeded but its cached request counter was not updated.",
+            details={
+                "tool_id": str(tool.id),
+                "usage_log_id": str(usage_log_id),
+                "error_type": type(exc).__name__,
+            },
+        )
 
     upstream_headers.update(
         {
@@ -284,7 +305,54 @@ def _attach_gateway_error_context(content: bytes, request_id: str, status_code: 
     return json.dumps(payload).encode("utf-8")
 
 
-def _calculate_request_cost(tool: Tool, status_code: int) -> Decimal:
-    if status_code >= 500 or tool.ownership_type.value == "full_sale":
+async def _persist_or_queue_usage_log(
+    db: AsyncSession,
+    usage_log_id: uuid.UUID,
+    entry: UsageLogCreate,
+) -> None:
+    try:
+        await usage_service.persist_usage_log(db, usage_log_id, entry)
+        return
+    except Exception as exc:
+        logger.error("Usage ledger write failed for %s", usage_log_id, exc_info=True)
+        persistence_error = type(exc).__name__
+
+    queued = False
+    queue_error: str | None = None
+    try:
+        await queue_service.enqueue_usage_log_job(
+            usage_log_id,
+            entry.model_dump(mode="json"),
+        )
+        queued = True
+    except Exception as exc:
+        queue_error = type(exc).__name__
+        logger.error("Usage ledger fallback queue failed for %s", usage_log_id, exc_info=True)
+
+    await alert_service.send_alert(
+        "usage_log_persistence_degraded",
+        severity="warning" if queued else "critical",
+        summary=(
+            "A usage record was moved to the retry queue."
+            if queued
+            else "A usage record could not be persisted or queued."
+        ),
+        details={
+            "usage_log_id": str(usage_log_id),
+            "tool_id": str(entry.tool_id),
+            "user_id": str(entry.user_id),
+            "queued": queued,
+            "persistence_error": persistence_error,
+            "queue_error": queue_error,
+        },
+    )
+
+
+def _calculate_request_cost(
+    tool: Tool,
+    status_code: int,
+    buyer_id: uuid.UUID,
+) -> Decimal:
+    if status_code >= 500 or tool.ownership_type.value == "full_sale" or tool.seller_id == buyer_id:
         return Decimal("0")
     return tool.price_per_request or Decimal("0")

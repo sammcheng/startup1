@@ -11,6 +11,16 @@ class _FakeRedis:
         return self.heartbeat
 
 
+async def fake_healthy_stripe_webhooks(db):
+    return {
+        "stuck_active": 0,
+        "failed_recent": 0,
+        "stale_after_seconds": 900,
+        "failed_threshold": 1,
+        "failed_window_seconds": 900,
+    }
+
+
 @pytest.mark.asyncio
 async def test_operations_health_reports_healthy_when_queue_worker_and_jobs_are_ok(monkeypatch):
     async def fake_queue_depth(redis):
@@ -29,12 +39,22 @@ async def test_operations_health_reports_healthy_when_queue_worker_and_jobs_are_
     monkeypatch.setattr(
         operations_health_service.job_service, "processing_job_health", fake_processing_job_health
     )
+    monkeypatch.setattr(
+        operations_health_service.stripe_event_service,
+        "webhook_event_health",
+        fake_healthy_stripe_webhooks,
+    )
     monkeypatch.setattr(operations_health_service.settings, "alert_queue_depth_threshold", 100)
 
     health = await operations_health_service.get_operations_health(db=object(), redis=_FakeRedis())
 
     assert health["status"] == "healthy"
-    assert health["checks"] == {"queue": "ok", "worker": "ok", "processing_jobs": "ok"}
+    assert health["checks"] == {
+        "queue": "ok",
+        "worker": "ok",
+        "processing_jobs": "ok",
+        "stripe_webhooks": "ok",
+    }
     assert health["queue"]["depth"] == 2
 
 
@@ -52,9 +72,23 @@ async def test_operations_health_reports_degraded_when_queue_worker_and_jobs_are
             "failed_window_seconds": 900,
         }
 
+    async def fake_stripe_webhook_health(db):
+        return {
+            "stuck_active": 2,
+            "failed_recent": 1,
+            "stale_after_seconds": 900,
+            "failed_threshold": 1,
+            "failed_window_seconds": 900,
+        }
+
     monkeypatch.setattr(operations_health_service.queue_service, "queue_depth", fake_queue_depth)
     monkeypatch.setattr(
         operations_health_service.job_service, "processing_job_health", fake_processing_job_health
+    )
+    monkeypatch.setattr(
+        operations_health_service.stripe_event_service,
+        "webhook_event_health",
+        fake_stripe_webhook_health,
     )
     monkeypatch.setattr(operations_health_service.settings, "alert_queue_depth_threshold", 100)
 
@@ -67,5 +101,6 @@ async def test_operations_health_reports_degraded_when_queue_worker_and_jobs_are
         "queue": "degraded_high_depth",
         "worker": "missing_heartbeat",
         "processing_jobs": "degraded_stuck_active_and_failed_recent",
+        "stripe_webhooks": "degraded_stuck_active_and_failed_recent",
     }
     assert health["queue"]["worker_heartbeat"] is False

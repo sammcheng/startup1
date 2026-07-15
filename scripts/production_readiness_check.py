@@ -123,6 +123,8 @@ API_REQUIRED_ENV = {
     "WORKER_CONCURRENCY",
     "WORKER_HEALTH_CHECK_INTERVAL_SECONDS",
     "WORKER_HEALTH_CHECK_KEY",
+    "STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS",
+    "USAGE_LOG_JOB_EXPIRES_SECONDS",
     "RUN_BILLING_SCHEDULER_IN_API",
     "TOOL_GATEWAY_SIGNING_PRIVATE_KEY",
     "TOOL_GATEWAY_SIGNING_KEY_ID",
@@ -134,6 +136,9 @@ API_REQUIRED_ENV = {
     "ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS",
     "ALERT_FAILED_PROCESSING_JOBS_THRESHOLD",
     "ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS",
+    "ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS",
+    "ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD",
+    "ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS",
     "CONVERTER_SECRET",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
@@ -257,6 +262,13 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
 
+    if redis is not None:
+        expect(
+            redis.get("maxmemoryPolicy") == "noeviction",
+            "hackmarket-redis must use noeviction so queued jobs cannot be discarded",
+            failures,
+        )
+
     for name, service in {"start": api, "start-worker": worker}.items():
         if service is None:
             continue
@@ -316,6 +328,31 @@ def check_render_blueprint(failures: list[str]) -> None:
         expect(
             env.get("ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS", {}).get("value") == "900",
             f"{name} must define the production failed processing-job alert window",
+            failures,
+        )
+        expect(
+            env.get("STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS", {}).get("value") == "604800",
+            f"{name} must retain Stripe webhook jobs long enough for provider retries",
+            failures,
+        )
+        expect(
+            env.get("USAGE_LOG_JOB_EXPIRES_SECONDS", {}).get("value") == "604800",
+            f"{name} must retain usage-ledger retries through prolonged worker outages",
+            failures,
+        )
+        expect(
+            env.get("ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS", {}).get("value") == "900",
+            f"{name} must define the stuck Stripe-webhook alert threshold",
+            failures,
+        )
+        expect(
+            env.get("ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD", {}).get("value") == "1",
+            f"{name} must alert on failed Stripe webhook processing",
+            failures,
+        )
+        expect(
+            env.get("ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS", {}).get("value") == "900",
+            f"{name} must define the failed Stripe-webhook alert window",
             failures,
         )
         expect(
@@ -536,7 +573,7 @@ def check_repo_files(failures: list[str]) -> None:
     billing_service = BILLING_SERVICE.read_text(encoding="utf-8")
     compact_billing_service = "".join(billing_service.split())
     expect(
-        "_existing_usage_invoice_id" in billing_service,
+        "_existing_usage_invoice" in billing_service,
         "billing scheduler must guard usage invoices with DB-backed idempotency",
         failures,
     )
@@ -579,6 +616,34 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_stripe_idempotency_key" in billing_service
+        and "idempotency_key=" in billing_service
+        and "stripe_invoice_id" in billing_service,
+        "Stripe mutations and invoice ledger records must be retry-safe",
+        failures,
+    )
+    expect(
+        "_settle_usage_invoice" in billing_service
+        and "stripe.Invoice.retrieve" in billing_service
+        and "stripe.Invoice.finalize_invoice" in billing_service
+        and "invoice_id,auto_advance=True,idempotency_key=" in compact_billing_service,
+        "usage invoices must resume after interruption and enable Stripe automatic collection retries",
+        failures,
+    )
+    expect(
+        "Tool.seller_id!=user_id" in compact_billing_service,
+        "usage invoicing must never bill sellers for invoking their own tools",
+        failures,
+    )
+    expect(
+        "charge.refunded" in billing_service
+        and "_handle_charge_refunded" in billing_service
+        and "TransactionStatus.refund_pending" in billing_service
+        and "stripe_transfer_reversal_id" in billing_service,
+        "Stripe refunds must hold partial payouts, revoke full-sale access, and reverse completed payouts",
+        failures,
+    )
+    expect(
         "_get_checkout_records" in billing_service
         and "_checkout_transaction_matches_purchase" in billing_service
         and "transaction.buyer_id == purchase.buyer_id" in billing_service
@@ -594,6 +659,17 @@ def check_repo_files(failures: list[str]) -> None:
         and "stripe_webhook_secret" in billing_router
         and "Webhook secret not set" in billing_router,
         "Stripe webhook route must fail closed when STRIPE_WEBHOOK_SECRET is missing",
+        failures,
+    )
+    expect(
+        "stripe_event_service.accept_verified_event" in billing_router,
+        "Stripe webhook requests must persist and queue a durable receipt before returning",
+        failures,
+    )
+    worker_source = (REPO_ROOT / "apps" / "api" / "app" / "worker.py").read_text(encoding="utf-8")
+    expect(
+        "process_stripe_webhook_job" in worker_source and "process_usage_log_job" in worker_source,
+        "background worker must process durable Stripe events and usage-ledger retries",
         failures,
     )
 
@@ -818,6 +894,13 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect(
+        "_persist_or_queue_usage_log" in gateway_router
+        and "enqueue_usage_log_job" in gateway_router
+        and "background_tasks.add_task(usage_service" not in gateway_router,
+        "gateway usage accounting must persist synchronously with a durable retry fallback",
+        failures,
+    )
+    expect(
         "Sign in before submitting a tool for analysis" in tools_router,
         "anonymous production submissions must fail before creating system-owned drafts",
         failures,
@@ -841,6 +924,11 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         "processing_job_check" in operations_health_service,
         "operations health service must centralize processing-job risk classification",
+        failures,
+    )
+    expect(
+        "stripe_webhook_check" in operations_health_service,
+        "operations health must classify stuck and failed Stripe webhook events",
         failures,
     )
     expect(
@@ -918,6 +1006,17 @@ def check_repo_files(failures: list[str]) -> None:
         failures,
     )
     expect("/audit-logs" in admin_router, "admin API must expose audit logs to admins", failures)
+    expect(
+        "/stripe-webhooks" in admin_router and "retry_webhook_event" in admin_router,
+        "admin API must expose and retry durable Stripe webhook events",
+        failures,
+    )
+    admin_page = WEB_ADMIN_PAGE.read_text(encoding="utf-8")
+    expect(
+        "Stripe event queue" in admin_page and "retryStripeEvent" in admin_page,
+        "admin dashboard must show and retry failed Stripe webhook events",
+        failures,
+    )
 
     smoke_check = PRODUCTION_SMOKE_CHECK.read_text(encoding="utf-8")
     expect(

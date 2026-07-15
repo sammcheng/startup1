@@ -53,6 +53,8 @@ Apply the Blueprint in `render.yaml`. It should create:
 
 Do not launch production on free tiers. The repository readiness check enforces starter/basic plans in `render.yaml`, but you still need to confirm live Render services match the Blueprint.
 
+Confirm `hackmarket-redis` uses `maxmemoryPolicy=noeviction`. An eviction policy can silently discard queued uploads, usage records, or verified Stripe events.
+
 Required production alert env vars:
 - `ALERT_WEBHOOK_URL`
 - `ALERT_WEBHOOK_TIMEOUT_SECONDS=5`
@@ -61,6 +63,11 @@ Required production alert env vars:
 - `ALERT_PROCESSING_JOB_STALE_AFTER_SECONDS=1800`
 - `ALERT_FAILED_PROCESSING_JOBS_THRESHOLD=3`
 - `ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS=900`
+- `ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS=900`
+- `ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD=1`
+- `ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS=900`
+- `STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS=604800`
+- `USAGE_LOG_JOB_EXPIRES_SECONDS=604800`
 - `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3`
 - `GATEWAY_RATE_LIMIT_VIOLATION_WINDOW_SECONDS=3600`
 - `MAX_ACTIVE_API_KEYS_PER_USER=10`
@@ -96,6 +103,7 @@ Confirm migration `0007_add_tool_processing_jobs.py` is applied so seller submis
 Confirm migration `0008_add_data_integrity_constraints.py` is applied so API key hashes and open buyer/tool purchases are protected by database uniqueness.
 Confirm migration `0009_add_admin_audit_logs.py` is applied so admin actions have a durable audit trail.
 Confirm migration `0010_clear_synthetic_curated_tool_metrics.py` is applied so seeded latency and uptime values are removed without overwriting measured usage data.
+Confirm migration `0011_add_durable_stripe_webhooks.py` is applied so Stripe receipts, invoice references, payout references, reversal references, and usage-period uniqueness are durable.
 
 Before running production migrations:
 - Confirm Render Postgres backups are enabled.
@@ -116,7 +124,10 @@ Clerk:
 Stripe:
 - Set webhook target to `https://api.hackmarket.io/v1/billing/webhook`
 - Store the signing secret as `STRIPE_WEBHOOK_SECRET`
-- Test checkout, subscription updates, failed payments, and refunds
+- Subscribe to checkout completion/expiration, payment-intent success/failure, invoice paid/payment-failed, refunds, and Connect account updates used by the application.
+- Confirm a valid event returns quickly after its durable receipt is queued, while a queue outage returns an error so Stripe retries delivery.
+- Test paid checkout, asynchronous payment success/failure, invoice payment failure, full refunds, and partial-refund payout holds/operator alerts.
+- For a full refund, verify buyer access is revoked and a previously paid seller transfer is reversed exactly once.
 - Confirm duplicate Stripe events and repeated worker scheduler runs do not create duplicate purchases, usage invoices, seller payouts, or transactions.
 
 ## 6. Verify Launch Gates
@@ -199,12 +210,13 @@ Watch these signals during the first launch window:
 - API `/health` and `/ready`
 - Seller tool `/health` and `/ready`; readiness must fail when its OpenRouter key is missing
 - Worker health key reported by `/ready`
-- `/ready` must return `degraded` if the worker heartbeat is missing, queue depth is above threshold, processing jobs are stuck, or recent processing failures cross threshold.
+- `/ready` must return `degraded` if the worker heartbeat is missing, queue depth is above threshold, processing jobs are stuck, Stripe webhooks are stuck, or recent failure thresholds are crossed.
 - Redis queue depth
 - Failed `tool_processing_jobs`
 - Alert webhook deliveries for worker failures, readiness degradation, and invalid provider webhooks
 - Gateway rate-limit abuse alerts and active API-key caps
 - Stripe webhook failures
+- Usage-ledger retry failures (`usage_log_processing_failed`) and degraded synchronous writes (`usage_log_persistence_degraded`)
 - Clerk webhook failures
 - Seller tool deployment failures
 - API 5xx rate
@@ -216,6 +228,7 @@ Do not invite real users until uploads, dashboard status updates, buyer API key 
 
 Before opening the marketplace, sign in with an admin account and verify:
 - `/admin` loads the production health panel, audit trail, users, and processing jobs.
+- The Stripe event queue lists recent event metadata without exposing raw payloads, and a failed test event can be retried from `/admin`.
 - Suspended users can no longer access authenticated API paths.
 - Failed processing jobs can be retried from `/admin`.
 - Tool review changes, user moderation changes, and processing-job retries appear in the `/admin` audit trail.

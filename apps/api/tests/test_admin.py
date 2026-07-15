@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from app.models.admin_audit_log import AdminAuditLog
+from app.models.stripe_webhook_event import StripeWebhookEvent, StripeWebhookEventStatus
 from app.models.tool import ToolStatus
 from app.models.tool_processing_job import (
     ToolProcessingJob,
@@ -9,7 +10,13 @@ from app.models.tool_processing_job import (
     ToolProcessingJobStatus,
 )
 from app.models.user import UserRole
-from app.services import admin_audit_service, job_service, tool_service, user_service
+from app.services import (
+    admin_audit_service,
+    job_service,
+    stripe_event_service,
+    tool_service,
+    user_service,
+)
 
 
 def make_processing_job(draft_tool, *, status=ToolProcessingJobStatus.failed):
@@ -48,6 +55,21 @@ def make_audit_log(admin_user, *, action="tool_review_updated", target_type="too
     )
     log.admin = admin_user
     return log
+
+
+def make_stripe_event(*, status=StripeWebhookEventStatus.failed):
+    now = datetime.now(UTC)
+    return StripeWebhookEvent(
+        id="evt_admin_retry",
+        event_type="invoice.payment_failed",
+        payload={"id": "evt_admin_retry", "type": "invoice.payment_failed"},
+        status=status,
+        attempts=3,
+        max_attempts=3,
+        last_error="database unavailable",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def test_admin_tools_requires_admin(client, auth_overrides, buyer):
@@ -301,6 +323,64 @@ def test_admin_processing_jobs_lists_failed_jobs(
     assert payload["items"][0]["seller_email"] == draft_tool.seller.email
 
 
+def test_admin_lists_failed_stripe_webhooks(client, auth_overrides, admin_user, monkeypatch):
+    auth_overrides(current_user=admin_user)
+    event = make_stripe_event()
+
+    async def fake_list(db, *, status_filter, event_type, page, limit):
+        assert status_filter == StripeWebhookEventStatus.failed
+        assert event_type is None
+        assert page == 1
+        assert limit == 50
+        return [event], 1
+
+    monkeypatch.setattr(stripe_event_service, "list_admin_webhook_events", fake_list)
+
+    response = client.get("/v1/admin/stripe-webhooks?status=failed")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == event.id
+    assert payload["items"][0]["status"] == "failed"
+    assert payload["items"][0]["retryable"] is True
+    assert "payload" not in payload["items"][0]
+
+
+def test_admin_retries_failed_stripe_webhook(client, auth_overrides, admin_user, monkeypatch):
+    auth_overrides(current_user=admin_user)
+    event = make_stripe_event()
+    audit_calls = []
+
+    async def fake_get_event(db, event_id):
+        assert event_id == event.id
+        return event
+
+    async def fake_retry(db, current):
+        current.status = StripeWebhookEventStatus.queued
+        current.enqueued_at = datetime.now(UTC)
+        current.last_error = None
+        return current
+
+    async def fake_record_admin_action(db, **kwargs):
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(stripe_event_service, "get_event", fake_get_event)
+    monkeypatch.setattr(stripe_event_service, "retry_webhook_event", fake_retry)
+    monkeypatch.setattr(admin_audit_service, "record_admin_action", fake_record_admin_action)
+
+    response = client.post(
+        f"/v1/admin/stripe-webhooks/{event.id}/retry",
+        json={"reason": "Database recovered"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert audit_calls[0]["action"] == "stripe_webhook_retried"
+    assert audit_calls[0]["details"]["event_id"] == event.id
+    assert audit_calls[0]["details"]["reason"] == "Database recovered"
+
+
 def test_admin_operations_health_returns_healthy_summary(
     client, auth_overrides, admin_user, fake_redis, monkeypatch
 ):
@@ -319,9 +399,22 @@ def test_admin_operations_health_returns_healthy_summary(
             "failed_window_seconds": 900,
         }
 
+    async def fake_stripe_webhook_health(db):
+        return {
+            "stuck_active": 0,
+            "failed_recent": 0,
+            "stale_after_seconds": 900,
+            "failed_threshold": 1,
+            "failed_window_seconds": 900,
+        }
+
     monkeypatch.setattr(
         "app.services.operations_health_service.job_service.processing_job_health",
         fake_processing_job_health,
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_stripe_webhook_health,
     )
     monkeypatch.setattr(
         "app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth
@@ -335,10 +428,16 @@ def test_admin_operations_health_returns_healthy_summary(
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "healthy"
-    assert payload["checks"] == {"queue": "ok", "worker": "ok", "processing_jobs": "ok"}
+    assert payload["checks"] == {
+        "queue": "ok",
+        "worker": "ok",
+        "processing_jobs": "ok",
+        "stripe_webhooks": "ok",
+    }
     assert payload["queue"]["depth"] == 2
     assert payload["queue"]["worker_heartbeat"] is True
     assert payload["processing_jobs"]["stuck_active"] == 0
+    assert payload["stripe_webhooks"]["failed_recent"] == 0
 
 
 def test_admin_operations_health_returns_degraded_summary(
@@ -358,9 +457,22 @@ def test_admin_operations_health_returns_degraded_summary(
             "failed_window_seconds": 900,
         }
 
+    async def fake_stripe_webhook_health(db):
+        return {
+            "stuck_active": 1,
+            "failed_recent": 2,
+            "stale_after_seconds": 900,
+            "failed_threshold": 1,
+            "failed_window_seconds": 900,
+        }
+
     monkeypatch.setattr(
         "app.services.operations_health_service.job_service.processing_job_health",
         fake_processing_job_health,
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_stripe_webhook_health,
     )
     monkeypatch.setattr(
         "app.services.operations_health_service.queue_service.queue_depth", fake_queue_depth
@@ -377,8 +489,10 @@ def test_admin_operations_health_returns_degraded_summary(
     assert payload["checks"]["queue"] == "degraded_high_depth"
     assert payload["checks"]["worker"] == "missing_heartbeat"
     assert payload["checks"]["processing_jobs"] == "degraded_stuck_active_and_failed_recent"
+    assert payload["checks"]["stripe_webhooks"] == "degraded_stuck_active_and_failed_recent"
     assert payload["queue"]["depth"] == 120
     assert payload["processing_jobs"]["failed_recent"] == 4
+    assert payload["stripe_webhooks"]["failed_recent"] == 2
 
 
 def test_admin_audit_logs_lists_recent_actions(

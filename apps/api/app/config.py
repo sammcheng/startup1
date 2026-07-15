@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     alert_processing_job_stale_after_seconds: int = 1800
     alert_failed_processing_jobs_threshold: int = 3
     alert_failed_processing_jobs_window_seconds: int = 900
+    alert_stripe_webhook_stale_after_seconds: int = 900
+    alert_failed_stripe_webhooks_threshold: int = 1
+    alert_failed_stripe_webhooks_window_seconds: int = 900
 
     # Rate limiting
     gateway_rate_limit_per_minute: int = 100
@@ -124,6 +127,8 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     worker_health_check_interval_seconds: int = 60
     worker_health_check_key: str = "hackmarket:jobs:health"
+    stripe_webhook_job_expires_seconds: int = 7 * 24 * 60 * 60
+    usage_log_job_expires_seconds: int = 7 * 24 * 60 * 60
     run_billing_scheduler_in_api: bool = False
 
     # Converter service integration
@@ -264,6 +269,21 @@ class Settings(BaseSettings):
                 "ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS must be at least 60 in production."
             )
 
+        if self.alert_stripe_webhook_stale_after_seconds < 60:
+            raise ValueError(
+                "ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS must be at least 60 in production."
+            )
+
+        if self.alert_failed_stripe_webhooks_threshold < 1:
+            raise ValueError(
+                "ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD must be at least 1 in production."
+            )
+
+        if self.alert_failed_stripe_webhooks_window_seconds < 60:
+            raise ValueError(
+                "ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS must be at least 60 in production."
+            )
+
         if self.gateway_rate_limit_violation_alert_threshold < 1:
             raise ValueError(
                 "GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD must be at least 1 in production."
@@ -276,6 +296,15 @@ class Settings(BaseSettings):
 
         if self.max_active_api_keys_per_user < 1:
             raise ValueError("MAX_ACTIVE_API_KEYS_PER_USER must be at least 1 in production.")
+
+        if self.stripe_webhook_job_expires_seconds <= self.worker_job_timeout_seconds:
+            raise ValueError(
+                "STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS must exceed WORKER_JOB_TIMEOUT_SECONDS in production."
+            )
+        if self.usage_log_job_expires_seconds <= self.worker_job_timeout_seconds:
+            raise ValueError(
+                "USAGE_LOG_JOB_EXPIRES_SECONDS must exceed WORKER_JOB_TIMEOUT_SECONDS in production."
+            )
 
         try:
             validate_private_key(self.tool_gateway_signing_private_key)

@@ -15,7 +15,7 @@ from app.schemas.billing import (
     SetupPaymentResponse,
     ToolPurchaseResponse,
 )
-from app.services import alert_service, billing_service
+from app.services import alert_service, billing_service, stripe_event_service
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -133,12 +133,22 @@ async def stripe_webhook(
         ) from exc
 
     try:
-        await billing_service.handle_webhook_event(db, event)
+        await stripe_event_service.accept_verified_event(db, event)
+    except ValueError as exc:
+        raise AppError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="invalid_event",
+            message="Stripe webhook event is invalid.",
+        ) from exc
     except Exception as exc:
         await alert_service.send_alert(
-            "stripe_webhook_handler_failed",
+            "stripe_webhook_queue_failed",
             severity="critical",
-            summary="Stripe webhook handler failed after signature verification.",
+            summary="Verified Stripe webhook could not be queued.",
             details={"event_type": event.get("type"), "error": type(exc).__name__},
         )
-        raise
+        raise AppError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="webhook_queue_unavailable",
+            message="Webhook processing is temporarily unavailable.",
+        ) from exc

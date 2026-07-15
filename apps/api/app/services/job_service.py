@@ -183,16 +183,21 @@ async def enqueue_tool_processing(
     if not created:
         return job
 
+    # Commit queue metadata before Redis can hand work to a fast worker.
+    job.status = ToolProcessingJobStatus.queued
+    job.enqueued_at = datetime.now(UTC)
+    job.finished_at = None
+    await db.commit()
+    await db.refresh(job)
+
     try:
         await queue_service.enqueue_tool_processing_job(job.id)
     except Exception as exc:
-        await mark_job_failed(db, job, error=f"Could not queue this submission: {exc}")
+        await db.refresh(job)
+        if job.status != ToolProcessingJobStatus.succeeded:
+            await mark_job_failed(db, job, error=f"Could not queue this submission: {exc}")
         raise
 
-    job.status = ToolProcessingJobStatus.queued
-    job.enqueued_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(job)
     return job
 
 

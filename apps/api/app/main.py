@@ -276,6 +276,7 @@ async def ready():
     checks: dict = {"database": "ok", "redis": "ok"}
     queue_details: dict | None = None
     processing_job_details: dict | None = None
+    stripe_webhook_details: dict | None = None
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
@@ -286,6 +287,7 @@ async def ready():
                 checks.update(operations_health["checks"])
                 queue_details = operations_health["queue"]
                 processing_job_details = operations_health["processing_jobs"]
+                stripe_webhook_details = operations_health["stripe_webhooks"]
     except Exception as exc:
         checks["database"] = f"error: {type(exc).__name__}"
     try:
@@ -349,6 +351,35 @@ async def ready():
                 details=processing_job_details,
             )
 
+    if (
+        settings.environment == "production"
+        and stripe_webhook_details is not None
+        and checks.get("stripe_webhooks") != "ok"
+    ):
+        stuck_active = stripe_webhook_details["stuck_active"]
+        failed_recent = stripe_webhook_details["failed_recent"]
+        failed_threshold = stripe_webhook_details["failed_threshold"]
+        if stuck_active:
+            await alert_service.send_alert_once(
+                _redis_client,
+                "stripe_webhooks_stuck",
+                dedupe_key=f"stuck-active:{settings.alert_stripe_webhook_stale_after_seconds}",
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="critical",
+                summary=f"{stuck_active} Stripe webhook event(s) appear stuck.",
+                details=stripe_webhook_details,
+            )
+        if failed_recent >= failed_threshold:
+            await alert_service.send_alert_once(
+                _redis_client,
+                "stripe_webhooks_failed",
+                dedupe_key=f"failed-recent:{settings.alert_failed_stripe_webhooks_window_seconds}",
+                ttl_seconds=settings.alert_dedupe_ttl_seconds,
+                severity="critical",
+                summary=f"{failed_recent} Stripe webhook event(s) failed recently.",
+                details=stripe_webhook_details,
+            )
+
     all_ok = all(value == "ok" for value in checks.values())
     if not all_ok and settings.environment == "production":
         await alert_service.send_alert_once(
@@ -369,4 +400,6 @@ async def ready():
         payload["queue"] = queue_details
     if processing_job_details is not None:
         payload["processing_jobs"] = processing_job_details
+    if stripe_webhook_details is not None:
+        payload["stripe_webhooks"] = stripe_webhook_details
     return JSONResponse(content=payload, status_code=200 if all_ok else 503)

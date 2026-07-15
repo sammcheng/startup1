@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, get_redis, require_admin
 from app.exceptions import AppError, ToolNotFoundError
 from app.models.admin_audit_log import AdminAuditLog
+from app.models.stripe_webhook_event import StripeWebhookEvent, StripeWebhookEventStatus
 from app.models.tool import ToolStatus
 from app.models.tool_processing_job import ToolProcessingJob, ToolProcessingJobStatus
 from app.models.user import User, UserRole
@@ -19,6 +20,8 @@ from app.schemas.admin import (
     AdminProcessingJobListResponse,
     AdminProcessingJobResponse,
     AdminProcessingJobRetryRequest,
+    AdminStripeWebhookEventListResponse,
+    AdminStripeWebhookEventResponse,
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdate,
@@ -28,6 +31,7 @@ from app.services import (
     admin_audit_service,
     job_service,
     operations_health_service,
+    stripe_event_service,
     tool_service,
     user_service,
 )
@@ -76,6 +80,13 @@ def _audit_log_response(log: AdminAuditLog) -> AdminAuditLogResponse:
     )
 
 
+def _stripe_webhook_response(event: StripeWebhookEvent) -> AdminStripeWebhookEventResponse:
+    response = AdminStripeWebhookEventResponse.model_validate(event, from_attributes=True)
+    return response.model_copy(
+        update={"retryable": stripe_event_service.webhook_event_is_retryable(event)}
+    )
+
+
 @router.get(
     "/operations-health",
     response_model=AdminOperationsHealthResponse,
@@ -89,6 +100,86 @@ async def get_admin_operations_health(
     return AdminOperationsHealthResponse.model_validate(
         await operations_health_service.get_operations_health(db, redis)
     )
+
+
+@router.get(
+    "/stripe-webhooks",
+    response_model=AdminStripeWebhookEventListResponse,
+    summary="List durable Stripe webhook events",
+)
+async def list_admin_stripe_webhooks(
+    _admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[StripeWebhookEventStatus | None, Query(alias="status")] = None,
+    event_type: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> AdminStripeWebhookEventListResponse:
+    events, total = await stripe_event_service.list_admin_webhook_events(
+        db,
+        status_filter=status_filter,
+        event_type=event_type,
+        page=page,
+        limit=limit,
+    )
+    return AdminStripeWebhookEventListResponse(
+        items=[_stripe_webhook_response(event) for event in events],
+        total=total,
+        page=page,
+        limit=limit,
+        pages=math.ceil(total / limit) if total else 0,
+    )
+
+
+@router.post(
+    "/stripe-webhooks/{event_id}/retry",
+    response_model=AdminStripeWebhookEventResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retry a failed or stale Stripe webhook event",
+)
+async def retry_admin_stripe_webhook(
+    event_id: str,
+    body: AdminProcessingJobRetryRequest,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminStripeWebhookEventResponse:
+    event = await stripe_event_service.get_event(db, event_id)
+    if event is None:
+        raise AppError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="stripe_webhook_event_not_found",
+            message="Stripe webhook event not found.",
+        )
+    previous_status = event.status.value
+    try:
+        retried = await stripe_event_service.retry_webhook_event(db, event)
+    except ValueError as exc:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="stripe_webhook_event_not_retryable",
+            message=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise AppError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="stripe_webhook_queue_unavailable",
+            message="The Stripe event queue is unavailable. Try again after the worker recovers.",
+        ) from exc
+
+    await admin_audit_service.record_admin_action(
+        db,
+        admin_id=admin.id,
+        action="stripe_webhook_retried",
+        target_type="stripe_webhook_event",
+        target_id=None,
+        details={
+            "event_id": event.id,
+            "event_type": event.event_type,
+            "previous_status": previous_status,
+            "reason": body.reason,
+        },
+    )
+    return _stripe_webhook_response(retried)
 
 
 @router.get(

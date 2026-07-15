@@ -81,13 +81,26 @@ class FakeRedis:
         self.values.pop(key, None)
         return value
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+    async def set(
+        self,
+        key: str,
+        value: str,
+        ex: int | None = None,
+        nx: bool = False,
+    ) -> bool:
+        if nx and key in self.values:
+            return False
         self.values[key] = value
         return True
 
     async def delete(self, key: str) -> int:
         self.values.pop(key, None)
         return 1
+
+    async def eval(self, script: str, numkeys: int, key: str, token: str) -> int:
+        if numkeys == 1 and await self.get(key) == token:
+            return await self.delete(key)
+        return 0
 
     def pipeline(self) -> FakeRedisPipeline:
         return FakeRedisPipeline(self)

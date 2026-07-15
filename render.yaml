@@ -54,6 +54,10 @@ services:
         value: "60"
       - key: WORKER_HEALTH_CHECK_KEY
         value: hackmarket:jobs:health
+      - key: STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS
+        value: "604800"
+      - key: USAGE_LOG_JOB_EXPIRES_SECONDS
+        value: "604800"
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
       - key: TOOL_GATEWAY_SIGNING_PRIVATE_KEY
@@ -75,6 +79,12 @@ services:
       - key: ALERT_FAILED_PROCESSING_JOBS_THRESHOLD
         value: "3"
       - key: ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS
+        value: "900"
+      - key: ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS
+        value: "900"
+      - key: ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD
+        value: "1"
+      - key: ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS
         value: "900"
       - key: CONVERTER_SECRET
         sync: false
@@ -199,6 +209,10 @@ services:
         value: "60"
       - key: WORKER_HEALTH_CHECK_KEY
         value: hackmarket:jobs:health
+      - key: STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS
+        value: "604800"
+      - key: USAGE_LOG_JOB_EXPIRES_SECONDS
+        value: "604800"
       - key: RUN_BILLING_SCHEDULER_IN_API
         value: "false"
       - key: TOOL_GATEWAY_SIGNING_PRIVATE_KEY
@@ -220,6 +234,12 @@ services:
       - key: ALERT_FAILED_PROCESSING_JOBS_THRESHOLD
         value: "3"
       - key: ALERT_FAILED_PROCESSING_JOBS_WINDOW_SECONDS
+        value: "900"
+      - key: ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS
+        value: "900"
+      - key: ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD
+        value: "1"
+      - key: ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS
         value: "900"
       - key: CONVERTER_SECRET
         sync: false
@@ -291,7 +311,7 @@ services:
     plan: starter
     region: oregon
     ipAllowList: []
-    maxmemoryPolicy: allkeys-lru
+    maxmemoryPolicy: noeviction
 
   - type: web
     name: home-accessibility-checker

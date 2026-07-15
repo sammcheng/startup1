@@ -30,7 +30,7 @@ def test_valid_api_key_forwards_request(
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",
@@ -144,15 +144,16 @@ def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeyp
             200, json={"result": "ok"}, headers={"content-type": "application/json"}
         )
 
-    async def fake_create_usage_log(entry):
+    async def fake_persist_usage_log(db, usage_log_id, entry):
         captured.append(entry)
+        return True
 
     async def noop(*args, **kwargs):
         return None
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
-    monkeypatch.setattr(usage_service, "create_usage_log", fake_create_usage_log)
+    monkeypatch.setattr(usage_service, "persist_usage_log", fake_persist_usage_log)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
 
@@ -166,6 +167,63 @@ def test_usage_logged(client, auth_overrides, buyer, api_key, live_tool, monkeyp
     assert len(captured) == 1
     assert captured[0].tool_id == live_tool.id
     assert captured[0].cost == Decimal("0.25")
+
+
+def test_usage_write_failure_queues_exact_retry_payload(
+    client, auth_overrides, buyer, api_key, live_tool, monkeypatch
+):
+    auth_overrides(api_key_context=(buyer, api_key))
+    queued = []
+    alerts = []
+
+    async def fake_get_tool_by_slug(db, slug):
+        return live_tool
+
+    async def fake_forward_request(tool, request, body, request_id, tool_path=""):
+        return httpx.Response(
+            200, json={"result": "ok"}, headers={"content-type": "application/json"}
+        )
+
+    async def fail_persist(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    async def fake_enqueue(usage_log_id, payload):
+        queued.append((usage_log_id, payload))
+        return f"usage-log:{usage_log_id}"
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tool_service, "get_tool_by_slug", fake_get_tool_by_slug)
+    monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
+    monkeypatch.setattr(usage_service, "persist_usage_log", fail_persist)
+    monkeypatch.setattr(gateway.queue_service, "enqueue_usage_log_job", fake_enqueue)
+    monkeypatch.setattr(gateway.alert_service, "send_alert", fake_send_alert)
+    monkeypatch.setattr(tool_service, "increment_total_requests", noop)
+    monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
+
+    response = client.post(
+        f"/api/v1/tools/{live_tool.slug}",
+        headers={"X-API-Key": "hm_live_test"},
+        json={"text": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert len(queued) == 1
+    assert queued[0][1]["tool_id"] == str(live_tool.id)
+    assert queued[0][1]["user_id"] == str(buyer.id)
+    assert queued[0][1]["cost"] == "0.25"
+    assert alerts[0]["event"] == "usage_log_persistence_degraded"
+    assert alerts[0]["severity"] == "warning"
+    assert alerts[0]["details"]["queued"] is True
+
+
+def test_seller_is_not_charged_for_invoking_own_tool(seller, live_tool):
+    assert gateway._calculate_request_cost(live_tool, 200, seller.id) == Decimal("0")
 
 
 def test_tool_not_found(client, auth_overrides, buyer, api_key, monkeypatch):
@@ -258,7 +316,7 @@ def test_full_sale_gateway_allows_active_purchase(
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",
@@ -313,7 +371,7 @@ def test_gateway_forwards_subpaths(client, auth_overrides, buyer, api_key, live_
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}/api/analyze",
@@ -343,7 +401,7 @@ def test_response_time_recorded(client, auth_overrides, buyer, api_key, live_too
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",
@@ -373,7 +431,7 @@ def test_gateway_timeout_returns_504(
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",
@@ -418,7 +476,7 @@ def test_gateway_normalizes_platform_502_html(
     monkeypatch.setattr(gateway, "_forward_request", fake_forward_request)
     monkeypatch.setattr(tool_service, "increment_total_requests", noop)
     monkeypatch.setattr(tool_service, "flush_total_requests_if_needed", noop)
-    monkeypatch.setattr(usage_service, "create_usage_log", noop)
+    monkeypatch.setattr(usage_service, "persist_usage_log", noop)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",
@@ -445,12 +503,12 @@ def test_gateway_rejects_private_tool_endpoint_in_production(
     async def fake_get_tool_by_slug(db, redis, slug):
         return live_tool
 
-    async def fail_create_usage_log(*args, **kwargs):
+    async def fail_persist_usage_log(*args, **kwargs):
         raise AssertionError("unsafe endpoint should not create usage")
 
     monkeypatch.setattr(tool_service, "get_tool_by_slug_cached", fake_get_tool_by_slug)
     monkeypatch.setattr(url_safety.settings, "environment", "production")
-    monkeypatch.setattr(usage_service, "create_usage_log", fail_create_usage_log)
+    monkeypatch.setattr(usage_service, "persist_usage_log", fail_persist_usage_log)
 
     response = client.post(
         f"/api/v1/tools/{live_tool.slug}",

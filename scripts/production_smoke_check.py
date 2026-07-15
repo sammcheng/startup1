@@ -37,6 +37,7 @@ API_AUTH_BOUNDARY_PATHS = [
     "v1/seller/dashboard",
     "v1/admin/operations-health",
     "v1/admin/audit-logs",
+    "v1/admin/stripe-webhooks",
 ]
 DEFAULT_TIMEOUT_SECONDS = 15
 
@@ -141,11 +142,17 @@ def check_ready(api_root: str, timeout: int) -> CheckResult:
 
     readiness = payload.get("status")
     if status == 200 and readiness == "ready":
+        checks = payload.get("checks") or {}
         queue = payload.get("queue") or {}
+        stripe_webhooks = payload.get("stripe_webhooks") or {}
         queue_depth = queue.get("depth")
         worker_heartbeat = queue.get("worker_heartbeat")
         if queue and worker_heartbeat is not True:
             return CheckResult("api /ready", False, f"worker heartbeat missing; payload={payload}")
+        if checks.get("stripe_webhooks") != "ok" or not stripe_webhooks:
+            return CheckResult(
+                "api /ready", False, f"Stripe webhook health missing or degraded; payload={payload}"
+            )
         return CheckResult("api /ready", True, f"ready; queue_depth={queue_depth}")
     return CheckResult("api /ready", False, f"{status}; payload={payload}")
 
@@ -394,19 +401,23 @@ def check_admin_operations_health(
     checks = payload.get("checks")
     queue = payload.get("queue")
     processing_jobs = payload.get("processing_jobs")
+    stripe_webhooks = payload.get("stripe_webhooks")
     if (
         not isinstance(checks, dict)
         or not isinstance(queue, dict)
         or not isinstance(processing_jobs, dict)
+        or not isinstance(stripe_webhooks, dict)
     ):
         return CheckResult(name, False, f"missing operations health sections: {payload}")
-    for key in ("queue", "worker", "processing_jobs"):
+    for key in ("queue", "worker", "processing_jobs", "stripe_webhooks"):
         if key not in checks:
             return CheckResult(name, False, f"missing check {key}: {payload}")
     if "depth" not in queue or "worker_heartbeat" not in queue:
         return CheckResult(name, False, f"missing queue details: {payload}")
     if "stuck_active" not in processing_jobs or "failed_recent" not in processing_jobs:
         return CheckResult(name, False, f"missing processing job details: {payload}")
+    if "stuck_active" not in stripe_webhooks or "failed_recent" not in stripe_webhooks:
+        return CheckResult(name, False, f"missing Stripe webhook details: {payload}")
     return CheckResult(name, True, f"{payload['status']}; checks={checks}")
 
 

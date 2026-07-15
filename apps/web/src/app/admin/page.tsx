@@ -10,6 +10,8 @@ import { syncCurrentUser } from "@/lib/auth-sync";
 
 type UserRole = "seller" | "buyer" | "both" | "admin";
 type JobStatus = "queued" | "running" | "retrying" | "succeeded" | "failed";
+type StripeWebhookStatus = "queued" | "processing" | "retrying" | "succeeded" | "failed";
+type OperationalStatus = JobStatus | StripeWebhookStatus;
 
 interface AdminUser {
   id: string;
@@ -47,6 +49,25 @@ interface AdminProcessingJobListResponse {
   total: number;
 }
 
+interface AdminStripeWebhookEvent {
+  id: string;
+  event_type: string;
+  status: StripeWebhookStatus;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  enqueued_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  retryable: boolean;
+}
+
+interface AdminStripeWebhookEventListResponse {
+  items: AdminStripeWebhookEvent[];
+  total: number;
+}
+
 interface AdminAuditLog {
   id: string;
   admin_id: string;
@@ -74,6 +95,13 @@ interface AdminOperationsHealth {
     worker_health_check_key: string;
   };
   processing_jobs: {
+    stuck_active: number;
+    failed_recent: number;
+    stale_after_seconds: number;
+    failed_threshold: number;
+    failed_window_seconds: number;
+  };
+  stripe_webhooks: {
     stuck_active: number;
     failed_recent: number;
     stale_after_seconds: number;
@@ -147,6 +175,7 @@ export default function AdminPage() {
 function AdminOperations({ token }: { token: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [jobs, setJobs] = useState<AdminProcessingJob[]>([]);
+  const [stripeEvents, setStripeEvents] = useState<AdminStripeWebhookEvent[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [health, setHealth] = useState<AdminOperationsHealth | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -156,15 +185,17 @@ function AdminOperations({ token }: { token: string }) {
     setStatus("loading");
     setNotice(null);
     try {
-      const [healthResponse, userResponse, jobResponse, auditResponse] = await Promise.all([
+      const [healthResponse, userResponse, jobResponse, stripeResponse, auditResponse] = await Promise.all([
         api.get<AdminOperationsHealth>("/admin/operations-health", { token }),
         api.get<AdminUserListResponse>("/admin/users?limit=25", { token }),
         api.get<AdminProcessingJobListResponse>("/admin/processing-jobs?limit=25", { token }),
+        api.get<AdminStripeWebhookEventListResponse>("/admin/stripe-webhooks?limit=25", { token }),
         api.get<AdminAuditLogListResponse>("/admin/audit-logs?limit=25", { token }),
       ]);
       setHealth(healthResponse);
       setUsers(userResponse.items);
       setJobs(jobResponse.items);
+      setStripeEvents(stripeResponse.items);
       setAuditLogs(auditResponse.items);
       setStatus("ready");
     } catch (error) {
@@ -208,7 +239,26 @@ function AdminOperations({ token }: { token: string }) {
     }
   }
 
+  async function retryStripeEvent(event: AdminStripeWebhookEvent) {
+    setNotice(null);
+    try {
+      const retried = await api.post<AdminStripeWebhookEvent>(
+        `/admin/stripe-webhooks/${event.id}/retry`,
+        { reason: "Retried from admin operations dashboard" },
+        { token },
+      );
+      setStripeEvents((current) =>
+        current.map((item) => (item.id === retried.id ? retried : item)),
+      );
+      setNotice(`Queued retry for ${retried.event_type} (${retried.id}).`);
+      void load();
+    } catch (error) {
+      setNotice(error instanceof ApiError ? error.message : "Could not retry this Stripe event.");
+    }
+  }
+
   const failedJobs = jobs.filter((job) => job.status === "failed").length;
+  const failedStripeEvents = stripeEvents.filter((event) => event.status === "failed").length;
   const suspendedUsers = users.filter((user) => !user.is_active).length;
 
   return (
@@ -218,11 +268,12 @@ function AdminOperations({ token }: { token: string }) {
           <p style={eyebrowStyle}>Production operations</p>
           <h1 style={titleStyle}>Admin control room</h1>
           <p style={subtitleStyle}>
-            Moderate accounts, inspect worker jobs, and retry failed submissions without touching the database.
+            Moderate accounts, inspect worker jobs and payment events, and recover failures without touching the database.
           </p>
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <Metric label="Failed jobs" value={failedJobs} tone={failedJobs ? "danger" : "ok"} />
+          <Metric label="Stripe failures" value={failedStripeEvents} tone={failedStripeEvents ? "danger" : "ok"} />
           <Metric label="Suspended users" value={suspendedUsers} tone={suspendedUsers ? "warn" : "ok"} />
           <Link href="/approver" style={primaryButtonStyle}>Open approver queue</Link>
         </div>
@@ -254,6 +305,37 @@ function AdminOperations({ token }: { token: string }) {
               </div>
               {job.status === "failed" ? (
                 <button type="button" onClick={() => void retryJob(job)} style={dangerButtonStyle}>
+                  Retry
+                </button>
+              ) : null}
+            </article>
+          ))}
+        </Panel>
+
+        <Panel title="Stripe event queue">
+          {status === "loading" ? <EmptyState text="Loading Stripe events…" /> : null}
+          {status !== "loading" && stripeEvents.length === 0 ? (
+            <EmptyState text="No Stripe events received yet." />
+          ) : null}
+          {stripeEvents.map((event) => (
+            <article key={event.id} style={rowStyle}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <strong>{event.event_type}</strong>
+                  <StatusPill status={event.status} />
+                </div>
+                <p style={mutedStyle}>
+                  {event.id} · attempts {event.attempts}/{event.max_attempts} ·{" "}
+                  {new Date(event.created_at).toLocaleString()}
+                </p>
+                {event.last_error ? <p style={errorTextStyle}>{event.last_error}</p> : null}
+              </div>
+              {event.retryable ? (
+                <button
+                  type="button"
+                  onClick={() => void retryStripeEvent(event)}
+                  style={dangerButtonStyle}
+                >
                   Retry
                 </button>
               ) : null}
@@ -356,7 +438,7 @@ function OperationsHealthPanel({
             <strong>{degraded ? "Needs attention" : "Healthy"}</strong>
             <span>
               Queue {health.checks.queue}, worker {health.checks.worker}, processing jobs{" "}
-              {health.checks.processing_jobs}.
+              {health.checks.processing_jobs}, Stripe events {health.checks.stripe_webhooks}.
             </span>
           </div>
           <div style={healthGridStyle}>
@@ -380,10 +462,25 @@ function OperationsHealthPanel({
               value={`${health.processing_jobs.failed_recent}/${health.processing_jobs.failed_threshold}`}
               tone={health.processing_jobs.failed_recent >= health.processing_jobs.failed_threshold ? "danger" : "ok"}
             />
+            <HealthCard
+              label="Stuck Stripe events"
+              value={`${health.stripe_webhooks.stuck_active}`}
+              tone={health.stripe_webhooks.stuck_active ? "danger" : "ok"}
+            />
+            <HealthCard
+              label="Stripe failures"
+              value={`${health.stripe_webhooks.failed_recent}/${health.stripe_webhooks.failed_threshold}`}
+              tone={
+                health.stripe_webhooks.failed_recent >= health.stripe_webhooks.failed_threshold
+                  ? "danger"
+                  : "ok"
+              }
+            />
           </div>
           <p style={mutedStyle}>
             Stuck threshold: {Math.round(health.processing_jobs.stale_after_seconds / 60)} minutes. Failure window:{" "}
-            {Math.round(health.processing_jobs.failed_window_seconds / 60)} minutes.
+            {Math.round(health.processing_jobs.failed_window_seconds / 60)} minutes. Stripe event threshold:{" "}
+            {Math.round(health.stripe_webhooks.stale_after_seconds / 60)} minutes.
           </p>
         </>
       ) : null}
@@ -447,7 +544,7 @@ function HealthCard({ label, value, tone }: { label: string; value: string; tone
   );
 }
 
-function StatusPill({ status }: { status: JobStatus }) {
+function StatusPill({ status }: { status: OperationalStatus }) {
   const style =
     status === "failed"
       ? suspendedPillStyle

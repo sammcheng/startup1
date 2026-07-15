@@ -188,9 +188,10 @@ def test_admin_operations_health_smoke_requires_expected_sections(monkeypatch):
     body = """
     {
       "status": "healthy",
-      "checks": {"queue": "ok", "worker": "ok", "processing_jobs": "ok"},
+      "checks": {"queue": "ok", "worker": "ok", "processing_jobs": "ok", "stripe_webhooks": "ok"},
       "queue": {"depth": 0, "worker_heartbeat": true},
-      "processing_jobs": {"stuck_active": 0, "failed_recent": 0}
+      "processing_jobs": {"stuck_active": 0, "failed_recent": 0},
+      "stripe_webhooks": {"stuck_active": 0, "failed_recent": 0}
     }
     """
 
@@ -221,3 +222,4 @@ def test_admin_operations_health_smoke_rejects_incomplete_payload(monkeypatch):
 def test_admin_operations_health_is_part_of_api_auth_boundaries():
     assert "v1/admin/operations-health" in smoke.API_AUTH_BOUNDARY_PATHS
     assert "v1/admin/audit-logs" in smoke.API_AUTH_BOUNDARY_PATHS
+    assert "v1/admin/stripe-webhooks" in smoke.API_AUTH_BOUNDARY_PATHS

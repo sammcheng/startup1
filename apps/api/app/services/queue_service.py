@@ -61,6 +61,14 @@ def tool_processing_arq_job_id(job_id: uuid.UUID) -> str:
     return f"tool-processing:{job_id}"
 
 
+def stripe_webhook_arq_job_id(event_id: str, generation: int) -> str:
+    return f"stripe-webhook:{event_id}:{generation}"
+
+
+def usage_log_arq_job_id(usage_log_id: uuid.UUID) -> str:
+    return f"usage-log:{usage_log_id}"
+
+
 async def enqueue_tool_processing_job(job_id: uuid.UUID) -> str | None:
     pool = await get_arq_pool()
     arq_job_id = tool_processing_arq_job_id(job_id)
@@ -73,6 +81,39 @@ async def enqueue_tool_processing_job(job_id: uuid.UUID) -> str | None:
     )
     if job is None:
         logger.info("Tool processing job %s was already queued.", job_id)
+        return None
+    return job.job_id
+
+
+async def enqueue_stripe_webhook_job(event_id: str, *, generation: int) -> str | None:
+    pool = await get_arq_pool()
+    arq_job_id = stripe_webhook_arq_job_id(event_id, generation)
+    job = await pool.enqueue_job(
+        "process_stripe_webhook_job",
+        event_id,
+        _job_id=arq_job_id,
+        _queue_name=settings.worker_queue_name,
+        _expires=settings.stripe_webhook_job_expires_seconds,
+    )
+    if job is None:
+        logger.info("Stripe webhook event %s was already queued.", event_id)
+        return None
+    return job.job_id
+
+
+async def enqueue_usage_log_job(usage_log_id: uuid.UUID, payload: dict) -> str | None:
+    pool = await get_arq_pool()
+    arq_job_id = usage_log_arq_job_id(usage_log_id)
+    job = await pool.enqueue_job(
+        "process_usage_log_job",
+        str(usage_log_id),
+        payload,
+        _job_id=arq_job_id,
+        _queue_name=settings.worker_queue_name,
+        _expires=settings.usage_log_job_expires_seconds,
+    )
+    if job is None:
+        logger.info("Usage log %s was already queued.", usage_log_id)
         return None
     return job.job_id
 

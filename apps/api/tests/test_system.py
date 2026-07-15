@@ -11,6 +11,16 @@ async def fake_healthy_processing_jobs(db):
     }
 
 
+async def fake_healthy_stripe_webhooks(db):
+    return {
+        "stuck_active": 0,
+        "failed_recent": 0,
+        "stale_after_seconds": 900,
+        "failed_threshold": 1,
+        "failed_window_seconds": 900,
+    }
+
+
 def test_health_returns_environment_and_version(client):
     response = client.get("/health")
 
@@ -214,6 +224,10 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
         "app.services.operations_health_service.job_service.processing_job_health",
         fake_healthy_processing_jobs,
     )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_healthy_stripe_webhooks,
+    )
     monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
 
     response = client.get("/ready")
@@ -224,6 +238,7 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     assert payload["checks"]["queue"] == "degraded_high_depth"
     assert payload["checks"]["worker"] == "missing_heartbeat"
     assert payload["checks"]["processing_jobs"] == "ok"
+    assert payload["checks"]["stripe_webhooks"] == "ok"
     assert payload["queue"] == {
         "name": "hackmarket:jobs",
         "depth": 101,
@@ -239,7 +254,7 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     assert dedupe_keys == [
         "hackmarket:jobs",
         "hackmarket:jobs:health",
-        "database:ok,processing_jobs:ok,queue:degraded_high_depth,redis:ok,worker:missing_heartbeat",
+        "database:ok,processing_jobs:ok,queue:degraded_high_depth,redis:ok,stripe_webhooks:ok,worker:missing_heartbeat",
     ]
 
 
@@ -272,6 +287,10 @@ def test_ready_returns_production_queue_details_when_worker_is_healthy(client, m
         "app.services.operations_health_service.job_service.processing_job_health",
         fake_healthy_processing_jobs,
     )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_healthy_stripe_webhooks,
+    )
 
     response = client.get("/ready")
 
@@ -281,9 +300,11 @@ def test_ready_returns_production_queue_details_when_worker_is_healthy(client, m
     assert payload["checks"]["queue"] == "ok"
     assert payload["checks"]["worker"] == "ok"
     assert payload["checks"]["processing_jobs"] == "ok"
+    assert payload["checks"]["stripe_webhooks"] == "ok"
     assert payload["queue"]["depth"] == 2
     assert payload["queue"]["worker_heartbeat"] is True
     assert payload["processing_jobs"]["stuck_active"] == 0
+    assert payload["stripe_webhooks"]["stuck_active"] == 0
 
 
 def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
@@ -334,6 +355,10 @@ def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
         "app.services.operations_health_service.job_service.processing_job_health",
         fake_processing_jobs,
     )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_healthy_stripe_webhooks,
+    )
     monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
 
     response = client.get("/ready")
@@ -352,7 +377,72 @@ def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
     assert dedupe_keys == [
         "stuck-active:1800",
         "failed-recent:900",
-        "database:ok,processing_jobs:degraded_stuck_active_and_failed_recent,queue:ok,redis:ok,worker:ok",
+        "database:ok,processing_jobs:degraded_stuck_active_and_failed_recent,queue:ok,redis:ok,stripe_webhooks:ok,worker:ok",
+    ]
+
+
+def test_ready_alerts_on_stripe_webhook_risk(client, monkeypatch):
+    alerts = []
+
+    class FakeReadySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return None
+
+    class FakeProductionRedis:
+        async def ping(self):
+            return True
+
+        async def zcard(self, key):
+            return 0
+
+        async def get(self, key):
+            return "1"
+
+    async def fake_stripe_webhooks(db):
+        return {
+            "stuck_active": 2,
+            "failed_recent": 1,
+            "stale_after_seconds": 900,
+            "failed_threshold": 1,
+            "failed_window_seconds": 900,
+        }
+
+    async def fake_send_alert_once(redis, event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(dependencies, "AsyncSessionLocal", lambda: FakeReadySession())
+    monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
+    monkeypatch.setattr("app.main.settings.environment", "production")
+    monkeypatch.setattr("app.main.settings.alert_queue_depth_threshold", 100)
+    monkeypatch.setattr("app.main.settings.alert_stripe_webhook_stale_after_seconds", 900)
+    monkeypatch.setattr("app.main.settings.alert_failed_stripe_webhooks_window_seconds", 900)
+    monkeypatch.setattr(
+        "app.services.operations_health_service.job_service.processing_job_health",
+        fake_healthy_processing_jobs,
+    )
+    monkeypatch.setattr(
+        "app.services.operations_health_service.stripe_event_service.webhook_event_health",
+        fake_stripe_webhooks,
+    )
+    monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["checks"]["stripe_webhooks"] == "degraded_stuck_active_and_failed_recent"
+    assert payload["stripe_webhooks"]["stuck_active"] == 2
+    assert [alert["event"] for alert in alerts] == [
+        "stripe_webhooks_stuck",
+        "stripe_webhooks_failed",
+        "api_readiness_degraded",
     ]
 
 

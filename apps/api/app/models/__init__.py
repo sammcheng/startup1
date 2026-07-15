@@ -1,6 +1,7 @@
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.api_key import APIKey
 from app.models.base import Base
+from app.models.stripe_webhook_event import StripeWebhookEvent, StripeWebhookEventStatus
 from app.models.tool import InputType, OutputType, OwnershipType, Tool, ToolCategory, ToolStatus
 from app.models.tool_processing_job import (
     ToolProcessingJob,
@@ -33,4 +34,6 @@ __all__ = [
     "ToolProcessingJobKind",
     "ToolProcessingJobStatus",
     "AdminAuditLog",
+    "StripeWebhookEvent",
+    "StripeWebhookEventStatus",
 ]

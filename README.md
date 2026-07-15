@@ -146,7 +146,7 @@ cp .env.example .env
 What the deploy script does:
 1. Fetches and fast-forwards to the target git ref
 2. Builds the production Docker images
-3. Starts PostgreSQL, Redis, API, web, nginx, and certbot
+3. Starts PostgreSQL, Redis, API, worker, web, nginx, and certbot
 4. Runs Alembic migrations
 5. Performs a post-deploy health check
 6. Rolls the code and containers back if the health check fails
@@ -184,10 +184,14 @@ Recommended hosted env values:
 - Render `OPENROUTER_API_KEY`: required for production repo submission analysis
 - Render `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`: required for durable source upload storage
 - Render `WORKER_QUEUE_NAME=hackmarket:jobs` on both API and worker
+- Render Key Value `maxmemoryPolicy=noeviction` so pending tool, usage, and Stripe jobs cannot be discarded under memory pressure
+- Render `STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS=604800` so verified provider events remain retryable for seven days
+- Render `USAGE_LOG_JOB_EXPIRES_SECONDS=604800` so fallback billing records survive prolonged worker outages
 - Render `RUN_BILLING_SCHEDULER_IN_API=false`; billing schedules run from the worker cron job
 - Render `RENDER_TOOL_PLAN=starter` so dynamically hosted seller tools do not launch on free instances
 - Render `ALERT_WEBHOOK_URL`: optional but strongly recommended for production alerts from readiness checks, worker failures, billing scheduler failures, and invalid provider webhooks
 - Render `ALERT_DEDUPE_TTL_SECONDS=900` so repeated readiness probes do not flood the alert destination during one incident
+- Render `ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS=900`, `ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD=1`, and `ALERT_FAILED_STRIPE_WEBHOOKS_WINDOW_SECONDS=900`
 - Render `MAX_SOURCE_ZIP_ENTRIES=500` and `MAX_SOURCE_ZIP_UNCOMPRESSED_BYTES=104857600` to reject zip bombs and unsafe source archives before storage or processing
 - Render `MAX_ACTIVE_API_KEYS_PER_USER=10` and `GATEWAY_RATE_LIMIT_VIOLATION_ALERT_THRESHOLD=3` so API-key abuse is bounded and visible
 
@@ -198,6 +202,7 @@ Release verification after deploy:
 4. Run a signed-in smoke test for `/dashboard`, tool purchase redirect, seller tool upload/configure, and `/submit/{id}/status`.
 5. Confirm Clerk and Stripe webhooks deliver successfully with real provider events.
 6. Replay a Stripe checkout or invoice event in test mode and confirm the second delivery is idempotent.
+7. Confirm `/ready` reports `stripe_webhooks=ok`, then test a full refund and verify buyer access is revoked and any completed seller transfer is reversed once.
 
 Production readiness commands:
 ```bash

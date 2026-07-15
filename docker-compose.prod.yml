@@ -53,7 +53,7 @@ services:
       - "--maxmemory"
       - "256mb"
       - "--maxmemory-policy"
-      - "allkeys-lru"
+      - "noeviction"
       - "--tcp-backlog"
       - "511"
       - "--timeout"
@@ -109,6 +109,44 @@ services:
         reservations:
           memory: 256m
     stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.prod
+    command: ["arq", "app.worker.WorkerSettings"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hackmarket}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hackmarket}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      DEBUG: "false"
+      RUN_BILLING_SCHEDULER_IN_API: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+    stop_grace_period: 300s
     logging:
       driver: "json-file"
       options:

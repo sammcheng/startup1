@@ -7,13 +7,16 @@ from arq import Retry, cron
 
 from app.config import settings
 from app.dependencies import AsyncSessionLocal, _redis_client, engine
-from app.models import ToolProcessingJobStatus
+from app.models import StripeWebhookEventStatus, ToolProcessingJobStatus
+from app.schemas.usage import UsageLogCreate
 from app.services import (
     alert_service,
     billing_service,
     container_service,
     job_service,
     queue_service,
+    stripe_event_service,
+    usage_service,
 )
 from app.services.proxy_service import close_http_client
 
@@ -89,6 +92,82 @@ async def run_billing_scheduled_jobs(ctx: dict) -> dict[str, str]:  # noqa: ARG0
     return {"status": "succeeded"}
 
 
+async def process_stripe_webhook_job(ctx: dict, event_id: str) -> dict[str, str]:
+    job_try = int(ctx.get("job_try") or 1)
+
+    async with AsyncSessionLocal() as db:
+        event = await stripe_event_service.get_event(db, event_id)
+        if event is None:
+            logger.warning("Skipping missing Stripe webhook event %s", event_id)
+            return {"status": "missing"}
+        if event.status == StripeWebhookEventStatus.succeeded:
+            return {"status": "already_succeeded"}
+        max_attempts = max(event.max_attempts, 1)
+        event = await stripe_event_service.mark_processing(db, event)
+
+        try:
+            await billing_service.handle_webhook_event(db, event.payload)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {str(exc)[:1000]}"
+            await db.rollback()
+            refreshed_event = await stripe_event_service.get_event(db, event_id)
+            if refreshed_event is not None:
+                event = refreshed_event
+            if job_try < max_attempts:
+                await stripe_event_service.mark_retrying(db, event, error=error)
+                raise Retry(defer=min(300, 15 * job_try)) from exc
+
+            await stripe_event_service.mark_failed(db, event, error=error)
+            await alert_service.send_alert(
+                "stripe_webhook_processing_failed",
+                severity="critical",
+                summary="Stripe webhook processing failed after all retry attempts.",
+                details={
+                    "event_id": event.id,
+                    "event_type": event.event_type,
+                    "attempts": event.attempts,
+                    "max_attempts": max_attempts,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return {"status": "failed"}
+
+        await stripe_event_service.mark_succeeded(db, event)
+        return {"status": "succeeded"}
+
+
+async def process_usage_log_job(
+    ctx: dict,
+    usage_log_id: str,
+    payload: dict,
+) -> dict[str, str]:
+    attempt = int(ctx.get("job_try") or 1)
+    parsed_log_id = uuid.UUID(usage_log_id)
+    entry = UsageLogCreate.model_validate(payload)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            created = await usage_service.persist_usage_log(db, parsed_log_id, entry)
+    except Exception as exc:
+        if attempt < settings.worker_job_max_attempts:
+            raise Retry(defer=min(300, 15 * attempt)) from exc
+        await alert_service.send_alert(
+            "usage_log_processing_failed",
+            severity="critical",
+            summary="A billable usage record failed after all retry attempts.",
+            details={
+                "usage_log_id": usage_log_id,
+                "tool_id": str(entry.tool_id),
+                "user_id": str(entry.user_id),
+                "attempt": attempt,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return {"status": "failed"}
+
+    return {"status": "succeeded" if created else "already_persisted"}
+
+
 async def worker_startup(ctx: dict) -> None:  # noqa: ARG001
     logger.info(
         "Starting Hackmarket worker (env=%s, queue=%s)",
@@ -106,7 +185,7 @@ async def worker_shutdown(ctx: dict) -> None:  # noqa: ARG001
 
 
 class WorkerSettings:
-    functions = [process_tool_upload_job]
+    functions = [process_tool_upload_job, process_stripe_webhook_job, process_usage_log_job]
     cron_jobs = [
         cron(
             run_billing_scheduled_jobs,

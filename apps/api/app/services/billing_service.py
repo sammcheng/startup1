@@ -1,12 +1,14 @@
 import asyncio
+import hashlib
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlparse
 
 import stripe
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,16 +33,34 @@ from app.schemas.billing import (
     SellerBalanceResponse,
     SellerPayoutHistoryItem,
 )
+from app.services import alert_service
 
 logger = logging.getLogger(__name__)
 
 PLATFORM_FEE_RATE = Decimal("0.20")
+RETRYABLE_STRIPE_ERRORS = (
+    stripe.APIConnectionError,
+    stripe.APIError,
+    stripe.RateLimitError,
+)
+SCHEDULER_LOCK_RELEASE_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 stripe.api_key = settings.stripe_secret_key
 
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _stripe_idempotency_key(action: str, *parts: object) -> str:
+    canonical = "|".join(str(part) for part in parts)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"hm:{action}:{digest}"
 
 
 def _is_trusted_stripe_checkout_url(value: str | None) -> bool:
@@ -67,7 +87,7 @@ async def _call_stripe(func, *args, **kwargs):
     for attempt in range(3):
         try:
             return await asyncio.to_thread(func, *args, **kwargs)
-        except stripe.StripeError:
+        except RETRYABLE_STRIPE_ERRORS:
             if attempt == 2:
                 raise
             await asyncio.sleep(0.5 * (attempt + 1))
@@ -82,6 +102,7 @@ async def create_stripe_customer(db: AsyncSession, user: User) -> str:
         email=user.email,
         name=user.display_name,
         metadata={"user_id": str(user.id)},
+        idempotency_key=_stripe_idempotency_key("customer", user.id),
     )
     user.stripe_customer_id = customer["id"]
     await db.commit()
@@ -98,6 +119,7 @@ async def create_stripe_connect_account(db: AsyncSession, user: User) -> str:
             capabilities={
                 "transfers": {"requested": True},
             },
+            idempotency_key=_stripe_idempotency_key("connect-account", user.id),
         )
         user.stripe_connect_id = account["id"]
         await db.commit()
@@ -108,6 +130,7 @@ async def create_stripe_connect_account(db: AsyncSession, user: User) -> str:
         refresh_url=f"{settings.app_base_url.rstrip('/')}/dashboard/billing?refresh=1",
         return_url=f"{settings.app_base_url.rstrip('/')}/dashboard/billing?connected=1",
         type="account_onboarding",
+        idempotency_key=_stripe_idempotency_key("connect-link", user.id, uuid.uuid4()),
     )
     onboarding_url = account_link.get("url")
     if not _is_trusted_stripe_connect_url(onboarding_url):
@@ -125,6 +148,7 @@ async def create_setup_intent(db: AsyncSession, user: User) -> str:
         stripe.SetupIntent.create,
         customer=customer_id,
         automatic_payment_methods={"enabled": True},
+        idempotency_key=_stripe_idempotency_key("setup-intent", user.id, uuid.uuid4()),
     )
     return setup_intent["client_secret"]
 
@@ -300,6 +324,13 @@ async def _create_tool_checkout_session(
     transaction: Transaction,
 ) -> dict:
     customer_id = buyer.stripe_customer_id
+    checkout_metadata = {
+        "purchase_id": str(purchase.id),
+        "transaction_id": str(transaction.id),
+        "tool_id": str(tool.id),
+        "buyer_id": str(buyer.id),
+        "seller_id": str(tool.seller_id),
+    }
     checkout_session = await _call_stripe(
         stripe.checkout.Session.create,
         mode="payment",
@@ -320,13 +351,9 @@ async def _create_tool_checkout_session(
                 "quantity": 1,
             }
         ],
-        metadata={
-            "purchase_id": str(purchase.id),
-            "transaction_id": str(transaction.id),
-            "tool_id": str(tool.id),
-            "buyer_id": str(buyer.id),
-            "seller_id": str(tool.seller_id),
-        },
+        metadata=checkout_metadata,
+        payment_intent_data={"metadata": checkout_metadata},
+        idempotency_key=_stripe_idempotency_key("tool-checkout", purchase.id),
     )
     if hasattr(checkout_session, "to_dict_recursive"):
         return checkout_session.to_dict_recursive()
@@ -423,12 +450,12 @@ def _previous_month_bounds(now: datetime) -> tuple[datetime, datetime]:
     return previous_month_start, previous_month_end
 
 
-async def _existing_usage_invoice_id(
+async def _existing_usage_invoice(
     db: AsyncSession,
     user_id,
     period_start: datetime,
     period_end: datetime,
-) -> str | None:
+) -> Transaction | None:
     result = await db.execute(
         select(Transaction)
         .where(
@@ -436,51 +463,129 @@ async def _existing_usage_invoice_id(
             Transaction.type == TransactionType.usage,
             Transaction.period_start == period_start,
             Transaction.period_end == period_end,
-            Transaction.status.in_([TransactionStatus.pending, TransactionStatus.completed]),
-            Transaction.stripe_payment_intent_id.is_not(None),
+            or_(
+                Transaction.stripe_invoice_id.is_not(None),
+                Transaction.stripe_payment_intent_id.is_not(None),
+            ),
         )
         .order_by(Transaction.created_at.desc())
         .limit(1)
     )
-    existing = result.scalar_one_or_none()
-    return existing.stripe_payment_intent_id if existing else None
+    return result.scalar_one_or_none()
+
+
+def _usage_invoice_reference(transaction: Transaction) -> str | None:
+    return transaction.stripe_invoice_id or transaction.stripe_payment_intent_id
+
+
+async def _settle_usage_invoice(
+    invoice_id: str,
+    *,
+    current_invoice: dict | None = None,
+) -> dict:
+    invoice = current_invoice or await _call_stripe(stripe.Invoice.retrieve, invoice_id)
+    invoice_status = invoice.get("status")
+
+    if invoice_status == "draft":
+        invoice = await _call_stripe(
+            stripe.Invoice.finalize_invoice,
+            invoice_id,
+            auto_advance=True,
+            idempotency_key=_stripe_idempotency_key("finalize-usage-invoice", invoice_id),
+        )
+    elif invoice_status == "open" and invoice.get("auto_advance") is not True:
+        invoice = await _call_stripe(
+            stripe.Invoice.modify,
+            invoice_id,
+            auto_advance=True,
+            idempotency_key=_stripe_idempotency_key("resume-usage-invoice", invoice_id),
+        )
+
+    if invoice.get("status") not in {"paid", "void", "uncollectible"}:
+        try:
+            invoice = await _call_stripe(
+                stripe.Invoice.pay,
+                invoice_id,
+                idempotency_key=_stripe_idempotency_key("pay-usage-invoice", invoice_id),
+            )
+        except stripe.CardError:
+            logger.info("Usage invoice payment was declined for invoice %s", invoice_id)
+
+    return invoice
+
+
+async def _sync_usage_invoice_transactions(
+    db: AsyncSession,
+    invoice_id: str,
+    invoice: dict,
+    *,
+    transactions: list[Transaction] | None = None,
+) -> None:
+    if transactions is None:
+        result = await db.execute(
+            select(Transaction).where(Transaction.stripe_invoice_id == invoice_id)
+        )
+        transactions = list(result.scalars())
+
+    payment_intent_id = invoice.get("payment_intent")
+    invoice_status = invoice.get("status")
+    transaction_status = (
+        TransactionStatus.completed
+        if invoice_status == "paid"
+        else TransactionStatus.failed
+        if invoice_status in {"void", "uncollectible"}
+        else TransactionStatus.pending
+    )
+    for transaction in transactions:
+        if payment_intent_id:
+            transaction.stripe_payment_intent_id = payment_intent_id
+        if transaction.status not in {
+            TransactionStatus.refund_pending,
+            TransactionStatus.refunded,
+        }:
+            transaction.status = transaction_status
+    await db.commit()
 
 
 async def _existing_seller_payout_id(
     db: AsyncSession,
     seller_id,
-    period_start: datetime,
     period_end: datetime,
 ) -> str | None:
     result = await db.execute(
         select(Transaction)
         .where(
-            Transaction.buyer_id == seller_id,
             Transaction.seller_id == seller_id,
-            Transaction.type == TransactionType.usage,
-            Transaction.period_start == period_start,
-            Transaction.period_end == period_end,
-            Transaction.status == TransactionStatus.completed,
-            Transaction.stripe_payment_intent_id.is_not(None),
+            Transaction.period_end <= period_end,
+            Transaction.seller_paid_at.is_not(None),
+            Transaction.stripe_transfer_id.is_not(None),
         )
-        .order_by(Transaction.created_at.desc())
+        .order_by(Transaction.seller_paid_at.desc())
         .limit(1)
     )
     existing = result.scalar_one_or_none()
-    return existing.stripe_payment_intent_id if existing else None
+    return existing.stripe_transfer_id if existing else None
 
 
 async def create_usage_invoice(
     db: AsyncSession, user_id, period_start: datetime, period_end: datetime
 ) -> str | None:
-    existing_invoice_id = await _existing_usage_invoice_id(db, user_id, period_start, period_end)
-    if existing_invoice_id:
+    existing_invoice = await _existing_usage_invoice(db, user_id, period_start, period_end)
+    if existing_invoice:
+        existing_invoice_id = _usage_invoice_reference(existing_invoice)
         logger.info(
             "Skipping duplicate usage invoice for user=%s period=%s..%s",
             user_id,
             period_start.isoformat(),
             period_end.isoformat(),
         )
+        if existing_invoice.stripe_invoice_id:
+            settled_invoice = await _settle_usage_invoice(existing_invoice.stripe_invoice_id)
+            await _sync_usage_invoice_transactions(
+                db,
+                existing_invoice.stripe_invoice_id,
+                settled_invoice,
+            )
         return existing_invoice_id
 
     user = await db.get(User, user_id)
@@ -499,150 +604,176 @@ async def create_usage_invoice(
         .join(Tool, Tool.id == UsageLog.tool_id)
         .where(
             UsageLog.user_id == user_id,
+            Tool.seller_id != user_id,
             UsageLog.request_timestamp >= period_start,
             UsageLog.request_timestamp < period_end,
         )
         .group_by(UsageLog.tool_id, Tool.name, Tool.seller_id)
     )
-    grouped_usage = usage_rows.all()
-    if not grouped_usage:
+    grouped_amounts: dict[tuple[object, str, object], Decimal] = {}
+    for row in usage_rows.all():
+        key = (row.tool_id, row.name, row.seller_id)
+        grouped_amounts[key] = grouped_amounts.get(key, Decimal("0")) + Decimal(row.amount or 0)
+
+    billable_usage = [
+        (tool_id, name, seller_id, _quantize(amount))
+        for (tool_id, name, seller_id), amount in grouped_amounts.items()
+        if _quantize(amount) > 0
+    ]
+    if not billable_usage:
         return None
 
-    for row in grouped_usage:
-        amount = _quantize(Decimal(row.amount or 0))
+    for tool_id, name, _seller_id, amount in billable_usage:
         await _call_stripe(
             stripe.InvoiceItem.create,
             customer=customer_id,
             currency="usd",
             amount=int(amount * 100),
-            description=f"{row.name} usage",
+            description=f"{name} usage",
             metadata={
-                "tool_id": str(row.tool_id),
+                "tool_id": str(tool_id),
                 "buyer_id": str(user_id),
                 "period_start": period_start.isoformat(),
                 "period_end": period_end.isoformat(),
             },
+            idempotency_key=_stripe_idempotency_key(
+                "usage-invoice-item",
+                user_id,
+                tool_id,
+                period_start.isoformat(),
+                period_end.isoformat(),
+            ),
         )
 
     invoice = await _call_stripe(
         stripe.Invoice.create,
         customer=customer_id,
         collection_method="charge_automatically",
-        auto_advance=True,
+        auto_advance=False,
         metadata={
             "buyer_id": str(user_id),
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
         },
+        idempotency_key=_stripe_idempotency_key(
+            "usage-invoice", user_id, period_start.isoformat(), period_end.isoformat()
+        ),
     )
-    finalized = await _call_stripe(stripe.Invoice.finalize_invoice, invoice["id"])
-    try:
-        paid_invoice = await _call_stripe(stripe.Invoice.pay, finalized["id"])
-    except stripe.StripeError:
-        paid_invoice = finalized
-
-    for row in grouped_usage:
-        amount = _quantize(Decimal(row.amount or 0))
+    invoice_id = invoice["id"]
+    transactions: list[Transaction] = []
+    for tool_id, _name, seller_id, amount in billable_usage:
         platform_fee = _quantize(amount * PLATFORM_FEE_RATE)
         seller_payout = _quantize(amount - platform_fee)
-        db.add(
-            Transaction(
-                buyer_id=user_id,
-                seller_id=row.seller_id,
-                tool_id=row.tool_id,
-                amount=amount,
-                platform_fee=platform_fee,
-                seller_payout=seller_payout,
-                stripe_payment_intent_id=paid_invoice.get("payment_intent") or paid_invoice["id"],
-                type=TransactionType.usage,
-                status=TransactionStatus.completed
-                if paid_invoice.get("status") == "paid"
-                else TransactionStatus.pending,
-                period_start=period_start,
-                period_end=period_end,
-                created_at=datetime.now(UTC),
-            )
+        transaction = Transaction(
+            buyer_id=user_id,
+            seller_id=seller_id,
+            tool_id=tool_id,
+            amount=amount,
+            platform_fee=platform_fee,
+            seller_payout=seller_payout,
+            stripe_payment_intent_id=None,
+            stripe_invoice_id=invoice_id,
+            type=TransactionType.usage,
+            status=TransactionStatus.pending,
+            period_start=period_start,
+            period_end=period_end,
+            created_at=datetime.now(UTC),
         )
-    await db.commit()
-    return paid_invoice["id"]
+        db.add(transaction)
+        transactions.append(transaction)
 
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        winner = await _existing_usage_invoice(db, user_id, period_start, period_end)
+        if winner is None:
+            raise
+        if winner.stripe_invoice_id:
+            settled_invoice = await _settle_usage_invoice(winner.stripe_invoice_id)
+            await _sync_usage_invoice_transactions(db, winner.stripe_invoice_id, settled_invoice)
+        return _usage_invoice_reference(winner)
 
-async def calculate_seller_payout(
-    db: AsyncSession, tool_id, period_start: datetime, period_end: datetime
-) -> Decimal:
-    result = await db.execute(
-        select(func.coalesce(func.sum(UsageLog.cost), 0)).where(
-            UsageLog.tool_id == tool_id,
-            UsageLog.request_timestamp >= period_start,
-            UsageLog.request_timestamp < period_end,
-        )
+    settled_invoice = await _settle_usage_invoice(invoice_id, current_invoice=invoice)
+    await _sync_usage_invoice_transactions(
+        db,
+        invoice_id,
+        settled_invoice,
+        transactions=transactions,
     )
-    revenue = Decimal(result.scalar() or 0)
-    platform_fee = _quantize(revenue * PLATFORM_FEE_RATE)
-    estimated_api_cost = Decimal("0.00")
-    return _quantize(revenue - platform_fee - estimated_api_cost)
+    return invoice_id
 
 
 async def process_seller_payout(
     db: AsyncSession,
     seller_id,
-    amount: Decimal,
     *,
     period_start: datetime | None = None,
     period_end: datetime | None = None,
 ) -> str | None:
     user = await db.get(User, seller_id)
-    if not user or not user.stripe_connect_id or amount <= 0:
+    if not user or not user.stripe_connect_id:
         return None
 
     if period_start is None or period_end is None:
         period_start, period_end = _previous_month_bounds(datetime.now(UTC))
 
-    existing_transfer_id = await _existing_seller_payout_id(db, seller_id, period_start, period_end)
-    if existing_transfer_id:
-        logger.info(
-            "Skipping duplicate seller payout for seller=%s period=%s..%s",
-            seller_id,
-            period_start.isoformat(),
-            period_end.isoformat(),
+    payable_result = await db.execute(
+        select(Transaction)
+        .where(
+            Transaction.seller_id == seller_id,
+            Transaction.buyer_id != seller_id,
+            Transaction.status == TransactionStatus.completed,
+            Transaction.seller_payout > 0,
+            Transaction.seller_paid_at.is_(None),
+            Transaction.period_end <= period_end,
         )
+        .order_by(Transaction.period_end.asc(), Transaction.id.asc())
+        .with_for_update()
+    )
+    payable_transactions = list(payable_result.scalars())
+    if not payable_transactions:
+        existing_transfer_id = await _existing_seller_payout_id(db, seller_id, period_end)
+        if existing_transfer_id:
+            logger.info(
+                "Skipping duplicate seller payout for seller=%s period=%s..%s",
+                seller_id,
+                period_start.isoformat(),
+                period_end.isoformat(),
+            )
         return existing_transfer_id
 
+    amount = _quantize(
+        sum(
+            (Decimal(transaction.seller_payout) for transaction in payable_transactions),
+            start=Decimal("0"),
+        )
+    )
+    if amount <= 0:
+        return None
+
+    transaction_ids = sorted(str(transaction.id) for transaction in payable_transactions)
+    transfer_group = _stripe_idempotency_key("seller-payout-group", seller_id, *transaction_ids)
     transfer = await _call_stripe(
         stripe.Transfer.create,
-        amount=int(_quantize(amount) * 100),
+        amount=int(amount * 100),
         currency="usd",
         destination=user.stripe_connect_id,
+        transfer_group=transfer_group,
         metadata={
             "seller_id": str(seller_id),
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
+            "transaction_count": str(len(payable_transactions)),
         },
+        idempotency_key=_stripe_idempotency_key("seller-payout", seller_id, *transaction_ids),
     )
 
-    fallback_tool = await db.execute(
-        select(Tool).where(Tool.seller_id == seller_id).order_by(Tool.created_at.asc()).limit(1)
-    )
-    tool = fallback_tool.scalar_one_or_none()
-    if tool:
-        db.add(
-            Transaction(
-                buyer_id=seller_id,
-                seller_id=seller_id,
-                tool_id=tool.id,
-                amount=_quantize(amount),
-                platform_fee=Decimal("0.00"),
-                seller_payout=_quantize(amount),
-                stripe_payment_intent_id=transfer["id"],
-                type=TransactionType.usage,
-                status=TransactionStatus.completed,
-                period_start=period_start,
-                period_end=period_end,
-                created_at=datetime.now(UTC),
-            )
-        )
-        await db.commit()
-
+    paid_at = datetime.now(UTC)
+    for transaction in payable_transactions:
+        transaction.seller_paid_at = paid_at
+        transaction.stripe_transfer_id = transfer["id"]
+    await db.commit()
     return transfer["id"]
 
 
@@ -765,32 +896,37 @@ async def run_weekly_invoicing() -> None:
             )
             .group_by(User.id)
         )
+        failed_users: list[str] = []
         for user_id in [row[0] for row in users.all()]:
             try:
                 await create_usage_invoice(db, user_id, period_start, period_end)
-            except stripe.StripeError:
+            except Exception:
+                await db.rollback()
+                failed_users.append(str(user_id))
                 logger.exception("Weekly invoicing failed for user %s", user_id)
+        if failed_users:
+            raise RuntimeError(f"Weekly invoicing failed for {len(failed_users)} user(s).")
 
 
 async def run_monthly_payouts() -> None:
     async with AsyncSessionLocal() as db:
         period_start, period_end = _previous_month_bounds(datetime.now(UTC))
         sellers = await db.execute(select(User).where(User.stripe_connect_id.is_not(None)))
+        failed_sellers: list[str] = []
         for seller in sellers.scalars():
-            revenue_rows = await db.execute(select(Tool.id).where(Tool.seller_id == seller.id))
-            total = Decimal("0.00")
-            for row in revenue_rows.all():
-                total += await calculate_seller_payout(db, row.id, period_start, period_end)
             try:
                 await process_seller_payout(
                     db,
                     seller.id,
-                    _quantize(total),
                     period_start=period_start,
                     period_end=period_end,
                 )
-            except stripe.StripeError:
+            except Exception:
+                await db.rollback()
+                failed_sellers.append(str(seller.id))
                 logger.exception("Monthly payout failed for seller %s", seller.id)
+        if failed_sellers:
+            raise RuntimeError(f"Monthly payouts failed for {len(failed_sellers)} seller(s).")
 
 
 async def run_scheduler_loop(stop_event: asyncio.Event) -> None:
@@ -809,22 +945,65 @@ async def run_scheduler_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _run_scheduled_task_once(
+    completion_key: str,
+    *,
+    completion_ttl_seconds: int,
+    task: Callable[[], Awaitable[None]],
+) -> bool:
+    if await _redis_client.get(completion_key):
+        return False
+
+    lock_key = f"{completion_key}:lock"
+    lock_token = uuid.uuid4().hex
+    acquired = await _redis_client.set(
+        lock_key,
+        lock_token,
+        ex=settings.worker_job_timeout_seconds,
+        nx=True,
+    )
+    if not acquired:
+        return False
+
+    try:
+        if await _redis_client.get(completion_key):
+            return False
+        await task()
+        await _redis_client.set(completion_key, "1", ex=completion_ttl_seconds)
+        return True
+    finally:
+        await _redis_client.eval(
+            SCHEDULER_LOCK_RELEASE_SCRIPT,
+            1,
+            lock_key,
+            lock_token,
+        )
+
+
 async def run_scheduled_jobs_once() -> None:
     now = datetime.now(UTC)
     day_key = f"billing:last-daily:{now.date().isoformat()}"
-    if not await _redis_client.get(day_key):
-        await run_daily_aggregation()
-        await _redis_client.set(day_key, "1", ex=60 * 60 * 48)
+    await _run_scheduled_task_once(
+        day_key,
+        completion_ttl_seconds=60 * 60 * 48,
+        task=run_daily_aggregation,
+    )
 
     week_key = f"billing:last-weekly:{now.strftime('%G-W%V')}"
-    if now.weekday() == 0 and not await _redis_client.get(week_key):
-        await run_weekly_invoicing()
-        await _redis_client.set(week_key, "1", ex=60 * 60 * 24 * 14)
+    if now.weekday() == 0:
+        await _run_scheduled_task_once(
+            week_key,
+            completion_ttl_seconds=60 * 60 * 24 * 14,
+            task=run_weekly_invoicing,
+        )
 
     month_key = f"billing:last-monthly:{now.strftime('%Y-%m')}"
-    if now.day == 1 and not await _redis_client.get(month_key):
-        await run_monthly_payouts()
-        await _redis_client.set(month_key, "1", ex=60 * 60 * 24 * 40)
+    if now.day == 1:
+        await _run_scheduled_task_once(
+            month_key,
+            completion_ttl_seconds=60 * 60 * 24 * 40,
+            task=run_monthly_payouts,
+        )
 
 
 def verify_webhook(payload: bytes, signature: str):
@@ -846,28 +1025,162 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
     elif event_type == "checkout.session.expired":
         await _expire_checkout_session(db, data)
     elif event_type == "payment_intent.succeeded":
-        payment_intent_id = data.get("id")
-        await _update_transaction_status(db, payment_intent_id, TransactionStatus.completed)
+        await _update_transaction_status(db, {data.get("id")}, TransactionStatus.completed)
+    elif event_type == "payment_intent.payment_failed":
+        await _update_transaction_status(db, {data.get("id")}, TransactionStatus.failed)
     elif event_type == "invoice.paid":
-        payment_intent_id = data.get("payment_intent") or data.get("id")
-        await _update_transaction_status(db, payment_intent_id, TransactionStatus.completed)
+        await _update_transaction_status(
+            db,
+            {data.get("payment_intent"), data.get("id")},
+            TransactionStatus.completed,
+        )
     elif event_type == "invoice.payment_failed":
-        payment_intent_id = data.get("payment_intent") or data.get("id")
-        await _update_transaction_status(db, payment_intent_id, TransactionStatus.failed)
+        await _update_transaction_status(
+            db,
+            {data.get("payment_intent"), data.get("id")},
+            TransactionStatus.failed,
+        )
+    elif event_type == "charge.refunded":
+        await _handle_charge_refunded(db, data)
     elif event_type == "account.updated":
         logger.info("Stripe account updated: %s", data.get("id"))
 
 
 async def _update_transaction_status(
-    db: AsyncSession, payment_intent_id: str | None, status: TransactionStatus
+    db: AsyncSession, provider_references: set[str | None], status: TransactionStatus
 ) -> None:
-    if not payment_intent_id:
+    references = {reference for reference in provider_references if reference}
+    if not references:
         return
     result = await db.execute(
-        select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id)
+        select(Transaction).where(
+            or_(
+                Transaction.stripe_payment_intent_id.in_(references),
+                Transaction.stripe_invoice_id.in_(references),
+            )
+        )
     )
     for transaction in result.scalars():
+        if transaction.status in {
+            TransactionStatus.refund_pending,
+            TransactionStatus.refunded,
+        }:
+            continue
         transaction.status = status
+    await db.commit()
+
+
+async def _handle_charge_refunded(db: AsyncSession, charge: dict) -> None:
+    amount = int(charge.get("amount") or 0)
+    amount_refunded = int(charge.get("amount_refunded") or 0)
+    is_full_refund = charge.get("refunded") is True or (amount > 0 and amount_refunded >= amount)
+    references = {
+        reference
+        for reference in (
+            charge.get("payment_intent"),
+            charge.get("invoice"),
+        )
+        if isinstance(reference, str) and reference
+    }
+    transactions: list[Transaction] = []
+    if references:
+        result = await db.execute(
+            select(Transaction).where(
+                or_(
+                    Transaction.stripe_payment_intent_id.in_(references),
+                    Transaction.stripe_invoice_id.in_(references),
+                )
+            )
+        )
+        transactions.extend(result.scalars())
+
+    transaction_id = _parse_uuid((charge.get("metadata") or {}).get("transaction_id"))
+    if transaction_id and not any(transaction.id == transaction_id for transaction in transactions):
+        transaction = await db.get(Transaction, transaction_id)
+        if transaction is not None:
+            transactions.append(transaction)
+
+    if not transactions:
+        logger.warning("No local transaction matched refunded Stripe charge %s", charge.get("id"))
+        await alert_service.send_alert(
+            "stripe_refund_unmatched",
+            severity="critical",
+            summary="A Stripe refund did not match a local billing transaction.",
+            details={
+                "charge_id": charge.get("id"),
+                "payment_intent_id": charge.get("payment_intent"),
+                "invoice_id": charge.get("invoice"),
+                "amount": amount,
+                "amount_refunded": amount_refunded,
+            },
+        )
+        return
+
+    if not is_full_refund:
+        for transaction in transactions:
+            if transaction.status != TransactionStatus.refunded:
+                transaction.status = TransactionStatus.refund_pending
+        await db.commit()
+        paid_transfer_ids = sorted(
+            {
+                transaction.stripe_transfer_id
+                for transaction in transactions
+                if transaction.stripe_transfer_id
+            }
+        )
+        await alert_service.send_alert(
+            "stripe_partial_refund_requires_review",
+            severity="critical" if paid_transfer_ids else "warning",
+            summary="A partial Stripe refund was held for manual ledger review.",
+            details={
+                "charge_id": charge.get("id"),
+                "payment_intent_id": charge.get("payment_intent"),
+                "amount": amount,
+                "amount_refunded": amount_refunded,
+                "transaction_ids": [str(transaction.id) for transaction in transactions],
+                "paid_transfer_ids": paid_transfer_ids,
+                "seller_payout_held": not paid_transfer_ids,
+            },
+        )
+        return
+
+    for transaction in transactions:
+        transaction.status = TransactionStatus.refunded
+        if transaction.type == TransactionType.full_purchase:
+            purchase_result = await db.execute(
+                select(ToolPurchase).where(
+                    ToolPurchase.buyer_id == transaction.buyer_id,
+                    ToolPurchase.tool_id == transaction.tool_id,
+                    ToolPurchase.status.in_([PurchaseStatus.pending, PurchaseStatus.active]),
+                )
+            )
+            purchase = purchase_result.scalar_one_or_none()
+            if purchase is not None:
+                purchase.status = PurchaseStatus.terminated
+    # Access and ledger state are revoked even if a subsequent Connect reversal
+    # needs a worker retry because the seller account has insufficient balance.
+    await db.commit()
+
+    reversed_at = datetime.now(UTC)
+    for transaction in transactions:
+        if (
+            not transaction.stripe_transfer_id
+            or transaction.stripe_transfer_reversal_id
+            or transaction.seller_payout <= 0
+        ):
+            continue
+        reversal = await _call_stripe(
+            stripe.Transfer.create_reversal,
+            transaction.stripe_transfer_id,
+            amount=int(_quantize(Decimal(transaction.seller_payout)) * 100),
+            metadata={
+                "transaction_id": str(transaction.id),
+                "refund_charge_id": str(charge.get("id") or ""),
+            },
+            idempotency_key=_stripe_idempotency_key("seller-payout-reversal", transaction.id),
+        )
+        transaction.stripe_transfer_reversal_id = reversal["id"]
+        transaction.seller_reversed_at = reversed_at
     await db.commit()
 
 
@@ -895,7 +1208,11 @@ async def _complete_checkout_session(
     if purchase.status == PurchaseStatus.pending:
         purchase.status = PurchaseStatus.active
 
-    transaction.status = TransactionStatus.completed
+    if transaction.status not in {
+        TransactionStatus.refund_pending,
+        TransactionStatus.refunded,
+    }:
+        transaction.status = TransactionStatus.completed
     transaction.stripe_payment_intent_id = payment_id
 
     await db.commit()

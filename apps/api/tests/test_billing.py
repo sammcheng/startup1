@@ -50,6 +50,12 @@ class FakeBillingSession:
         self.execute_calls += 1
         if self.execute_calls == 1:
             return SimpleNamespace(scalar_one_or_none=lambda: self.existing_invoice)
+        if (
+            self.execute_calls == 2
+            and self.existing_invoice is not None
+            and self.existing_invoice.stripe_invoice_id is not None
+        ):
+            return SimpleNamespace(scalars=lambda: [self.existing_invoice])
         if self.execute_calls == 2:
             return FakeRowsResult(self.usage_rows)
         if self.execute_calls == 3:
@@ -147,9 +153,9 @@ class FakePurchaseSession:
 
 
 class FakePayoutSession:
-    def __init__(self, seller, tool, *, existing_payout=None):
+    def __init__(self, seller, *, payable_transactions=None, existing_payout=None):
         self.seller = seller
-        self.tool = tool
+        self.payable_transactions = payable_transactions or []
         self.existing_payout = existing_payout
         self.added = []
         self.committed = 0
@@ -161,8 +167,8 @@ class FakePayoutSession:
     async def execute(self, statement):
         self.execute_calls += 1
         if self.execute_calls == 1:
-            return SimpleNamespace(scalar_one_or_none=lambda: self.existing_payout)
-        return SimpleNamespace(scalar_one_or_none=lambda: self.tool)
+            return SimpleNamespace(scalars=lambda: self.payable_transactions)
+        return SimpleNamespace(scalar_one_or_none=lambda: self.existing_payout)
 
     def add(self, obj):
         self.added.append(obj)
@@ -174,6 +180,32 @@ class FakePayoutSession:
 class FakeConnectSession:
     def __init__(self):
         self.committed = 0
+
+    async def commit(self):
+        self.committed += 1
+
+
+class FakeRefundSession:
+    def __init__(self, transactions, purchase=None):
+        self.transactions = transactions
+        self.purchase = purchase
+        self.committed = 0
+
+    async def execute(self, statement):
+        if "tool_purchases" in str(statement):
+            purchase = (
+                self.purchase
+                if self.purchase
+                and self.purchase.status in {PurchaseStatus.pending, PurchaseStatus.active}
+                else None
+            )
+            return SimpleNamespace(scalar_one_or_none=lambda: purchase)
+        return SimpleNamespace(scalars=lambda: self.transactions)
+
+    async def get(self, model, key):
+        return next(
+            (transaction for transaction in self.transactions if transaction.id == key), None
+        )
 
     async def commit(self):
         self.committed += 1
@@ -222,6 +254,47 @@ async def test_create_stripe_connect_account_rejects_untrusted_onboarding_url(se
 
 
 @pytest.mark.asyncio
+async def test_checkout_propagates_ledger_metadata_to_payment_intent(buyer, live_tool, monkeypatch):
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=live_tool.id,
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.pending,
+        created_at=datetime.now(UTC),
+    )
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.pending,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    calls = []
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        calls.append(kwargs)
+        return {"id": "cs_checkout", "url": "https://checkout.stripe.com/session"}
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    await billing_service._create_tool_checkout_session(buyer, live_tool, purchase, transaction)
+
+    assert calls[0]["payment_intent_data"]["metadata"] == calls[0]["metadata"]
+    assert calls[0]["metadata"]["transaction_id"] == str(transaction.id)
+    assert calls[0]["idempotency_key"].startswith("hm:tool-checkout:")
+
+
+@pytest.mark.asyncio
 async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
     period_end = datetime.now(UTC)
     period_start = period_end - timedelta(days=7)
@@ -240,14 +313,16 @@ async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
         ),
     ]
     db = FakeBillingSession(buyer, live_tool, usage_rows)
+    stripe_calls = []
 
     async def fake_create_customer(db, user):
         return "cus_test"
 
     async def fake_call_stripe(func, *args, **kwargs):
         func_name = getattr(func, "__name__", "")
+        stripe_calls.append((func_name, args, kwargs))
         if func_name == "create":
-            return {"id": "inv_test", "payment_intent": "pi_test", "status": "paid"}
+            return {"id": "inv_test", "payment_intent": None, "status": "draft"}
         return {"id": "inv_test", "payment_intent": "pi_test", "status": "paid"}
 
     monkeypatch.setattr(billing_service, "create_stripe_customer", fake_create_customer)
@@ -257,6 +332,9 @@ async def test_usage_calculated_correctly(buyer, live_tool, monkeypatch):
 
     assert invoice_id == "inv_test"
     assert sum(tx.amount for tx in db.added if isinstance(tx, Transaction)) == Decimal("4.00")
+    finalize_call = next(call for call in stripe_calls if call[0] == "finalize_invoice")
+    assert finalize_call[2]["auto_advance"] is True
+    assert finalize_call[2]["idempotency_key"].startswith("hm:finalize-usage-invoice:")
 
 
 @pytest.mark.asyncio
@@ -277,6 +355,8 @@ async def test_platform_fee_calculated(buyer, live_tool, monkeypatch):
         return "cus_test"
 
     async def fake_call_stripe(func, *args, **kwargs):
+        if getattr(func, "__name__", "") == "create":
+            return {"id": "inv_test", "payment_intent": None, "status": "draft"}
         return {"id": "inv_test", "payment_intent": "pi_test", "status": "paid"}
 
     monkeypatch.setattr(billing_service, "create_stripe_customer", fake_create_customer)
@@ -322,19 +402,54 @@ async def test_usage_invoice_is_idempotent_for_existing_period(buyer, live_tool,
 
 
 @pytest.mark.asyncio
-async def test_seller_payout_calculated(monkeypatch):
-    class FakeRevenueSession:
-        async def execute(self, statement):
-            return FakeScalarResult(Decimal("10.00"))
-
-    payout = await billing_service.calculate_seller_payout(
-        FakeRevenueSession(),
-        tool_id="tool-id",
-        period_start=datetime.now(UTC) - timedelta(days=30),
-        period_end=datetime.now(UTC),
+async def test_usage_invoice_resumes_after_ledger_commit_interruption(
+    buyer, live_tool, monkeypatch
+):
+    period_end = datetime(2026, 6, 22, tzinfo=UTC)
+    period_start = period_end - timedelta(days=7)
+    existing = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=live_tool.seller_id,
+        tool_id=live_tool.id,
+        amount=Decimal("10.00"),
+        platform_fee=Decimal("2.00"),
+        seller_payout=Decimal("8.00"),
+        stripe_payment_intent_id=None,
+        stripe_invoice_id="in_recover",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.pending,
+        period_start=period_start,
+        period_end=period_end,
+        created_at=datetime.now(UTC),
     )
+    db = FakeBillingSession(buyer, live_tool, [], existing_invoice=existing)
+    stripe_calls = []
 
-    assert payout == Decimal("8.00")
+    async def fake_call_stripe(func, *args, **kwargs):
+        func_name = getattr(func, "__name__", "")
+        stripe_calls.append((func_name, args, kwargs))
+        if func_name == "retrieve":
+            return {"id": "in_recover", "status": "draft", "auto_advance": False}
+        if func_name == "finalize_invoice":
+            return {"id": "in_recover", "status": "open", "auto_advance": True}
+        return {
+            "id": "in_recover",
+            "payment_intent": "pi_recovered",
+            "status": "paid",
+            "auto_advance": True,
+        }
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    invoice_id = await billing_service.create_usage_invoice(db, buyer.id, period_start, period_end)
+
+    assert invoice_id == "in_recover"
+    assert [call[0] for call in stripe_calls] == ["retrieve", "finalize_invoice", "pay"]
+    assert stripe_calls[1][2]["auto_advance"] is True
+    assert existing.stripe_payment_intent_id == "pi_recovered"
+    assert existing.status == billing_service.TransactionStatus.completed
+    assert db.committed == 1
 
 
 @pytest.mark.asyncio
@@ -356,8 +471,10 @@ async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool
         period_start=period_start,
         period_end=period_end,
         created_at=datetime.now(UTC),
+        seller_paid_at=datetime.now(UTC),
+        stripe_transfer_id="tr_existing",
     )
-    db = FakePayoutSession(seller, live_tool, existing_payout=existing)
+    db = FakePayoutSession(seller, existing_payout=existing)
 
     async def fail_if_called(*args, **kwargs):
         raise AssertionError("Stripe should not be called for an existing payout period")
@@ -367,7 +484,6 @@ async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool
     transfer_id = await billing_service.process_seller_payout(
         db,
         seller.id,
-        Decimal("25.00"),
         period_start=period_start,
         period_end=period_end,
     )
@@ -375,6 +491,72 @@ async def test_seller_payout_is_idempotent_for_existing_period(seller, live_tool
     assert transfer_id == "tr_existing"
     assert db.added == []
     assert db.committed == 0
+
+
+@pytest.mark.asyncio
+async def test_seller_payout_uses_completed_unpaid_transaction_ledger(
+    seller, buyer, live_tool, monkeypatch
+):
+    seller.stripe_connect_id = "acct_seller"
+    period_start = datetime(2026, 5, 1, tzinfo=UTC)
+    period_end = datetime(2026, 6, 1, tzinfo=UTC)
+    royalty = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("10.00"),
+        platform_fee=Decimal("2.00"),
+        seller_payout=Decimal("8.00"),
+        stripe_payment_intent_id="pi_usage",
+        stripe_invoice_id="in_usage",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.completed,
+        period_start=period_start,
+        period_end=period_end,
+        created_at=datetime.now(UTC),
+    )
+    full_sale = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="pi_sale",
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.completed,
+        period_start=period_start,
+        period_end=period_end,
+        created_at=datetime.now(UTC),
+    )
+    db = FakePayoutSession(seller, payable_transactions=[royalty, full_sale])
+    stripe_calls = []
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        stripe_calls.append(kwargs)
+        return {"id": "tr_paid"}
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    transfer_id = await billing_service.process_seller_payout(
+        db,
+        seller.id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    assert transfer_id == "tr_paid"
+    assert stripe_calls[0]["amount"] == 8800
+    assert stripe_calls[0]["destination"] == "acct_seller"
+    assert stripe_calls[0]["idempotency_key"].startswith("hm:seller-payout:")
+    assert royalty.stripe_transfer_id == "tr_paid"
+    assert full_sale.stripe_transfer_id == "tr_paid"
+    assert royalty.seller_paid_at is not None
+    assert full_sale.seller_paid_at is not None
+    assert db.added == []
+    assert db.committed == 1
 
 
 @pytest.mark.asyncio
@@ -821,19 +1003,27 @@ def test_stripe_webhook_rejects_invalid_signature(client, monkeypatch):
 
 
 def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
-    handled = []
+    accepted = []
 
     def fake_verify_webhook(payload, signature):
         assert payload == b'{"type":"checkout.session.completed"}'
         assert signature == "sig_test"
-        return {"type": "checkout.session.completed", "data": {"object": {"id": "cs_test"}}}
+        return {
+            "id": "evt_checkout_completed",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_test"}},
+        }
 
-    async def fake_handle_webhook_event(db, event):
-        handled.append(event)
+    async def fake_accept_verified_event(db, event):
+        accepted.append(event)
+        return SimpleNamespace(id=event["id"]), True
 
     configure_stripe_webhook_secret(monkeypatch)
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
-    monkeypatch.setattr(billing_service, "handle_webhook_event", fake_handle_webhook_event)
+    monkeypatch.setattr(
+        "app.routers.billing.stripe_event_service.accept_verified_event",
+        fake_accept_verified_event,
+    )
 
     response = client.post(
         "/v1/billing/webhook",
@@ -842,19 +1032,27 @@ def test_stripe_webhook_dispatches_verified_event(client, monkeypatch):
     )
 
     assert response.status_code == 204
-    assert handled == [
-        {"type": "checkout.session.completed", "data": {"object": {"id": "cs_test"}}}
+    assert accepted == [
+        {
+            "id": "evt_checkout_completed",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_test"}},
+        }
     ]
 
 
-def test_stripe_webhook_alerts_when_handler_fails(client, monkeypatch):
+def test_stripe_webhook_returns_retryable_error_when_queueing_fails(client, monkeypatch):
     alerts = []
 
     def fake_verify_webhook(payload, signature):
-        return {"type": "invoice.payment_failed", "data": {"object": {"id": "in_test"}}}
+        return {
+            "id": "evt_invoice_failed",
+            "type": "invoice.payment_failed",
+            "data": {"object": {"id": "in_test"}},
+        }
 
-    async def fake_handle_webhook_event(db, event):
-        raise RuntimeError("database down")
+    async def fake_accept_verified_event(db, event):
+        raise RuntimeError("queue down")
 
     async def fake_send_alert(event, **kwargs):
         alerts.append({"event": event, **kwargs})
@@ -862,17 +1060,21 @@ def test_stripe_webhook_alerts_when_handler_fails(client, monkeypatch):
 
     configure_stripe_webhook_secret(monkeypatch)
     monkeypatch.setattr(billing_service, "verify_webhook", fake_verify_webhook)
-    monkeypatch.setattr(billing_service, "handle_webhook_event", fake_handle_webhook_event)
+    monkeypatch.setattr(
+        "app.routers.billing.stripe_event_service.accept_verified_event",
+        fake_accept_verified_event,
+    )
     monkeypatch.setattr("app.routers.billing.alert_service.send_alert", fake_send_alert)
 
-    with pytest.raises(RuntimeError, match="database down"):
-        client.post(
-            "/v1/billing/webhook",
-            content=b'{"type":"invoice.payment_failed"}',
-            headers={"Stripe-Signature": "sig_test"},
-        )
+    response = client.post(
+        "/v1/billing/webhook",
+        content=b'{"type":"invoice.payment_failed"}',
+        headers={"Stripe-Signature": "sig_test"},
+    )
 
-    assert alerts[0]["event"] == "stripe_webhook_handler_failed"
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "webhook_queue_unavailable"
+    assert alerts[0]["event"] == "stripe_webhook_queue_failed"
 
 
 @pytest.mark.asyncio
@@ -1083,6 +1285,263 @@ async def test_checkout_webhook_defers_unpaid_session_until_async_success():
 
 
 @pytest.mark.asyncio
+async def test_full_refund_revokes_purchase_and_reverses_seller_transfer(
+    buyer, seller, live_tool, monkeypatch
+):
+    purchase = ToolPurchase(
+        id=uuid.uuid4(),
+        tool_id=live_tool.id,
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        purchase_price=Decimal("100.00"),
+        purchase_type=OwnershipType.full_sale,
+        status=PurchaseStatus.active,
+        created_at=datetime.now(UTC),
+    )
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="pi_refunded",
+        stripe_transfer_id="tr_seller_paid",
+        seller_paid_at=datetime.now(UTC),
+        type=billing_service.TransactionType.full_purchase,
+        status=billing_service.TransactionStatus.completed,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakeRefundSession([transaction], purchase=purchase)
+    reversals = []
+
+    async def fake_call_stripe(func, *args, **kwargs):
+        reversals.append((args, kwargs))
+        return {"id": "trr_refund"}
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fake_call_stripe)
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_refunded",
+                    "payment_intent": "pi_refunded",
+                    "amount": 10000,
+                    "amount_refunded": 10000,
+                    "refunded": True,
+                    "metadata": {"transaction_id": str(transaction.id)},
+                }
+            },
+        },
+    )
+
+    assert purchase.status == PurchaseStatus.terminated
+    assert transaction.status == billing_service.TransactionStatus.refunded
+    assert transaction.stripe_transfer_reversal_id == "trr_refund"
+    assert transaction.seller_reversed_at is not None
+    assert reversals[0][0] == ("tr_seller_paid",)
+    assert reversals[0][1]["amount"] == 8000
+    assert reversals[0][1]["idempotency_key"].startswith("hm:seller-payout-reversal:")
+    assert db.committed == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_refund_does_not_reverse_transfer_twice(
+    buyer, seller, live_tool, monkeypatch
+):
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("10.00"),
+        platform_fee=Decimal("2.00"),
+        seller_payout=Decimal("8.00"),
+        stripe_payment_intent_id="pi_refunded",
+        stripe_transfer_id="tr_paid",
+        stripe_transfer_reversal_id="trr_existing",
+        seller_paid_at=datetime.now(UTC),
+        seller_reversed_at=datetime.now(UTC),
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.refunded,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakeRefundSession([transaction])
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("A completed transfer reversal must not run twice.")
+
+    monkeypatch.setattr(billing_service, "_call_stripe", fail_if_called)
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_refunded",
+                    "payment_intent": "pi_refunded",
+                    "amount": 1000,
+                    "amount_refunded": 1000,
+                    "refunded": True,
+                }
+            },
+        },
+    )
+
+    assert transaction.stripe_transfer_reversal_id == "trr_existing"
+
+
+@pytest.mark.asyncio
+async def test_paid_event_cannot_resurrect_refunded_transaction(buyer, seller, live_tool):
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("10.00"),
+        platform_fee=Decimal("2.00"),
+        seller_payout=Decimal("8.00"),
+        stripe_payment_intent_id="pi_refunded",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.refunded,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakeRefundSession([transaction])
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_refunded"}},
+        },
+    )
+
+    assert transaction.status == billing_service.TransactionStatus.refunded
+
+
+@pytest.mark.asyncio
+async def test_partial_refund_holds_seller_payout_for_manual_review(
+    buyer, seller, live_tool, monkeypatch
+):
+    alerts = []
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="pi_partial",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.completed,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakeRefundSession([transaction])
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(billing_service.alert_service, "send_alert", fake_send_alert)
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_partial",
+                    "payment_intent": "pi_partial",
+                    "amount": 10000,
+                    "amount_refunded": 2500,
+                    "refunded": False,
+                }
+            },
+        },
+    )
+
+    assert transaction.status == billing_service.TransactionStatus.refund_pending
+    assert db.committed == 1
+    assert alerts[0]["event"] == "stripe_partial_refund_requires_review"
+    assert alerts[0]["severity"] == "warning"
+    assert alerts[0]["details"]["seller_payout_held"] is True
+
+
+@pytest.mark.asyncio
+async def test_paid_event_cannot_clear_partial_refund_hold(buyer, seller, live_tool):
+    transaction = Transaction(
+        id=uuid.uuid4(),
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        tool_id=live_tool.id,
+        amount=Decimal("100.00"),
+        platform_fee=Decimal("20.00"),
+        seller_payout=Decimal("80.00"),
+        stripe_payment_intent_id="pi_partial",
+        type=billing_service.TransactionType.usage,
+        status=billing_service.TransactionStatus.refund_pending,
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC),
+        created_at=datetime.now(UTC),
+    )
+    db = FakeRefundSession([transaction])
+
+    await billing_service.handle_webhook_event(
+        db,
+        {
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_partial"}},
+        },
+    )
+
+    assert transaction.status == billing_service.TransactionStatus.refund_pending
+
+
+@pytest.mark.asyncio
+async def test_unmatched_refund_emits_critical_alert(monkeypatch):
+    alerts = []
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(billing_service.alert_service, "send_alert", fake_send_alert)
+
+    await billing_service.handle_webhook_event(
+        FakeRefundSession([]),
+        {
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_unknown",
+                    "payment_intent": "pi_unknown",
+                    "amount": 10000,
+                    "amount_refunded": 10000,
+                    "refunded": True,
+                }
+            },
+        },
+    )
+
+    assert alerts[0]["event"] == "stripe_refund_unmatched"
+    assert alerts[0]["severity"] == "critical"
+
+
+@pytest.mark.asyncio
 async def test_checkout_async_payment_failed_terminates_pending_purchase():
     purchase = ToolPurchase(
         id=uuid.uuid4(),
@@ -1178,3 +1637,130 @@ async def test_expired_checkout_terminates_pending_purchase():
     assert purchase.status == PurchaseStatus.terminated
     assert transaction.status == billing_service.TransactionStatus.failed
     assert db.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_sets_completion_and_releases_owned_lock(fake_redis, monkeypatch):
+    calls = []
+
+    async def task():
+        calls.append("ran")
+
+    monkeypatch.setattr(billing_service, "_redis_client", fake_redis)
+
+    ran = await billing_service._run_scheduled_task_once(
+        "billing:test:success",
+        completion_ttl_seconds=3600,
+        task=task,
+    )
+
+    assert ran is True
+    assert calls == ["ran"]
+    assert fake_redis.values["billing:test:success"] == "1"
+    assert "billing:test:success:lock" not in fake_redis.values
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_skips_completed_or_locked_run(fake_redis, monkeypatch):
+    calls = []
+
+    async def task():
+        calls.append("ran")
+
+    monkeypatch.setattr(billing_service, "_redis_client", fake_redis)
+    fake_redis.values["billing:test:complete"] = "1"
+    fake_redis.values["billing:test:locked:lock"] = "another-worker"
+
+    completed = await billing_service._run_scheduled_task_once(
+        "billing:test:complete",
+        completion_ttl_seconds=3600,
+        task=task,
+    )
+    locked = await billing_service._run_scheduled_task_once(
+        "billing:test:locked",
+        completion_ttl_seconds=3600,
+        task=task,
+    )
+
+    assert completed is False
+    assert locked is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_failure_releases_lock_without_marking_complete(
+    fake_redis, monkeypatch
+):
+    async def task():
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(billing_service, "_redis_client", fake_redis)
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await billing_service._run_scheduled_task_once(
+            "billing:test:failure",
+            completion_ttl_seconds=3600,
+            task=task,
+        )
+
+    assert "billing:test:failure" not in fake_redis.values
+    assert "billing:test:failure:lock" not in fake_redis.values
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_does_not_release_new_owners_lock(fake_redis, monkeypatch):
+    lock_key = "billing:test:handoff:lock"
+
+    async def task():
+        fake_redis.values[lock_key] = "new-owner"
+
+    monkeypatch.setattr(billing_service, "_redis_client", fake_redis)
+
+    ran = await billing_service._run_scheduled_task_once(
+        "billing:test:handoff",
+        completion_ttl_seconds=3600,
+        task=task,
+    )
+
+    assert ran is True
+    assert fake_redis.values[lock_key] == "new-owner"
+
+
+@pytest.mark.asyncio
+async def test_weekly_invoicing_isolates_one_users_database_failure(monkeypatch):
+    first_user_id = uuid.uuid4()
+    second_user_id = uuid.uuid4()
+
+    class SchedulerSession:
+        def __init__(self):
+            self.rollbacks = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return SimpleNamespace(all=lambda: [(first_user_id,), (second_user_id,)])
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    session = SchedulerSession()
+    invoiced_users = []
+
+    async def fake_create_usage_invoice(db, user_id, period_start, period_end):
+        invoiced_users.append(user_id)
+        if user_id == first_user_id:
+            raise RuntimeError("database unavailable")
+        return "in_second"
+
+    monkeypatch.setattr(billing_service, "AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr(billing_service, "create_usage_invoice", fake_create_usage_invoice)
+
+    with pytest.raises(RuntimeError, match="1 user"):
+        await billing_service.run_weekly_invoicing()
+
+    assert invoiced_users == [first_user_id, second_user_id]
+    assert session.rollbacks == 1

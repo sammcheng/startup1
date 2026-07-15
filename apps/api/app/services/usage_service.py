@@ -6,7 +6,6 @@ from decimal import Decimal
 from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import AsyncSessionLocal
 from app.models import Tool, UsageLog
 from app.schemas.usage import (
     Granularity,
@@ -30,14 +29,26 @@ def normalize_date_range(
     return effective_start, effective_end, start_dt, end_dt
 
 
-async def create_usage_log(entry: UsageLogCreate) -> None:
+async def persist_usage_log(
+    db: AsyncSession,
+    usage_log_id: uuid.UUID,
+    entry: UsageLogCreate,
+) -> bool:
+    """Persist one invocation once, even when a queued retry races the API."""
+    log = UsageLog(id=usage_log_id, **entry.model_dump())
+    db.add(log)
     try:
-        async with AsyncSessionLocal() as db:
-            log = UsageLog(**entry.model_dump())
-            db.add(log)
-            await db.commit()
+        await db.commit()
     except Exception:
-        logger.exception("Failed to persist usage log for tool_id=%s", entry.tool_id)
+        await db.rollback()
+        try:
+            existing = await db.get(UsageLog, usage_log_id)
+        except Exception:
+            raise
+        if existing is not None:
+            return False
+        raise
+    return True
 
 
 async def get_usage_summary_for_user(

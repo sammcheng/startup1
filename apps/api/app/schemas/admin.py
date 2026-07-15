@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.stripe_webhook_event import StripeWebhookEventStatus
 from app.models.tool import ToolStatus
 from app.models.tool_processing_job import ToolProcessingJobKind, ToolProcessingJobStatus
 from app.models.user import UserRole
@@ -84,11 +85,43 @@ class AdminProcessingJobHealthResponse(BaseModel):
     failed_window_seconds: int
 
 
+class AdminStripeWebhookHealthResponse(BaseModel):
+    stuck_active: int
+    failed_recent: int
+    stale_after_seconds: int
+    failed_threshold: int
+    failed_window_seconds: int
+
+
+class AdminStripeWebhookEventResponse(BaseModel):
+    id: str
+    event_type: str
+    status: StripeWebhookEventStatus
+    attempts: int
+    max_attempts: int
+    last_error: str | None = None
+    enqueued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    retryable: bool = False
+
+
+class AdminStripeWebhookEventListResponse(BaseModel):
+    items: list[AdminStripeWebhookEventResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
 class AdminOperationsHealthResponse(BaseModel):
     status: Literal["healthy", "degraded"]
     checks: dict[str, str]
     queue: AdminQueueHealthResponse
     processing_jobs: AdminProcessingJobHealthResponse
+    stripe_webhooks: AdminStripeWebhookHealthResponse
 
 
 class AdminAuditLogResponse(BaseModel):

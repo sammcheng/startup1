@@ -276,6 +276,60 @@ def test_production_rejects_invalid_gateway_abuse_settings() -> None:
             **PRODUCTION_REQUIRED,
         )
 
+    with pytest.raises(ValueError, match="ALERT_STRIPE_WEBHOOK_STALE_AFTER_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_stripe_webhook_stale_after_seconds=59,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="ALERT_FAILED_STRIPE_WEBHOOKS_THRESHOLD"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            alert_failed_stripe_webhooks_threshold=0,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="STRIPE_WEBHOOK_JOB_EXPIRES_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            worker_job_timeout_seconds=900,
+            stripe_webhook_job_expires_seconds=900,
+            **PRODUCTION_REQUIRED,
+        )
+
+    with pytest.raises(ValueError, match="USAGE_LOG_JOB_EXPIRES_SECONDS"):
+        Settings(
+            environment="production",
+            debug=False,
+            app_base_url="https://hackmarket.io",
+            public_api_base_url="https://api.hackmarket.io",
+            cors_origin_regex="",
+            database_url="postgresql://user:secret@db.internal:5432/hackmarket",
+            redis_url="redis://redis.internal:6379",
+            worker_job_timeout_seconds=900,
+            usage_log_job_expires_seconds=900,
+            **PRODUCTION_REQUIRED,
+        )
+
     with pytest.raises(ValueError, match="MAX_SOURCE_ZIP_ENTRIES"):
         Settings(
             environment="production",
