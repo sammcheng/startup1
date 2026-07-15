@@ -7,7 +7,7 @@ from svix.webhooks import Webhook, WebhookVerificationError
 
 from app.config import settings
 from app.dependencies import get_current_identity, get_db
-from app.exceptions import AppError, Unauthorized
+from app.exceptions import AccountSyncConflictError, AppError, Unauthorized
 from app.models import User
 from app.schemas.auth import AuthSyncRequest, AuthSyncResponse
 from app.services import alert_service
@@ -127,14 +127,32 @@ async def clerk_webhook(
 
     logger.info("Clerk webhook received: %s for clerk_id=%s", event_type, clerk_id)
 
-    if event_type == "user.created":
-        await _handle_user_created(db, clerk_id, clerk_user)
-    elif event_type == "user.updated":
-        await _handle_user_updated(db, clerk_id, clerk_user)
-    elif event_type == "user.deleted":
-        await _handle_user_deleted(db, clerk_id)
-    else:
-        logger.debug("Unhandled Clerk event type: %s", event_type)
+    try:
+        if event_type == "user.created":
+            await _handle_user_created(db, clerk_id, clerk_user)
+        elif event_type == "user.updated":
+            await _handle_user_updated(db, clerk_id, clerk_user)
+        elif event_type == "user.deleted":
+            await _handle_user_deleted(db, clerk_id)
+        else:
+            logger.debug("Unhandled Clerk event type: %s", event_type)
+    except AccountSyncConflictError:
+        # Provider retries cannot resolve an account ownership conflict. Record
+        # it for operator review and acknowledge the verified event.
+        logger.warning(
+            "Clerk account sync conflict for event=%s clerk_id=%s",
+            event_type,
+            clerk_id,
+        )
+        await alert_service.send_alert(
+            "clerk_account_sync_conflict",
+            severity="error",
+            summary="A verified Clerk user conflicts with an existing local account.",
+            details={
+                "event_type": event_type,
+                "clerk_id": alert_service.redact(clerk_id),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

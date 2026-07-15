@@ -18,6 +18,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RENDER_BLUEPRINT = REPO_ROOT / "render.yaml"
 WEB_PACKAGE = REPO_ROOT / "apps" / "web" / "package.json"
+WEB_NODE_VERSION = REPO_ROOT / "apps" / "web" / ".node-version"
 WEB_DOCKERFILE = REPO_ROOT / "apps" / "web" / "Dockerfile.prod"
 WEB_CONTAINER_START = REPO_ROOT / "apps" / "web" / "scripts" / "start-container.mjs"
 API_REQUIREMENTS = REPO_ROOT / "apps" / "api" / "requirements.txt"
@@ -296,6 +297,7 @@ def check_render_blueprint(failures: list[str]) -> None:
             f"{name} must run production env",
             failures,
         )
+
         expect(
             env.get("DEBUG", {}).get("value") == "false",
             f"{name} must disable debug mode",
@@ -428,6 +430,13 @@ def check_render_blueprint(failures: list[str]) -> None:
             failures,
         )
 
+    if api is not None:
+        expect(
+            api.get("healthCheckPath") == "/ready",
+            "start must gate traffic on core database and Redis readiness",
+            failures,
+        )
+
     if worker is not None:
         expect(
             worker.get("dockerCommand") == "arq app.worker.WorkerSettings",
@@ -510,6 +519,12 @@ def check_repo_files(failures: list[str]) -> None:
     expect(
         start_script == "node .next/standalone/server.js",
         "apps/web must start the standalone Next.js server in production",
+        failures,
+    )
+    expect(
+        package_json.get("engines", {}).get("node") == ">=22 <23"
+        and WEB_NODE_VERSION.read_text(encoding="utf-8").strip() == "22.16.0",
+        "apps/web must pin the same Node 22 runtime used by CI and production containers",
         failures,
     )
 

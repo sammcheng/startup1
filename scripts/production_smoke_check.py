@@ -144,14 +144,24 @@ def check_ready(api_root: str, timeout: int) -> CheckResult:
     if status == 200 and readiness == "ready":
         checks = payload.get("checks") or {}
         queue = payload.get("queue") or {}
+        processing_jobs = payload.get("processing_jobs") or {}
         stripe_webhooks = payload.get("stripe_webhooks") or {}
         queue_depth = queue.get("depth")
-        worker_heartbeat = queue.get("worker_heartbeat")
-        if queue and worker_heartbeat is not True:
-            return CheckResult("api /ready", False, f"worker heartbeat missing; payload={payload}")
-        if checks.get("stripe_webhooks") != "ok" or not stripe_webhooks:
+        required_checks = ("queue", "worker", "processing_jobs", "stripe_webhooks")
+        degraded_checks = {
+            key: checks.get(key) for key in required_checks if checks.get(key) != "ok"
+        }
+        if (
+            payload.get("operations_status") != "healthy"
+            or degraded_checks
+            or not queue
+            or not processing_jobs
+            or not stripe_webhooks
+        ):
             return CheckResult(
-                "api /ready", False, f"Stripe webhook health missing or degraded; payload={payload}"
+                "api /ready",
+                False,
+                f"operations health missing or degraded; payload={payload}",
             )
         return CheckResult("api /ready", True, f"ready; queue_depth={queue_depth}")
     return CheckResult("api /ready", False, f"{status}; payload={payload}")

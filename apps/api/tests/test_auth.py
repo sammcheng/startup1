@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 import app.dependencies as auth_dependencies
 from app.dependencies import get_current_identity
@@ -72,6 +73,33 @@ def test_auth_sync_rejects_suspended_account(client, buyer, monkeypatch):
 
     assert response.status_code == 401
     assert response.json()["error"]["message"] == "This account is suspended."
+
+
+def test_auth_sync_returns_conflict_for_linked_verified_email(client, buyer, monkeypatch):
+    async def fake_identity():
+        return auth_service.AuthIdentity(
+            clerk_id="clerk_duplicate_email",
+            email=buyer.email,
+            username="duplicate-email",
+        )
+
+    async def fake_sync_user_from_identity(db, identity, profile):
+        raise auth_service.AccountSyncConflictError()
+
+    app.dependency_overrides[get_current_identity] = fake_identity
+    monkeypatch.setattr(auth, "sync_user_from_identity", fake_sync_user_from_identity)
+
+    response = client.post(
+        "/v1/auth/sync",
+        json={
+            "email": buyer.email,
+            "username": "duplicate-email",
+            "display_name": "Duplicate Email",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_sync_conflict"
 
 
 @pytest.mark.asyncio
@@ -158,6 +186,79 @@ def test_clerk_webhook_dispatches_verified_user_created_event(client, monkeypatc
 
     assert response.status_code == 204
     assert handled == [("clerk_created", clerk_user)]
+
+
+def test_clerk_webhook_alerts_and_acknowledges_account_conflict(client, monkeypatch):
+    alerts = []
+
+    class FakeWebhook:
+        def __init__(self, secret):
+            assert secret == "whsec_test"
+
+        def verify(self, body, headers):
+            return {
+                "type": "user.created",
+                "data": {"id": "clerk_conflicting_user"},
+            }
+
+    async def fake_handle_user_created(db, clerk_id, payload):
+        raise auth_service.AccountSyncConflictError()
+
+    async def fake_send_alert(event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "whsec_test")
+    monkeypatch.setattr(auth, "Webhook", FakeWebhook)
+    monkeypatch.setattr(auth, "_handle_user_created", fake_handle_user_created)
+    monkeypatch.setattr(auth.alert_service, "send_alert", fake_send_alert)
+
+    response = client.post(
+        "/v1/auth/webhook",
+        content=b'{"type":"user.created"}',
+        headers={
+            "svix-id": "msg_test",
+            "svix-timestamp": "123",
+            "svix-signature": "sig_test",
+        },
+    )
+
+    assert response.status_code == 204
+    assert alerts[0]["event"] == "clerk_account_sync_conflict"
+    assert alerts[0]["details"]["event_type"] == "user.created"
+
+
+def test_clerk_webhook_retries_temporary_account_sync_race(client, monkeypatch):
+    class FakeWebhook:
+        def __init__(self, secret):
+            assert secret == "whsec_test"
+
+        def verify(self, body, headers):
+            return {
+                "type": "user.created",
+                "data": {"id": "clerk_racing_user"},
+            }
+
+    async def fake_handle_user_created(db, clerk_id, payload):
+        raise auth_service.AccountSyncRetryError()
+
+    monkeypatch.setattr(auth.settings, "clerk_webhook_secret", "whsec_test")
+    monkeypatch.setattr(auth, "Webhook", FakeWebhook)
+    monkeypatch.setattr(auth, "_handle_user_created", fake_handle_user_created)
+
+    response = client.post(
+        "/v1/auth/webhook",
+        content=b'{"type":"user.created"}',
+        headers={
+            "svix-id": "msg_test",
+            "svix-timestamp": "123",
+            "svix-signature": "sig_test",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "account_sync_retry"
+    assert response.json()["error"]["details"] == {"retryable": True}
 
 
 @pytest.mark.asyncio
@@ -347,6 +448,7 @@ class _FakeAuthSession:
     def __init__(self):
         self.added = []
         self.commits = 0
+        self.rollbacks = 0
         self.refreshed = []
 
     async def execute(self, statement):
@@ -357,6 +459,9 @@ class _FakeAuthSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
@@ -371,6 +476,21 @@ class _ExistingAuthSession(_FakeAuthSession):
     async def execute(self, statement):
         self.execute_calls += 1
         return _FakeAuthResult(self.user)
+
+
+class _SequenceAuthSession(_FakeAuthSession):
+    def __init__(self, results, commit_error=None):
+        super().__init__()
+        self.results = list(results)
+        self.commit_error = commit_error
+
+    async def execute(self, statement):
+        return _FakeAuthResult(self.results.pop(0))
+
+    async def commit(self):
+        self.commits += 1
+        if self.commit_error is not None:
+            raise self.commit_error
 
 
 @pytest.mark.asyncio
@@ -424,6 +544,77 @@ async def test_sync_user_normalizes_verified_email():
     user = await auth_service.sync_user_from_identity(db, identity)
 
     assert user.email == "user.name@example.com"
+
+
+@pytest.mark.asyncio
+async def test_sync_user_rejects_email_owned_by_another_clerk_account(buyer):
+    db = _SequenceAuthSession([None, buyer])
+    identity = auth_service.AuthIdentity(
+        clerk_id="clerk_different_account",
+        email=f"  {buyer.email.upper()}  ",
+        username="different-account",
+    )
+
+    with pytest.raises(auth_service.AccountSyncConflictError, match="already linked"):
+        await auth_service.sync_user_from_identity(db, identity)
+
+    assert db.added == []
+    assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_user_returns_account_created_by_concurrent_request(buyer):
+    buyer.clerk_id = "clerk_concurrent"
+    db = _SequenceAuthSession(
+        [None, None, None, buyer],
+        commit_error=IntegrityError("insert user", {}, Exception("unique violation")),
+    )
+    identity = auth_service.AuthIdentity(
+        clerk_id=buyer.clerk_id,
+        email=buyer.email,
+        username=buyer.username,
+    )
+
+    user = await auth_service.sync_user_from_identity(db, identity)
+
+    assert user is buyer
+    assert db.commits == 1
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_user_rejects_existing_account_email_change_conflict(buyer, seller):
+    db = _SequenceAuthSession([buyer, seller])
+    identity = auth_service.AuthIdentity(
+        clerk_id=buyer.clerk_id,
+        email=seller.email,
+        username=buyer.username,
+    )
+
+    with pytest.raises(auth_service.AccountSyncConflictError, match="already linked"):
+        await auth_service.sync_user_from_identity(db, identity)
+
+    assert buyer.email != seller.email
+    assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_user_marks_unresolved_update_race_as_retryable(buyer):
+    db = _SequenceAuthSession(
+        [buyer, buyer, buyer, buyer],
+        commit_error=IntegrityError("update user", {}, Exception("unique violation")),
+    )
+    identity = auth_service.AuthIdentity(
+        clerk_id=buyer.clerk_id,
+        email=buyer.email,
+        username=buyer.username,
+    )
+
+    with pytest.raises(auth_service.AccountSyncRetryError) as exc_info:
+        await auth_service.sync_user_from_identity(db, identity)
+
+    assert exc_info.value.details == {"retryable": True}
+    assert db.rollbacks == 1
 
 
 @pytest.mark.asyncio

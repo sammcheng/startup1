@@ -1,98 +1,90 @@
 # Render Monorepo Runbook
 
-This repo uses Render for two separate web services:
+Render must treat `render.yaml` as the source of truth for the production API,
+worker, Redis instance, database, and seller tool. Dashboard-created services
+can drift from the Blueprint and silently miss workers, secrets, health checks,
+or paid-tier settings.
 
-- `start` (backend API)
-- `home-accessibility-checker` (seller tool)
+## Validate The Blueprint
 
-Both services live inside a monorepo, so their Render settings must match
-`/Users/sammcheng/Desktop/startup/hackmarket/render.yaml`.
-
-## Why This Matters
-
-If either service is created or edited directly in the Render dashboard with an
-empty root directory, Render treats the entire repo as that service's source.
-That can cause unrelated commits to redeploy both services and create transient
-`502 Bad Gateway` windows during builds.
-
-## Source Of Truth
-
-Use the repo Blueprint as the intended configuration:
-
-- `/Users/sammcheng/Desktop/startup/hackmarket/render.yaml`
-
-You can print the expected service settings with:
+From the repository root:
 
 ```bash
-cd /Users/sammcheng/Desktop/startup/hackmarket
-python3 scripts/render_blueprint_report.py
-```
-
-You can validate the guarded settings locally with:
-
-```bash
-cd /Users/sammcheng/Desktop/startup/hackmarket
 python3 scripts/render_blueprint_report.py --check
+python3 scripts/production_readiness_check.py
 ```
 
-CI also runs this check so root directories, build filters, and the pinned seller
-tool Node version do not silently drift.
+CI runs both checks on every push to `main`.
 
-## Expected Settings
+## Expected Services
 
 ### `start`
 
-- Root Directory: `apps/api`
-- Runtime: `docker`
-- Dockerfile Path: `./Dockerfile`
-- Docker Context: `.`
-- Health Check Path: `/health`
-- Auto Deploy Trigger: `checksPass`
-- Build Filter Paths:
-  - `apps/api/**`
+- Type: web service
+- Root directory: `apps/api`
+- Runtime: Docker using `./Dockerfile`
+- Plan: Starter
+- Health check: `/ready`
+- Auto-deploy: only after GitHub checks pass
+- Build filter: `apps/api/**`
+
+`/health` proves only that the process is alive. Render must use `/ready` so a
+release receives traffic only after PostgreSQL and Redis are healthy. The same
+response reports worker, queue, processing-job, and Stripe health, but those
+operational warnings do not take the buyer API offline. Release smoke checks
+still fail until all operational checks are healthy.
+
+### `start-worker`
+
+- Type: background worker
+- Root directory: `apps/api`
+- Runtime: Docker using `./Dockerfile`
+- Command: `arq app.worker.WorkerSettings`
+- Plan: Starter
+- Shutdown delay: 300 seconds
+- Auto-deploy: only after GitHub checks pass
+- Build filter: `apps/api/**`
+
+The API and worker must share the same database, Redis, queue name, signing
+configuration, billing configuration, storage credentials, and provider keys.
 
 ### `home-accessibility-checker`
 
-- Root Directory: `apps/seller-tools/home-accessibility-checker`
-- Runtime: `node`
-- Node Version: `22.16.0` (pinned via `.node-version` and `package.json`)
-- Build Command: `npm ci`
-- Start Command: `npm start`
-- Health Check Path: `/health`
-- Auto Deploy Trigger: `checksPass`
-- Build Filter Paths:
-  - `apps/seller-tools/home-accessibility-checker/**`
+- Type: web service
+- Root directory: `apps/seller-tools/home-accessibility-checker`
+- Runtime: Node `22.16.0`
+- Build command: `npm ci`
+- Start command: `npm start`
+- Plan: Starter
+- Health check: `/ready`
+- Auto-deploy: only after GitHub checks pass
+- Build filter: `apps/seller-tools/home-accessibility-checker/**`
 
-## Manual Dashboard Repair
+### Data Services
 
-For each service in Render:
+- `hackmarket-db`: Render Postgres on `basic-256mb` or larger, with backups enabled
+- `hackmarket-redis`: Starter Key Value with `noeviction`
 
-1. Open the service Settings page.
-2. Update the Root Directory to match the values above.
-3. Update any path-sensitive command fields so they are relative to the new root.
-4. Set the Health Check Path to `/health`.
-5. Set Auto Deploy to run only after checks pass.
-6. Add the listed Build Filter paths.
-7. Save changes and confirm the preview of updated commands looks correct.
+## Repair Dashboard Drift
 
-## If Dashboard Services Drift Too Far
+1. Add every secret marked `sync: false` in `render.yaml` before deploying.
+2. Sync the existing services from the Blueprint or recreate them from it.
+3. Confirm the API and worker use the same environment group or equivalent values.
+4. Confirm `start-worker` exists and its heartbeat is visible to `/ready`.
+5. Keep the old API active until the replacement passes readiness checks.
+6. Remove the old service only after authenticated production smoke tests pass.
 
-If an existing dashboard-managed service does not reliably adopt the Blueprint
-settings, the safer cleanup path is:
+Do not weaken production configuration validation to make a deployment start
+without Clerk, Stripe, storage, model-provider, or gateway-signing credentials.
 
-1. Ensure required environment variables are present in Render.
-2. Re-create the service from the Blueprint so Render uses `render.yaml` as the
-   source of truth.
-3. Confirm health checks pass before deleting the old service.
-
-## Verification
-
-After any Render settings change:
+## Verify A Release
 
 ```bash
 curl -fsS https://start-3lbd.onrender.com/health
-curl -fsS https://home-accessibility-checker.onrender.com/health
+curl -fsS https://start-3lbd.onrender.com/ready
+curl -fsS https://home-accessibility-checker.onrender.com/ready
 ```
 
-Then confirm an unrelated frontend-only commit no longer redeploys both Render
-services.
+The API readiness response must include successful database, Redis, and worker
+checks. Then run `scripts/production_smoke_check.py` and
+`scripts/production_load_smoke_check.py` using the documented launch commands.

@@ -89,6 +89,58 @@ def test_api_helpers_normalize_gateway_api_url():
     )
 
 
+def test_ready_smoke_requires_healthy_async_operations(monkeypatch):
+    payload = """
+    {
+      "status": "ready",
+      "operations_status": "degraded",
+      "checks": {
+        "database": "ok",
+        "redis": "ok",
+        "queue": "ok",
+        "worker": "missing_heartbeat",
+        "processing_jobs": "ok",
+        "stripe_webhooks": "ok"
+      },
+      "queue": {"depth": 0, "worker_heartbeat": false},
+      "processing_jobs": {"stuck_active": 0},
+      "stripe_webhooks": {"stuck_active": 0}
+    }
+    """
+    monkeypatch.setattr(smoke, "request", lambda *args, **kwargs: (200, payload, {}))
+
+    result = smoke.check_ready("https://api.example.com/", 5)
+
+    assert result.ok is False
+    assert "operations health missing or degraded" in result.detail
+
+
+def test_ready_smoke_accepts_core_and_async_health(monkeypatch):
+    payload = """
+    {
+      "status": "ready",
+      "operations_status": "healthy",
+      "checks": {
+        "database": "ok",
+        "redis": "ok",
+        "queue": "ok",
+        "worker": "ok",
+        "processing_jobs": "ok",
+        "stripe_webhooks": "ok"
+      },
+      "queue": {"depth": 2, "worker_heartbeat": true},
+      "processing_jobs": {"stuck_active": 0},
+      "stripe_webhooks": {"stuck_active": 0}
+    }
+    """
+    monkeypatch.setattr(smoke, "request", lambda *args, **kwargs: (200, payload, {}))
+
+    result = smoke.check_ready("https://api.example.com/", 5)
+
+    assert result.ok is True
+    assert result.detail == "ready; queue_depth=2"
+
+
 def test_api_cors_requires_exact_production_origin(monkeypatch):
     def fake_request(*args, **kwargs):
         return 200, "", {"Access-Control-Allow-Origin": "https://hackmarket.io"}

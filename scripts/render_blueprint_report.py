@@ -30,7 +30,7 @@ EXPECTED_WEB_SERVICES: dict[str, dict[str, Any]] = {
         "rootDir": "apps/api",
         "plan": "starter",
         "autoDeployTrigger": "checksPass",
-        "healthCheckPath": "/health",
+        "healthCheckPath": "/ready",
         "buildFilter": {"paths": ["apps/api/**"], "ignoredPaths": []},
         "dockerfilePath": "./Dockerfile",
         "dockerContext": ".",

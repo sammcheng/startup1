@@ -104,6 +104,28 @@ class Unauthorized(AppError):
         )
 
 
+class AccountSyncConflictError(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            message=(
+                "This verified email is already linked to another account. "
+                "Contact support if you need help recovering it."
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="account_sync_conflict",
+        )
+
+
+class AccountSyncRetryError(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            message="Account setup is temporarily busy. Please try again.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="account_sync_retry",
+            details={"retryable": True},
+        )
+
+
 class Forbidden(AppError):
     def __init__(self, message: str = "You are not allowed to perform this action.") -> None:
         super().__init__(

@@ -10,7 +10,7 @@ services:
         - apps/api/**
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    healthCheckPath: /health
+    healthCheckPath: /ready
     autoDeployTrigger: checksPass
     envVars:
       - key: ENVIRONMENT

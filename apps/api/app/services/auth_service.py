@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.exceptions import AccountSyncConflictError, AccountSyncRetryError
 from app.models import User
 from app.models.user import UserRole
 from app.schemas.auth import AuthSyncRequest
@@ -37,6 +39,10 @@ async def sync_user_from_identity(
     user = result.scalar_one_or_none()
 
     if user is None:
+        email_owner = await _find_user_by_email(db, email)
+        if email_owner is not None:
+            raise AccountSyncConflictError()
+
         user = User(
             clerk_id=identity.clerk_id,
             email=email,
@@ -57,16 +63,36 @@ async def sync_user_from_identity(
             is_active=True,
         )
         db.add(user)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+
+            # Clerk webhooks and lazy sign-in sync can race. If the same Clerk
+            # identity won the race, treat this request as an idempotent replay.
+            result = await db.execute(select(User).where(User.clerk_id == identity.clerk_id))
+            raced_user = result.scalar_one_or_none()
+            if raced_user is not None:
+                return raced_user
+
+            email_owner = await _find_user_by_email(db, email)
+            if email_owner is not None:
+                raise AccountSyncConflictError() from exc
+            raise AccountSyncRetryError() from exc
         await db.refresh(user)
         return user
+
+    current_user_id = user.id
+    email_owner = await _find_user_by_email(db, email)
+    if email_owner is not None and email_owner.id != current_user_id:
+        raise AccountSyncConflictError()
 
     user.email = email
     user.username = await _build_unique_username(
         db,
         preferred=(profile.username if profile else None) or identity.username or user.username,
         clerk_id=identity.clerk_id,
-        current_user_id=user.id,
+        current_user_id=current_user_id,
     )
     user.display_name = (
         (profile.display_name if profile else None) or identity.display_name or user.display_name
@@ -74,9 +100,21 @@ async def sync_user_from_identity(
     user.avatar_url = _safe_avatar_url(
         (profile.avatar_url if profile else None), identity.avatar_url, user.avatar_url
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        email_owner = await _find_user_by_email(db, email)
+        if email_owner is not None and email_owner.id != current_user_id:
+            raise AccountSyncConflictError() from exc
+        raise AccountSyncRetryError() from exc
     await db.refresh(user)
     return user
+
+
+async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
+    return result.scalar_one_or_none()
 
 
 async def _build_unique_username(

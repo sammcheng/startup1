@@ -277,23 +277,40 @@ async def ready():
     queue_details: dict | None = None
     processing_job_details: dict | None = None
     stripe_webhook_details: dict | None = None
+    operations_error: str | None = None
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(sql_text("select 1"))
             if settings.environment == "production":
-                operations_health = await operations_health_service.get_operations_health(
-                    session, _redis_client
-                )
-                checks.update(operations_health["checks"])
-                queue_details = operations_health["queue"]
-                processing_job_details = operations_health["processing_jobs"]
-                stripe_webhook_details = operations_health["stripe_webhooks"]
+                try:
+                    operations_health = await operations_health_service.get_operations_health(
+                        session, _redis_client
+                    )
+                    checks.update(operations_health["checks"])
+                    queue_details = operations_health["queue"]
+                    processing_job_details = operations_health["processing_jobs"]
+                    stripe_webhook_details = operations_health["stripe_webhooks"]
+                except Exception as exc:
+                    operations_error = type(exc).__name__
+                    checks["operations"] = f"error: {operations_error}"
+                    logger.exception("Operations health probe failed")
     except Exception as exc:
         checks["database"] = f"error: {type(exc).__name__}"
     try:
         await _redis_client.ping()
     except Exception as exc:
         checks["redis"] = f"error: {type(exc).__name__}"
+
+    if settings.environment == "production" and operations_error is not None:
+        await alert_service.send_alert_once(
+            _redis_client,
+            "operations_health_check_failed",
+            dedupe_key=operations_error,
+            ttl_seconds=settings.alert_dedupe_ttl_seconds,
+            severity="critical",
+            summary="The API could not inspect background operations health.",
+            details={"error_type": operations_error},
+        )
 
     if settings.environment == "production" and queue_details is not None:
         depth = queue_details["depth"]
@@ -380,26 +397,35 @@ async def ready():
                 details=stripe_webhook_details,
             )
 
-    all_ok = all(value == "ok" for value in checks.values())
-    if not all_ok and settings.environment == "production":
+    core_checks = {key: checks[key] for key in ("database", "redis")}
+    core_ready = all(value == "ok" for value in core_checks.values())
+    operations_checks = {key: value for key, value in checks.items() if key not in core_checks}
+    operations_ok = bool(operations_checks) and all(
+        value == "ok" for value in operations_checks.values()
+    )
+    if not core_ready and settings.environment == "production":
         await alert_service.send_alert_once(
             _redis_client,
             "api_readiness_degraded",
-            dedupe_key=",".join(f"{key}:{value}" for key, value in sorted(checks.items())),
+            dedupe_key=",".join(f"{key}:{value}" for key, value in sorted(core_checks.items())),
             ttl_seconds=settings.alert_dedupe_ttl_seconds,
             severity="critical",
             summary="API readiness check is degraded.",
             details={"checks": checks},
         )
     payload = {
-        "status": "ready" if all_ok else "degraded",
+        "status": "ready" if core_ready else "degraded",
         "environment": settings.environment,
         "checks": checks,
     }
+    if operations_checks:
+        payload["operations_status"] = "healthy" if operations_ok else "degraded"
     if queue_details is not None:
         payload["queue"] = queue_details
     if processing_job_details is not None:
         payload["processing_jobs"] = processing_job_details
     if stripe_webhook_details is not None:
         payload["stripe_webhooks"] = stripe_webhook_details
-    return JSONResponse(content=payload, status_code=200 if all_ok else 503)
+    # Operational degradation must alert and fail release smoke checks, but it
+    # must not remove an otherwise healthy marketplace API from service.
+    return JSONResponse(content=payload, status_code=200 if core_ready else 503)

@@ -232,9 +232,10 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
 
     response = client.get("/ready")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "degraded"
+    assert payload["status"] == "ready"
+    assert payload["operations_status"] == "degraded"
     assert payload["checks"]["queue"] == "degraded_high_depth"
     assert payload["checks"]["worker"] == "missing_heartbeat"
     assert payload["checks"]["processing_jobs"] == "ok"
@@ -249,12 +250,10 @@ def test_ready_alerts_on_production_queue_risk(client, monkeypatch):
     assert [alert["event"] for alert in alerts] == [
         "queue_depth_high",
         "worker_heartbeat_missing",
-        "api_readiness_degraded",
     ]
     assert dedupe_keys == [
         "hackmarket:jobs",
         "hackmarket:jobs:health",
-        "database:ok,processing_jobs:ok,queue:degraded_high_depth,redis:ok,stripe_webhooks:ok,worker:missing_heartbeat",
     ]
 
 
@@ -301,10 +300,59 @@ def test_ready_returns_production_queue_details_when_worker_is_healthy(client, m
     assert payload["checks"]["worker"] == "ok"
     assert payload["checks"]["processing_jobs"] == "ok"
     assert payload["checks"]["stripe_webhooks"] == "ok"
+    assert payload["operations_status"] == "healthy"
     assert payload["queue"]["depth"] == 2
     assert payload["queue"]["worker_heartbeat"] is True
     assert payload["processing_jobs"]["stuck_active"] == 0
     assert payload["stripe_webhooks"]["stuck_active"] == 0
+
+
+def test_ready_isolates_operations_probe_failure_from_core_readiness(client, monkeypatch):
+    alerts = []
+
+    class FakeReadySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return None
+
+    class FakeProductionRedis:
+        async def ping(self):
+            return True
+
+    async def fake_operations_health(db, redis):
+        raise RuntimeError("operations query failed")
+
+    async def fake_send_alert_once(redis, event, **kwargs):
+        alerts.append({"event": event, **kwargs})
+        return True
+
+    monkeypatch.setattr(dependencies, "AsyncSessionLocal", lambda: FakeReadySession())
+    monkeypatch.setattr(dependencies, "_redis_client", FakeProductionRedis())
+    monkeypatch.setattr("app.main.settings.environment", "production")
+    monkeypatch.setattr(
+        "app.main.operations_health_service.get_operations_health",
+        fake_operations_health,
+    )
+    monkeypatch.setattr("app.main.alert_service.send_alert_once", fake_send_alert_once)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["operations_status"] == "degraded"
+    assert payload["checks"] == {
+        "database": "ok",
+        "redis": "ok",
+        "operations": "error: RuntimeError",
+    }
+    assert alerts[0]["event"] == "operations_health_check_failed"
+    assert alerts[0]["details"] == {"error_type": "RuntimeError"}
 
 
 def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
@@ -363,21 +411,20 @@ def test_ready_alerts_on_processing_job_risk(client, monkeypatch):
 
     response = client.get("/ready")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "degraded"
+    assert payload["status"] == "ready"
+    assert payload["operations_status"] == "degraded"
     assert payload["checks"]["processing_jobs"] == "degraded_stuck_active_and_failed_recent"
     assert payload["processing_jobs"]["stuck_active"] == 2
     assert payload["processing_jobs"]["failed_recent"] == 4
     assert [alert["event"] for alert in alerts] == [
         "processing_jobs_stuck",
         "processing_jobs_failed",
-        "api_readiness_degraded",
     ]
     assert dedupe_keys == [
         "stuck-active:1800",
         "failed-recent:900",
-        "database:ok,processing_jobs:degraded_stuck_active_and_failed_recent,queue:ok,redis:ok,stripe_webhooks:ok,worker:ok",
     ]
 
 
@@ -435,14 +482,15 @@ def test_ready_alerts_on_stripe_webhook_risk(client, monkeypatch):
 
     response = client.get("/ready")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["operations_status"] == "degraded"
     assert payload["checks"]["stripe_webhooks"] == "degraded_stuck_active_and_failed_recent"
     assert payload["stripe_webhooks"]["stuck_active"] == 2
     assert [alert["event"] for alert in alerts] == [
         "stripe_webhooks_stuck",
         "stripe_webhooks_failed",
-        "api_readiness_degraded",
     ]
 
 
