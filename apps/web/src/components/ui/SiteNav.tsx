@@ -118,24 +118,37 @@ export default function SiteNav() {
             </button>
           </>
         ) : (
-          <Link
-            href="/sign-in"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "7px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              color: "var(--text)",
-              background: "var(--card)",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            <UserRound size={16} />
-            Sign in
-          </Link>
+          <>
+            <Link
+              href="/sign-in"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+                background: "var(--card)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <UserRound size={16} />
+              Sign in
+            </Link>
+            <Link
+              href="/sign-up"
+              style={{
+                color: "var(--text)",
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "7px 4px",
+              }}
+            >
+              Create account
+            </Link>
+          </>
         )}
         <Link
           href="/submit"
@@ -199,10 +212,16 @@ export default function SiteNav() {
               </button>
             </>
           ) : (
-            <Link href="/sign-in" onClick={() => setMenuOpen(false)}>
-              <UserRound size={17} />
-              Sign in
-            </Link>
+            <>
+              <Link href="/sign-in" onClick={() => setMenuOpen(false)}>
+                <UserRound size={17} />
+                Sign in
+              </Link>
+              <Link href="/sign-up" onClick={() => setMenuOpen(false)}>
+                <UserRound size={17} />
+                Create account
+              </Link>
+            </>
           )}
           <Link
             href="/submit"

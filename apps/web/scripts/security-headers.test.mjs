@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { buildContentSecurityPolicy, buildSecurityHeaders } from "../security-headers.mjs";
+
+const proxySource = readFileSync(new URL("../src/proxy.ts", import.meta.url), "utf8");
 
 test("buildContentSecurityPolicy includes required third-party origins", () => {
   const csp = buildContentSecurityPolicy({
@@ -54,4 +57,13 @@ test("buildSecurityHeaders adds strict transport security only in production", (
   assert.equal(devHeaders.some((header) => header.key === "Strict-Transport-Security"), false);
   assert.equal(prodHeaders.some((header) => header.key === "Strict-Transport-Security"), true);
   assert.equal(prodHeaders.some((header) => header.key === "Content-Security-Policy"), true);
+});
+
+test("Clerk proxy matcher follows the required API and auto-proxy order", () => {
+  const apiMatcher = '"/(api|trpc)(.*)"';
+  const clerkMatcher = '"/__clerk/:path*"';
+  const clerkMatcherCount = proxySource.split(clerkMatcher).length - 1;
+
+  assert.equal(clerkMatcherCount, 1);
+  assert.ok(proxySource.indexOf(apiMatcher) < proxySource.indexOf(clerkMatcher));
 });
